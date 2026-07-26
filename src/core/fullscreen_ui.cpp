@@ -605,6 +605,10 @@ void ImGuiFullscreen::GetInputDialogHelpText(SmallStringBase& dest)
 
 bool FullscreenUI::Initialize()
 {
+#ifdef __SWITCH__
+  return false;
+#endif
+
   if (s_initialized)
     return true;
 

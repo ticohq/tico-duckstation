@@ -128,6 +128,14 @@ static std::tuple<float, float> GetMinMax(std::span<const float> values)
 void Host::DisplayLoadingScreen(const char* message, int progress_min /*= -1*/, int progress_max /*= -1*/,
                                 int progress_value /*= -1*/)
 {
+#ifdef __SWITCH__
+  if (progress_min < progress_max)
+    Log_InfoPrintf("%s: %d/%d", message, progress_value, progress_max);
+  else
+    Log_InfoPrintf("%s", message);
+  return;
+#endif
+
   if (!g_gpu_device)
   {
     Log_InfoPrintf("%s: %d/%d", message, progress_value, progress_max);

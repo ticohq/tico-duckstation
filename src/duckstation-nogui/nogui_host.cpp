@@ -23,6 +23,10 @@
 #include "util/input_manager.h"
 #include "util/platform_misc.h"
 
+#ifdef __SWITCH__
+#include "tico/TicoDuckBridge.h"
+#endif
+
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_stdlib.h"
@@ -40,6 +44,9 @@
 #include <cinttypes>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <csignal>
 #include <thread>
 
@@ -152,6 +159,473 @@ static AsyncOpProgressCallback* s_async_op_progress = nullptr;
 std::string switch_program_path;
 #endif
 
+#ifdef __SWITCH__
+static GenericInputBindingMapping GetSwitchControllerMapping(u32 controller)
+{
+  const std::string prefix = fmt::format("P{}/", controller);
+  return {
+    {GenericInputBinding::Circle, prefix + "A"},
+    {GenericInputBinding::Cross, prefix + "B"},
+    {GenericInputBinding::Triangle, prefix + "X"},
+    {GenericInputBinding::Square, prefix + "Y"},
+    {GenericInputBinding::L3, prefix + "LStick"},
+    {GenericInputBinding::R3, prefix + "RStick"},
+    {GenericInputBinding::L1, prefix + "L"},
+    {GenericInputBinding::R1, prefix + "R"},
+    {GenericInputBinding::L2, prefix + "ZL"},
+    {GenericInputBinding::R2, prefix + "ZR"},
+    {GenericInputBinding::Start, prefix + "Plus"},
+    {GenericInputBinding::Select, prefix + "Minus"},
+    {GenericInputBinding::DPadLeft, prefix + "DPadLeft"},
+    {GenericInputBinding::DPadUp, prefix + "DPadUp"},
+    {GenericInputBinding::DPadRight, prefix + "DPadRight"},
+    {GenericInputBinding::DPadDown, prefix + "DPadDown"},
+    {GenericInputBinding::LeftStickLeft, prefix + "-LeftX"},
+    {GenericInputBinding::LeftStickRight, prefix + "+LeftX"},
+    {GenericInputBinding::LeftStickUp, prefix + "-LeftY"},
+    {GenericInputBinding::LeftStickDown, prefix + "+LeftY"},
+    {GenericInputBinding::RightStickLeft, prefix + "-RightX"},
+    {GenericInputBinding::RightStickRight, prefix + "+RightX"},
+    {GenericInputBinding::RightStickUp, prefix + "-RightY"},
+    {GenericInputBinding::RightStickDown, prefix + "+RightY"},
+    {GenericInputBinding::SmallMotor, prefix + "SmallMotor"},
+    {GenericInputBinding::LargeMotor, prefix + "LargeMotor"},
+  };
+}
+
+static bool ControllerSectionHasSwitchBindings(SettingsInterface& si, const char* section, u32 controller)
+{
+  const std::string prefix = fmt::format("P{}/", controller);
+  for (const auto& [key, value] : si.GetKeyValueList(section))
+  {
+    if (value.find(prefix) != std::string::npos)
+      return true;
+  }
+
+  return false;
+}
+
+static void RepairSwitchControllerConfig(SettingsInterface& si)
+{
+  constexpr u32 controller = 0;
+  const std::string section = Controller::GetSettingsSection(controller);
+  if (ControllerSectionHasSwitchBindings(si, section.c_str(), controller))
+    return;
+
+  std::string type =
+    si.GetStringValue(section.c_str(), "Type", Settings::GetControllerTypeName(Settings::DEFAULT_CONTROLLER_1_TYPE));
+  if (type.empty() || type == Settings::GetControllerTypeName(ControllerType::None))
+  {
+    type = Settings::GetControllerTypeName(Settings::DEFAULT_CONTROLLER_1_TYPE);
+    si.SetStringValue(section.c_str(), "Type", type.c_str());
+  }
+
+  si.SetBoolValue("InputSources", "Switch", true);
+  if (InputManager::MapController(si, controller, GetSwitchControllerMapping(controller)))
+  {
+    si.SetBoolValue(section.c_str(), "ForceAnalogOnReset", true);
+    si.SetBoolValue(section.c_str(), "AnalogDPadInDigitalMode", true);
+    si.Save();
+    Log_InfoPrint("Repaired missing Switch controller bindings for Controller0.");
+  }
+}
+
+static bool ReadTicoJsonStringValue(const std::string& text, const char* key, std::string& value)
+{
+  const std::string pattern = std::string("\"") + key + "\"";
+  const size_t key_pos = text.find(pattern);
+  if (key_pos == std::string::npos)
+    return false;
+
+  const size_t colon_pos = text.find(':', key_pos + pattern.size());
+  if (colon_pos == std::string::npos)
+    return false;
+
+  const size_t quote_pos = text.find('"', colon_pos + 1);
+  if (quote_pos == std::string::npos)
+    return false;
+
+  value.clear();
+  bool escape = false;
+  for (size_t i = quote_pos + 1; i < text.size(); i++)
+  {
+    const char ch = text[i];
+    if (escape)
+    {
+      value.push_back(ch);
+      escape = false;
+      continue;
+    }
+    if (ch == '\\')
+    {
+      escape = true;
+      continue;
+    }
+    if (ch == '"')
+      return true;
+    value.push_back(ch);
+  }
+
+  return false;
+}
+
+static bool ReadTicoBool(const std::string& text, const char* key, bool& value)
+{
+  const std::string pattern = std::string("\"") + key + "\"";
+  const size_t key_pos = text.find(pattern);
+  if (key_pos == std::string::npos)
+    return false;
+
+  const size_t colon_pos = text.find(':', key_pos + pattern.size());
+  if (colon_pos == std::string::npos)
+    return false;
+
+  const size_t value_pos = text.find_first_not_of(" \n\r\t", colon_pos + 1);
+  if (value_pos == std::string::npos)
+    return false;
+
+  if (text[value_pos] == '"')
+  {
+    std::string string_value;
+    if (!ReadTicoJsonStringValue(text, key, string_value))
+      return false;
+
+    if (StringUtil::Strcasecmp(string_value.c_str(), "true") == 0)
+    {
+      value = true;
+      return true;
+    }
+    if (StringUtil::Strcasecmp(string_value.c_str(), "false") == 0)
+    {
+      value = false;
+      return true;
+    }
+
+    return false;
+  }
+
+  if (text.compare(value_pos, 4, "true") == 0)
+  {
+    value = true;
+    return true;
+  }
+  if (text.compare(value_pos, 5, "false") == 0)
+  {
+    value = false;
+    return true;
+  }
+
+  return false;
+}
+
+static bool ReadTicoInt(const std::string& text, const char* key, int& value)
+{
+  std::string string_value;
+  if (!ReadTicoJsonStringValue(text, key, string_value))
+    return false;
+
+  char* end = nullptr;
+  const long parsed = std::strtol(string_value.c_str(), &end, 10);
+  if (end == string_value.c_str())
+    return false;
+
+  value = static_cast<int>(parsed);
+  return true;
+}
+
+static bool ReadTicoFloat(const std::string& text, const char* key, float& value)
+{
+  std::string string_value;
+  if (!ReadTicoJsonStringValue(text, key, string_value))
+    return false;
+
+  char* end = nullptr;
+  const float parsed = std::strtof(string_value.c_str(), &end);
+  if (end == string_value.c_str())
+    return false;
+
+  value = parsed;
+  return true;
+}
+
+static void ApplyTicoString(SettingsInterface& si, const std::string& text, const char* tico_key, const char* section,
+                            const char* name)
+{
+  std::string value;
+  if (ReadTicoJsonStringValue(text, tico_key, value))
+    si.SetStringValue(section, name, value.c_str());
+}
+
+static void ApplyTicoBool(SettingsInterface& si, const std::string& text, const char* tico_key, const char* section,
+                          const char* name)
+{
+  bool value = false;
+  if (ReadTicoBool(text, tico_key, value))
+    si.SetBoolValue(section, name, value);
+}
+
+static void ApplyTicoInt(SettingsInterface& si, const std::string& text, const char* tico_key, const char* section,
+                         const char* name)
+{
+  int value = 0;
+  if (ReadTicoInt(text, tico_key, value))
+    si.SetIntValue(section, name, value);
+}
+
+static void ApplyTicoFloat(SettingsInterface& si, const std::string& text, const char* tico_key, const char* section,
+                           const char* name)
+{
+  float value = 0.0f;
+  if (ReadTicoFloat(text, tico_key, value))
+    si.SetFloatValue(section, name, value);
+}
+
+static void ApplyTicoControllerInt(SettingsInterface& si, const std::string& text, const char* tico_key, u32 controller,
+                                   const char* name)
+{
+  int value = 0;
+  if (!ReadTicoInt(text, tico_key, value))
+    return;
+
+  const std::string section = Controller::GetSettingsSection(controller);
+  si.SetIntValue(section.c_str(), name, value);
+}
+
+static void ApplyTicoGPUMSAA(SettingsInterface& si, const std::string& text)
+{
+  std::string value;
+  if (!ReadTicoJsonStringValue(text, "duckstation_GPU_MSAA", value))
+    return;
+
+  const bool ssaa = value.find("-ssaa") != std::string::npos;
+  const int samples = std::max(1, std::atoi(value.c_str()));
+  si.SetIntValue("GPU", "Multisamples", samples);
+  si.SetBoolValue("GPU", "PerSampleShading", ssaa);
+}
+
+static void ApplyTicoCPUOverclock(SettingsInterface& si, const std::string& text)
+{
+  int percent = 100;
+  if (!ReadTicoInt(text, "duckstation_CPU_OverclockPercent", percent))
+    return;
+
+  u32 numerator = 1;
+  u32 denominator = 1;
+  Settings::CPUOverclockPercentToFraction(static_cast<u32>(std::max(percent, 1)), &numerator, &denominator);
+  si.SetIntValue("CPU", "OverclockNumerator", static_cast<int>(numerator));
+  si.SetIntValue("CPU", "OverclockDenominator", static_cast<int>(denominator));
+}
+
+static const char* NormalizeTicoAspectRatio(const std::string& value)
+{
+  if (value == "Auto")
+    return "Auto (Game Native)";
+  if (value == "Native")
+    return "Auto (Game Native)";
+  if (value == "Stretch")
+    return "Stretch To Fill";
+  if (value == "PAR 1:1")
+    return "PAR 1:1";
+  return value.c_str();
+}
+
+static void ApplyTicoAspectRatio(SettingsInterface& si, const std::string& text)
+{
+  std::string value;
+  if (ReadTicoJsonStringValue(text, "duckstation_Display_AspectRatio", value))
+    si.SetStringValue("Display", "AspectRatio", NormalizeTicoAspectRatio(value));
+}
+
+static void ApplyTicoViewport(SettingsInterface& si, const std::string& text)
+{
+  std::string mode;
+  if (!ReadTicoJsonStringValue(text, "display_mode", mode))
+    return;
+
+  if (mode == "Integer")
+  {
+    si.SetStringValue("Display", "Scaling", "NearestInteger");
+    return;
+  }
+
+  std::string size;
+  ReadTicoJsonStringValue(text, "display_size", size);
+  si.SetStringValue("Display", "Scaling", "BilinearSmooth");
+  if (size == "Stretch")
+    si.SetStringValue("Display", "AspectRatio", "Stretch To Fill");
+  else if (size == "16:9")
+    si.SetStringValue("Display", "AspectRatio", "16:9");
+  else if (size == "Original")
+    si.SetStringValue("Display", "AspectRatio", "PAR 1:1");
+  else
+    si.SetStringValue("Display", "AspectRatio", "4:3");
+}
+
+static void ApplyTicoAchievementSettings(SettingsInterface& si)
+{
+  std::ifstream input("sdmc:/tico/config/accounts.jsonc");
+  if (!input.is_open())
+  {
+    si.SetBoolValue("Cheevos", "Enabled", false);
+    return;
+  }
+
+  std::ostringstream ss;
+  ss << input.rdbuf();
+  const std::string text = ss.str();
+
+  bool enabled = false;
+  ReadTicoBool(text, "ra_enabled", enabled);
+
+  bool hardcore = false;
+  ReadTicoBool(text, "ra_hardcore_mode", hardcore);
+
+  std::string username;
+  std::string token;
+  std::string password;
+  ReadTicoJsonStringValue(text, "ra_username", username);
+  ReadTicoJsonStringValue(text, "ra_token", token);
+  ReadTicoJsonStringValue(text, "ra_password", password);
+
+  const bool has_credentials = !username.empty() && (!token.empty() || !password.empty());
+  si.SetBoolValue("Cheevos", "Enabled", enabled && has_credentials);
+  si.SetBoolValue("Cheevos", "ChallengeMode", hardcore);
+  si.SetBoolValue("Cheevos", "Notifications", true);
+  si.SetBoolValue("Cheevos", "LeaderboardNotifications", true);
+  si.SetBoolValue("Cheevos", "SoundEffects", true);
+  si.SetBoolValue("Cheevos", "Overlays", true);
+  si.SetBoolValue("Cheevos", "UseFirstDiscFromPlaylist", true);
+  si.SetBoolValue("Cheevos", "UseRAIntegration", false);
+
+  if (!username.empty())
+    si.SetStringValue("Cheevos", "Username", username.c_str());
+  if (!token.empty())
+    si.SetStringValue("Cheevos", "Token", token.c_str());
+  else
+    si.DeleteValue("Cheevos", "Token");
+  if (!password.empty())
+    si.SetStringValue("Cheevos", "Password", password.c_str());
+  else
+    si.DeleteValue("Cheevos", "Password");
+}
+
+static void ApplyTicoCoreSettings(SettingsInterface& si)
+{
+  std::ifstream input("sdmc:/tico/config/cores/duckstation.jsonc");
+  if (!input.is_open())
+    return;
+
+  std::ostringstream ss;
+  ss << input.rdbuf();
+  const std::string text = ss.str();
+
+  si.SetStringValue("CPU", "ExecutionMode", "Recompiler");
+  si.SetStringValue("CPU", "FastmemMode", "MMap");
+  si.SetBoolValue("CPU", "RecompilerBlockLinking", true);
+  si.SetStringValue("GPU", "Renderer", "deko3D");
+  si.SetStringValue("ControllerPorts", "MultitapMode", "Disabled");
+  si.SetBoolValue("Main", "CompressSaveStates", false);
+  si.SetStringValue("Display", "Alignment", "Center");
+  si.SetBoolValue("Display", "Force4_3For24Bit", false);
+  si.SetBoolValue("Display", "ShowOSDMessages", true);
+  si.SetBoolValue("Display", "ShowFPS", false);
+  si.SetBoolValue("Display", "ShowSpeed", false);
+  si.SetBoolValue("Display", "ShowEnhancements", false);
+  si.SetIntValue("Display", "ActiveStartOffset", 0);
+  si.SetIntValue("Display", "ActiveEndOffset", 0);
+  si.SetIntValue("Display", "LineStartOffset", 0);
+  si.SetIntValue("Display", "LineEndOffset", 0);
+
+  ApplyTicoString(si, text, "duckstation_Console_Region", "Console", "Region");
+  ApplyTicoString(si, text, "duckstation_Audio_StretchMode", "Audio", "StretchMode");
+  ApplyTicoString(si, text, "duckstation_GPU_TextureFilter", "GPU", "TextureFilter");
+  ApplyTicoString(si, text, "duckstation_GPU_DownsampleMode", "GPU", "DownsampleMode");
+  ApplyTicoString(si, text, "duckstation_Display_CropMode", "Display", "CropMode");
+  ApplyTicoString(si, text, "duckstation_Display_DeinterlacingMode", "Display", "DeinterlacingMode");
+  ApplyTicoString(si, text, "duckstation_MemoryCards_Card1Type", "MemoryCards", "Card1Type");
+  ApplyTicoString(si, text, "duckstation_MemoryCards_Card2Type", "MemoryCards", "Card2Type");
+
+  ApplyTicoBool(si, text, "duckstation_Console_Enable8MBRAM", "Console", "Enable8MBRAM");
+  ApplyTicoBool(si, text, "duckstation_Console_EnableCheats", "Console", "EnableCheats");
+  ApplyTicoBool(si, text, "duckstation_Main_ApplyCompatibilitySettings", "Main", "ApplyCompatibilitySettings");
+  ApplyTicoBool(si, text, "duckstation_Main_ApplyGameSettings", "Main", "ApplyGameSettings");
+  ApplyTicoBool(si, text, "duckstation_Main_DisableAllEnhancements", "Main", "DisableAllEnhancements");
+  ApplyTicoBool(si, text, "duckstation_BIOS_PatchFastBoot", "BIOS", "PatchFastBoot");
+  ApplyTicoBool(si, text, "duckstation_CPU_RecompilerICache", "CPU", "RecompilerICache");
+  ApplyTicoBool(si, text, "duckstation_CPU_OverclockEnable", "CPU", "OverclockEnable");
+  ApplyTicoBool(si, text, "duckstation_CDROM_RegionCheck", "CDROM", "RegionCheck");
+  ApplyTicoBool(si, text, "duckstation_CDROM_LoadImageToRAM", "CDROM", "LoadImageToRAM");
+  ApplyTicoBool(si, text, "duckstation_CDROM_LoadImagePatches", "CDROM", "LoadImagePatches");
+  ApplyTicoBool(si, text, "duckstation_CDROM_MuteCDAudio", "CDROM", "MuteCDAudio");
+  ApplyTicoBool(si, text, "duckstation_GPU_Debanding", "GPU", "Debanding");
+  ApplyTicoBool(si, text, "duckstation_GPU_ScaledDithering", "GPU", "ScaledDithering");
+  ApplyTicoBool(si, text, "duckstation_GPU_WidescreenHack", "GPU", "WidescreenHack");
+  ApplyTicoBool(si, text, "duckstation_GPU_TrueColor", "GPU", "TrueColor");
+  ApplyTicoBool(si, text, "duckstation_GPU_DisableInterlacing", "GPU", "DisableInterlacing");
+  ApplyTicoBool(si, text, "duckstation_GPU_ForceNTSCTimings", "GPU", "ForceNTSCTimings");
+  ApplyTicoBool(si, text, "duckstation_GPU_ChromaSmoothing24Bit", "GPU", "ChromaSmoothing24Bit");
+  ApplyTicoBool(si, text, "duckstation_GPU_UseSoftwareRendererForReadbacks", "GPU", "UseSoftwareRendererForReadbacks");
+  ApplyTicoBool(si, text, "duckstation_GPU_PGXPEnable", "GPU", "PGXPEnable");
+  ApplyTicoBool(si, text, "duckstation_GPU_PGXPCulling", "GPU", "PGXPCulling");
+  ApplyTicoBool(si, text, "duckstation_GPU_PGXPTextureCorrection", "GPU", "PGXPTextureCorrection");
+  ApplyTicoBool(si, text, "duckstation_GPU_PGXPColorCorrection", "GPU", "PGXPColorCorrection");
+  ApplyTicoBool(si, text, "duckstation_GPU_PGXPVertexCache", "GPU", "PGXPVertexCache");
+  ApplyTicoBool(si, text, "duckstation_GPU_PGXPCPU", "GPU", "PGXPCPU");
+  ApplyTicoBool(si, text, "duckstation_GPU_PGXPPreserveProjFP", "GPU", "PGXPPreserveProjFP");
+  ApplyTicoBool(si, text, "duckstation_GPU_PGXPDepthBuffer", "GPU", "PGXPDepthBuffer");
+  ApplyTicoBool(si, text, "duckstation_MemoryCards_UsePlaylistTitle", "MemoryCards", "UsePlaylistTitle");
+  ApplyTicoBool(si, text, "duckstation_Audio_OutputMuted", "Audio", "OutputMuted");
+
+  ApplyTicoCPUOverclock(si, text);
+  ApplyTicoInt(si, text, "duckstation_Audio_OutputVolume", "Audio", "OutputVolume");
+  ApplyTicoInt(si, text, "duckstation_Audio_FastForwardVolume", "Audio", "FastForwardVolume");
+  ApplyTicoInt(si, text, "duckstation_CDROM_ReadaheadSectors", "CDROM", "ReadaheadSectors");
+  ApplyTicoInt(si, text, "duckstation_CDROM_ReadSpeedup", "CDROM", "ReadSpeedup");
+  ApplyTicoInt(si, text, "duckstation_CDROM_SeekSpeedup", "CDROM", "SeekSpeedup");
+  ApplyTicoInt(si, text, "duckstation_GPU_ResolutionScale", "GPU", "ResolutionScale");
+  ApplyTicoInt(si, text, "duckstation_GPU_DownsampleScale", "GPU", "DownsampleScale");
+  ApplyTicoFloat(si, text, "duckstation_GPU_PGXPTolerance", "GPU", "PGXPTolerance");
+  ApplyTicoFloat(si, text, "duckstation_GPU_PGXPDepthClearThreshold", "GPU", "PGXPDepthClearThreshold");
+  ApplyTicoGPUMSAA(si, text);
+
+  ApplyTicoAspectRatio(si, text);
+  ApplyTicoViewport(si, text);
+  ApplyTicoAchievementSettings(si);
+
+  ApplyTicoControllerInt(si, text, "duckstation_Controller1_VibrationBias", 0, "VibrationBias");
+  ApplyTicoControllerInt(si, text, "duckstation_Controller2_VibrationBias", 1, "VibrationBias");
+
+  si.Save();
+  Log_InfoPrint("Applied Tico DuckStation settings from sdmc:/tico/config/cores/duckstation.jsonc.");
+}
+
+static bool TrimAutobootFilenameToExistingPath(SystemBootParameters& autoboot)
+{
+  if (autoboot.filename.empty() || FileSystem::FileExists(autoboot.filename.c_str()))
+    return true;
+
+  std::string candidate = autoboot.filename;
+  for (;;)
+  {
+    const std::string::size_type split = candidate.find_last_of(' ');
+    if (split == std::string::npos)
+      return false;
+
+    candidate.erase(split);
+    if (candidate.empty())
+      return false;
+
+    if (FileSystem::FileExists(candidate.c_str()))
+    {
+      Log_WarningFmt("Trimmed Switch launch argument '{}' to existing content path '{}'.", autoboot.filename,
+                     candidate);
+      autoboot.filename = std::move(candidate);
+      return true;
+    }
+  }
+}
+#endif
+
 //////////////////////////////////////////////////////////////////////////
 // Initialization/Shutdown
 //////////////////////////////////////////////////////////////////////////
@@ -206,6 +680,15 @@ void NoGUIHost::SetResourcesDirectory()
 
 void NoGUIHost::SetDataDirectory()
 {
+#ifdef __SWITCH__
+  FileSystem::EnsureDirectoryExists("sdmc:/tico", false);
+  FileSystem::EnsureDirectoryExists("sdmc:/tico/config", false);
+  FileSystem::EnsureDirectoryExists("sdmc:/tico/config/duckstation", false);
+  FileSystem::EnsureDirectoryExists("sdmc:/tico/config/cores", false);
+  EmuFolders::DataRoot = "sdmc:/tico/config/duckstation";
+  return;
+#endif
+
   // Already set, e.g. by -portable.
   if (!EmuFolders::DataRoot.empty())
     return;
@@ -234,8 +717,14 @@ bool NoGUIHost::InitializeConfig(std::string settings_filename)
   if (!SetCriticalFolders())
     return false;
 
+#ifdef __SWITCH__
+  settings_filename = Path::Combine(EmuFolders::DataRoot, "settings.ini");
+  if (FileSystem::FileExists("sdmc:/tico/cores/settings.ini"))
+    FileSystem::DeleteFile("sdmc:/tico/cores/settings.ini");
+#else
   if (settings_filename.empty())
     settings_filename = Path::Combine(EmuFolders::DataRoot, "settings.ini");
+#endif
 
   Log_InfoPrintf("Loading config from %s.", settings_filename.c_str());
   s_base_settings_interface = std::make_unique<INISettingsInterface>(std::move(settings_filename));
@@ -257,6 +746,11 @@ bool NoGUIHost::InitializeConfig(std::string settings_filename)
     SetDefaultSettings(*s_base_settings_interface, true, true);
     s_base_settings_interface->Save();
   }
+
+#ifdef __SWITCH__
+  RepairSwitchControllerConfig(*s_base_settings_interface);
+  ApplyTicoCoreSettings(*s_base_settings_interface);
+#endif
 
   EmuFolders::LoadConfig(*s_base_settings_interface.get());
   EmuFolders::EnsureFoldersExist();
@@ -646,16 +1140,32 @@ void NoGUIHost::CPUThreadEntryPoint()
     return;
   }
 
-  // start the fullscreen UI and get it going
-  if (Host::CreateGPUDevice(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer)) && FullscreenUI::Initialize())
+#ifdef __SWITCH__
+  TicoDuck::Initialize();
+  TicoDuck::SetExitApplicationCallback(NoGUIHost::StopRunning);
+#endif
+
+  // Switch is launched by Tico and should only expose the Tico overlay, not DuckStation's fullscreen UI.
+  const bool display_ready =
+    Host::CreateGPUDevice(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer))
+#ifndef __SWITCH__
+    && FullscreenUI::Initialize()
+#endif
+    ;
+
+  if (display_ready)
   {
+#ifndef __SWITCH__
     // kick a game list refresh if we're not in batch mode
     if (!InBatchMode())
       Host::RefreshGameListAsync(false);
+#endif
 
     CPUThreadMainLoop();
 
+#ifndef __SWITCH__
     Host::CancelGameListRefresh();
+#endif
   }
   else
   {
@@ -664,6 +1174,10 @@ void NoGUIHost::CPUThreadEntryPoint()
 
   // finish any events off (e.g. shutdown system with save)
   ProcessCPUThreadEvents(false);
+
+#ifdef __SWITCH__
+  TicoDuck::Shutdown();
+#endif
 
   if (System::IsValid())
     System::ShutdownSystem(false);
@@ -795,12 +1309,15 @@ void Host::OnGameChanged(const std::string& disc_path, const std::string& game_s
 
 void Host::OnAchievementsLoginRequested(Achievements::LoginRequestReason reason)
 {
-  // noop
+#ifdef __SWITCH__
+  TicoDuck::PushRANotification("RetroAchievements", "Failed to authenticate, check your username/password.",
+                               "ra_icon", 5.0f);
+#endif
 }
 
 void Host::OnAchievementsLoginSuccess(const char* username, u32 points, u32 sc_points, u32 unread_messages)
 {
-  // noop
+  Log_InfoFmt("RetroAchievements login success for '{}'.", username ? username : "");
 }
 
 void Host::OnAchievementsRefreshed()
@@ -1186,6 +1703,14 @@ bool NoGUIHost::ParseCommandLineParametersAndInitializeConfig(int argc, char* ar
     return false;
   }
 
+#ifdef __SWITCH__
+  for (int i = 0; i < argc; i++)
+    Log_InfoFmt("Switch launch argv[{}]='{}'", i, argv[i] ? argv[i] : "");
+
+  if (autoboot)
+    TrimAutobootFilenameToExistingPath(*autoboot);
+#endif
+
   // Check the file we're starting actually exists.
 
   if (autoboot && !autoboot->filename.empty() && !FileSystem::FileExists(autoboot->filename.c_str()))
@@ -1436,6 +1961,10 @@ int main(int argc, char* argv[])
 
   NoGUIHost::CancelAsyncOp();
   NoGUIHost::StopCPUThread();
+
+#ifdef __SWITCH__
+  TicoDuck::ChainloadLauncherIfRequested();
+#endif
 
   // Ensure log is flushed.
   Log::SetFileOutputParams(false, nullptr);

@@ -1,8 +1,11 @@
 #include "switch_input_source.h"
 #include "common/string_util.h"
 #include "core/host.h"
+#include "tico/TicoDuckBridge.h"
 
 #include "common/bitutils.h"
+
+#include <algorithm>
 
 static const char* s_switch_button_names[] = {
   "A",     "B",     "X",        "Y",      "LStick",    "RStick",   "L",       "R",       "ZL",    "ZR",
@@ -38,6 +41,49 @@ static const GenericInputBinding s_switch_generic_binding_button_mapping[] = {
 static_assert(std::size(s_switch_button_names) == SwitchInputSource::NUM_BUTTONS);
 static_assert(std::size(s_switch_generic_binding_button_mapping) == SwitchInputSource::NUM_BUTTONS);
 
+enum : u32
+{
+  VIBRATION_FULLKEY_OFFSET = 0,
+  VIBRATION_JOYDUAL_OFFSET = 2,
+  VIBRATION_HANDHELD_OFFSET = 4,
+};
+
+static void InitializeVibrationHandles(SwitchInputSource::ControllerData& data, u32 offset, HidNpadIdType id,
+                                       HidNpadStyleTag style)
+{
+  if (R_SUCCEEDED(hidInitializeVibrationDevices(&data.vibration_handles[offset], 2, id, style)))
+  {
+    data.vibration_handle_valid[offset] = true;
+    data.vibration_handle_valid[offset + 1] = true;
+  }
+}
+
+static HidVibrationValue MakeSwitchVibrationValue(float large_intensity, float small_intensity)
+{
+  HidVibrationValue value = {};
+  if (large_intensity != 0.0f || small_intensity != 0.0f)
+  {
+    value.freq_low = large_intensity > 0.0f ? 172.0f : 195.0f;
+    value.freq_high = small_intensity > 0.0f ? 195.0f : 260.0f;
+    value.amp_low = std::min(large_intensity * 0.9f + small_intensity * 0.8f, 1.0f);
+    value.amp_high = std::min(large_intensity * 0.9f + small_intensity * 0.9f, 1.0f);
+  }
+  else
+  {
+    value.freq_low = 160.0f;
+    value.freq_high = 320.0f;
+  }
+
+  return value;
+}
+
+static void SendSwitchVibrationPair(SwitchInputSource::ControllerData& data, u32 offset,
+                                    const HidVibrationValue values[2])
+{
+  if (data.vibration_handle_valid[offset] && data.vibration_handle_valid[offset + 1])
+    hidSendVibrationValues(&data.vibration_handles[offset], values, 2);
+}
+
 SwitchInputSource::SwitchInputSource() {}
 
 SwitchInputSource::~SwitchInputSource() {}
@@ -52,11 +98,12 @@ bool SwitchInputSource::Initialize(SettingsInterface& si, std::unique_lock<std::
 
   for (u32 i = 0; i < 4; i++)
   {
-    hidInitializeVibrationDevices(m_controllers[i].vibration_handles, 2, static_cast<HidNpadIdType>(i),
-                                             HidNpadStyleSet_NpadStandard);
+    const HidNpadIdType id = static_cast<HidNpadIdType>(HidNpadIdType_No1 + i);
+    InitializeVibrationHandles(m_controllers[i], VIBRATION_FULLKEY_OFFSET, id, HidNpadStyleTag_NpadFullKey);
+    InitializeVibrationHandles(m_controllers[i], VIBRATION_JOYDUAL_OFFSET, id, HidNpadStyleTag_NpadJoyDual);
   }
-  hidInitializeVibrationDevices(&m_controllers[0].vibration_handles[2], 2, HidNpadIdType_Handheld,
-                                           HidNpadStyleTag_NpadHandheld);
+  InitializeVibrationHandles(m_controllers[0], VIBRATION_HANDHELD_OFFSET, HidNpadIdType_Handheld,
+                             HidNpadStyleTag_NpadHandheld);
   return true;
 }
 void SwitchInputSource::UpdateSettings(SettingsInterface& si, std::unique_lock<std::mutex>& settings_lock) {}
@@ -95,17 +142,40 @@ void SwitchInputSource::PollEvents()
 
 void SwitchInputSource::UpdateState(u32 controller)
 {
+  const HidAnalogStickState left = padGetStickPos(&m_controllers[controller].pad_state, 0);
+  const HidAnalogStickState right = padGetStickPos(&m_controllers[controller].pad_state, 1);
+  u64 buttons = padGetButtons(&m_controllers[controller].pad_state);
+  buttons &= ~pseudo_buttons;
+  buttons &= (1ull << NUM_BUTTONS) - 1;
+
+  if (TicoDuck::HandleSwitchInput(controller, buttons, left, right))
+  {
+    for (u32 i = 0; i < NUM_AXIS; i++)
+    {
+      InputManager::InvokeEvents(MakeGenericControllerAxisKey(InputSourceType::Switch, controller, i), 0.0f,
+                                 GenericInputBinding::Unknown);
+    }
+
+    u64 buttons_diff = m_controllers[controller].buttons;
+    m_controllers[controller].buttons = 0;
+    while (buttons_diff)
+    {
+      const u32 button = CountTrailingZeros(buttons_diff);
+      buttons_diff &= ~(1ull << button);
+      InputManager::InvokeEvents(MakeGenericControllerButtonKey(InputSourceType::Switch, controller, button), 0.0f,
+                                 s_switch_generic_binding_button_mapping[button]);
+    }
+    return;
+  }
+
   for (u32 i = 0; i < 2; i++)
   {
-    HidAnalogStickState state = padGetStickPos(&m_controllers[controller].pad_state, i);
+    const HidAnalogStickState& state = (i == 0) ? left : right;
     InputManager::InvokeEvents(MakeGenericControllerAxisKey(InputSourceType::Switch, controller, 2 * i + 0),
                                static_cast<float>(state.x) / JOYSTICK_MAX, GenericInputBinding::Unknown);
     InputManager::InvokeEvents(MakeGenericControllerAxisKey(InputSourceType::Switch, controller, 2 * i + 1),
                                static_cast<float>(state.y) / -JOYSTICK_MAX, GenericInputBinding::Unknown);
   }
-  u64 buttons = padGetButtons(&m_controllers[controller].pad_state);
-  buttons &= ~pseudo_buttons;
-  buttons &= (1ull << NUM_BUTTONS) - 1;
 
   u64 buttons_diff = buttons ^ m_controllers[controller].buttons;
   m_controllers[controller].buttons = buttons;
@@ -174,7 +244,15 @@ bool SwitchInputSource::GetGenericBindingMapping(const std::string_view& device,
   return true;
 }
 
-void SwitchInputSource::UpdateMotorState(InputBindingKey key, float intensity) {}
+void SwitchInputSource::UpdateMotorState(InputBindingKey key, float intensity)
+{
+  if (key.source_index >= NUM_CONTROLLERS || key.source_subtype != InputSubclass::ControllerMotor)
+    return;
+
+  const bool large_motor = (key.data == 0);
+  UpdateMotorState(key, key, large_motor ? intensity : 0.0f, large_motor ? 0.0f : intensity);
+}
+
 void SwitchInputSource::UpdateMotorState(InputBindingKey large_key, InputBindingKey small_key, float large_intensity,
                                          float small_intensity)
 {
@@ -185,36 +263,16 @@ void SwitchInputSource::UpdateMotorState(InputBindingKey large_key, InputBinding
 
   if (data.connected)
   {
-    for (u32 i = 0; i < 2; i++)
-    {
-      HidVibrationValue value = {0};
-      float intensity = i == 1 ? small_intensity : large_intensity;
-      if (intensity != 0.f)
-      {
-        if (i == 0)
-        {
-          value.freq_low = 172.f;
-          value.freq_high = 260.f;
-          value.amp_low = value.amp_high = intensity * 0.9f;
-        }
-        else
-        {
-          value.freq_low = 195.f;
-          value.freq_high = 195.f;
-          value.amp_low = intensity * 0.8f;
-          value.amp_high = intensity * 0.9f;
-        }
-      }
-      else
-      {
-        value.freq_low = 160.0f;
-        value.freq_high = 320.0f;
-      }
+    const HidVibrationValue value = MakeSwitchVibrationValue(large_intensity, small_intensity);
+    const HidVibrationValue values[2] = {value, value};
 
-      hidSendVibrationValue(data.vibration_handles[i], &value);
-      if (large_key.source_index == 0)
-        hidSendVibrationValue(data.vibration_handles[i + 2], &value);
-    }
+    const u32 style = padGetStyleSet(&data.pad_state);
+    if (style & HidNpadStyleTag_NpadHandheld)
+      SendSwitchVibrationPair(data, VIBRATION_HANDHELD_OFFSET, values);
+    if (style & HidNpadStyleTag_NpadJoyDual)
+      SendSwitchVibrationPair(data, VIBRATION_JOYDUAL_OFFSET, values);
+    if (style & HidNpadStyleTag_NpadFullKey)
+      SendSwitchVibrationPair(data, VIBRATION_FULLKEY_OFFSET, values);
   }
 }
 

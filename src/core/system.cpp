@@ -45,6 +45,10 @@
 #include "util/postprocessing.h"
 #include "util/state_wrapper.h"
 
+#ifdef __SWITCH__
+#include "tico/TicoDuckBridge.h"
+#endif
+
 #include "common/align.h"
 #include "common/error.h"
 #include "common/file_system.h"
@@ -3230,7 +3234,26 @@ std::unique_ptr<MemoryCard> System::GetMemoryCardForSlot(u32 slot, MemoryCardTyp
       else
       {
         Host::RemoveKeyedOSDMessage(std::move(message_key));
-        return MemoryCard::Open(g_settings.GetGameMemoryCardPath(Path::SanitizeFileName(file_title).c_str(), slot));
+        const std::string sanitized_file_title = Path::SanitizeFileName(file_title);
+#ifdef __SWITCH__
+        if (slot == 0)
+        {
+          const std::string legacy_mcd = Path::Combine(EmuFolders::MemoryCards, fmt::format("{}.mcd", sanitized_file_title));
+          if (FileSystem::FileExists(legacy_mcd.c_str()))
+            return MemoryCard::Open(legacy_mcd);
+
+          const std::string legacy_mcr = Path::Combine(EmuFolders::MemoryCards, fmt::format("{}.mcr", sanitized_file_title));
+          if (FileSystem::FileExists(legacy_mcr.c_str()))
+            return MemoryCard::Open(legacy_mcr);
+
+          const std::string legacy_srm = Path::Combine(EmuFolders::MemoryCards, fmt::format("{}.srm", sanitized_file_title));
+          if (FileSystem::FileExists(legacy_srm.c_str()))
+            return MemoryCard::Open(legacy_srm);
+
+          return MemoryCard::Open(legacy_mcd);
+        }
+#endif
+        return MemoryCard::Open(g_settings.GetGameMemoryCardPath(sanitized_file_title.c_str(), slot));
       }
     }
 
@@ -4915,17 +4938,25 @@ bool System::PresentDisplay(bool allow_skip_present, bool explicit_present)
 
   if (!skip_present)
   {
+#ifndef __SWITCH__
     FullscreenUI::Render();
     ImGuiManager::RenderTextOverlays();
     ImGuiManager::RenderOSDMessages();
 
     if (s_state == State::Running)
       ImGuiManager::RenderSoftwareCursors();
+#endif
   }
 
+#ifdef __SWITCH__
+  TicoDuck::RenderOverlay();
+#endif
+
+#ifndef __SWITCH__
   // Debug windows are always rendered, otherwise mouse input breaks on skip.
   ImGuiManager::RenderOverlayWindows();
   ImGuiManager::RenderDebugWindows();
+#endif
 
   bool do_present;
   if (g_gpu && !skip_present)

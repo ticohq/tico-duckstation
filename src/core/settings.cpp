@@ -26,6 +26,45 @@ Log_SetChannel(Settings);
 
 Settings g_settings;
 
+namespace {
+
+#ifdef __SWITCH__
+GenericInputBindingMapping GetSwitchControllerMapping(u32 controller)
+{
+  const std::string prefix = fmt::format("P{}/", controller);
+  return {
+    {GenericInputBinding::Circle, prefix + "A"},
+    {GenericInputBinding::Cross, prefix + "B"},
+    {GenericInputBinding::Triangle, prefix + "X"},
+    {GenericInputBinding::Square, prefix + "Y"},
+    {GenericInputBinding::L3, prefix + "LStick"},
+    {GenericInputBinding::R3, prefix + "RStick"},
+    {GenericInputBinding::L1, prefix + "L"},
+    {GenericInputBinding::R1, prefix + "R"},
+    {GenericInputBinding::L2, prefix + "ZL"},
+    {GenericInputBinding::R2, prefix + "ZR"},
+    {GenericInputBinding::Start, prefix + "Plus"},
+    {GenericInputBinding::Select, prefix + "Minus"},
+    {GenericInputBinding::DPadLeft, prefix + "DPadLeft"},
+    {GenericInputBinding::DPadUp, prefix + "DPadUp"},
+    {GenericInputBinding::DPadRight, prefix + "DPadRight"},
+    {GenericInputBinding::DPadDown, prefix + "DPadDown"},
+    {GenericInputBinding::LeftStickLeft, prefix + "-LeftX"},
+    {GenericInputBinding::LeftStickRight, prefix + "+LeftX"},
+    {GenericInputBinding::LeftStickUp, prefix + "-LeftY"},
+    {GenericInputBinding::LeftStickDown, prefix + "+LeftY"},
+    {GenericInputBinding::RightStickLeft, prefix + "-RightX"},
+    {GenericInputBinding::RightStickRight, prefix + "+RightX"},
+    {GenericInputBinding::RightStickUp, prefix + "-RightY"},
+    {GenericInputBinding::RightStickDown, prefix + "+RightY"},
+    {GenericInputBinding::SmallMotor, prefix + "SmallMotor"},
+    {GenericInputBinding::LargeMotor, prefix + "LargeMotor"},
+  };
+}
+#endif
+
+} // namespace
+
 const char* SettingInfo::StringDefaultValue() const
 {
   return default_value ? default_value : "";
@@ -812,6 +851,9 @@ void Settings::UpdateLogSettings()
   Log::SetConsoleOutputParams(log_to_console, log_timestamps);
   Log::SetDebugOutputParams(log_to_debug);
 
+#ifdef __SWITCH__
+  Log::SetFileOutputParams(false, nullptr);
+#else
   if (log_to_file)
   {
     Log::SetFileOutputParams(log_to_file, Path::Combine(EmuFolders::DataRoot, "duckstation.log").c_str(),
@@ -821,6 +863,7 @@ void Settings::UpdateLogSettings()
   {
     Log::SetFileOutputParams(false, nullptr);
   }
+#endif
 }
 
 void Settings::SetDefaultControllerConfig(SettingsInterface& si)
@@ -843,6 +886,13 @@ void Settings::SetDefaultControllerConfig(SettingsInterface& si)
 #ifndef __ANDROID__
   // Use the automapper to set this up.
   InputManager::MapController(si, 0, InputManager::GetGenericBindingMapping("Keyboard"));
+#endif
+
+#ifdef __SWITCH__
+  si.SetBoolValue("InputSources", "Switch", true);
+  InputManager::MapController(si, 0, GetSwitchControllerMapping(0));
+  si.SetBoolValue(Controller::GetSettingsSection(0).c_str(), "ForceAnalogOnReset", true);
+  si.SetBoolValue(Controller::GetSettingsSection(0).c_str(), "AnalogDPadInDigitalMode", true);
 #endif
 }
 
@@ -1813,6 +1863,21 @@ std::string EmuFolders::UserResources;
 
 void EmuFolders::SetDefaults()
 {
+#ifdef __SWITCH__
+  Bios = "sdmc:/tico/system/psx";
+  Cache = "sdmc:/tico/cache/duckstation";
+  Cheats = "sdmc:/tico/system/psx/cheats";
+  Covers = "sdmc:/tico/assets/covers/psx";
+  Dumps = "sdmc:/tico/cache/duckstation/dumps";
+  GameSettings = "sdmc:/tico/config/duckstation/gamesettings";
+  InputProfiles = "sdmc:/tico/config/duckstation/inputprofiles";
+  MemoryCards = "sdmc:/tico/saves/psx";
+  SaveStates = "sdmc:/tico/states/psx";
+  Screenshots = "sdmc:/tico/screenshots/psx";
+  Shaders = "sdmc:/tico/config/duckstation/shaders";
+  Textures = "sdmc:/tico/textures/psx";
+  UserResources = "sdmc:/tico/config/duckstation/resources";
+#else
   Bios = Path::Combine(DataRoot, "bios");
   Cache = Path::Combine(DataRoot, "cache");
   Cheats = Path::Combine(DataRoot, "cheats");
@@ -1826,6 +1891,7 @@ void EmuFolders::SetDefaults()
   Shaders = Path::Combine(DataRoot, "shaders");
   Textures = Path::Combine(DataRoot, "textures");
   UserResources = Path::Combine(DataRoot, "resources");
+#endif
 }
 
 static std::string LoadPathFromSettings(SettingsInterface& si, const std::string& root, const char* section,
@@ -1842,6 +1908,9 @@ static std::string LoadPathFromSettings(SettingsInterface& si, const std::string
 
 void EmuFolders::LoadConfig(SettingsInterface& si)
 {
+#ifdef __SWITCH__
+  SetDefaults();
+#else
   Bios = LoadPathFromSettings(si, DataRoot, "BIOS", "SearchDirectory", "bios");
   Cache = LoadPathFromSettings(si, DataRoot, "Folders", "Cache", "cache");
   Cheats = LoadPathFromSettings(si, DataRoot, "Folders", "Cheats", "cheats");
@@ -1855,6 +1924,7 @@ void EmuFolders::LoadConfig(SettingsInterface& si)
   Shaders = LoadPathFromSettings(si, DataRoot, "Folders", "Shaders", "shaders");
   Textures = LoadPathFromSettings(si, DataRoot, "Folders", "Textures", "textures");
   UserResources = LoadPathFromSettings(si, DataRoot, "Folders", "UserResources", "resources");
+#endif
 
   Log_DevFmt("BIOS Directory: {}", Bios);
   Log_DevFmt("Cache Directory: {}", Cache);

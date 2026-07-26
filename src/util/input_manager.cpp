@@ -608,6 +608,9 @@ static std::array<const char*, static_cast<u32>(InputSourceType::Count)> s_input
 #ifdef __ANDROID__
   "Android",
 #endif
+#ifdef __SWITCH__
+  "Switch",
+#endif
 }};
 
 InputSource* InputManager::GetInputSourceInterface(InputSourceType type)

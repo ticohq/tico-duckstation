@@ -175,6 +175,12 @@ bool HTTPDownloaderCurl::StartRequest(HTTPDownloader::Request* request)
   curl_easy_setopt(req->handle, CURLOPT_NOSIGNAL, 1L);
   curl_easy_setopt(req->handle, CURLOPT_PRIVATE, req);
   curl_easy_setopt(req->handle, CURLOPT_FOLLOWLOCATION, 1L);
+#ifdef __SWITCH__
+  // devkitPro's Switch curl environment does not provide a usable CA bundle here.
+  // Without this, RetroAchievements requests fail with CURLE_PEER_FAILED_VERIFICATION (60).
+  curl_easy_setopt(req->handle, CURLOPT_SSL_VERIFYPEER, 0L);
+  curl_easy_setopt(req->handle, CURLOPT_SSL_VERIFYHOST, 0L);
+#endif
 
   if (request->type == Request::Type::Post)
   {

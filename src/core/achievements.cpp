@@ -34,6 +34,10 @@
 #include "util/platform_misc.h"
 #include "util/state_wrapper.h"
 
+#ifdef __SWITCH__
+#include "tico/TicoDuckBridge.h"
+#endif
+
 #include "IconsFontAwesome5.h"
 #include "IconsPromptFont.h"
 #include "fmt/format.h"
@@ -47,7 +51,9 @@
 #include <cstdarg>
 #include <cstdlib>
 #include <ctime>
+#include <fstream>
 #include <functional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -166,11 +172,18 @@ static void HandleServerReconnectedEvent(const rc_client_event_t* event);
 
 static void ClientLoginWithTokenCallback(int result, const char* error_message, rc_client_t* client, void* userdata);
 static void ClientLoginWithPasswordCallback(int result, const char* error_message, rc_client_t* client, void* userdata);
+static void ClientLoginWithPasswordAsyncCallback(int result, const char* error_message, rc_client_t* client,
+                                                 void* userdata);
 static void ClientLoadGameCallback(int result, const char* error_message, rc_client_t* client, void* userdata);
 
 static void DisplayHardcoreDeferredMessage();
 static void DisplayAchievementSummary();
+static void PreloadAchievementBadges();
 static void UpdateRichPresence(std::unique_lock<std::recursive_mutex>& lock);
+static bool ShouldUseFullscreenUI();
+#ifdef __SWITCH__
+static void SaveTicoRAToken(const char* token);
+#endif
 
 static void LeaderboardFetchNearbyCallback(int result, const char* error_message,
                                            rc_client_leaderboard_entry_list_t* list, rc_client_t* client,
@@ -324,6 +337,110 @@ void Achievements::DownloadImage(std::string url, std::string cache_filename)
   s_http_downloader->CreateRequest(std::move(url), std::move(callback));
 }
 
+bool Achievements::ShouldUseFullscreenUI()
+{
+#ifdef __SWITCH__
+  return false;
+#else
+  return FullscreenUI::Initialize();
+#endif
+}
+
+#ifdef __SWITCH__
+static std::string EscapeTicoJsonString(const char* value)
+{
+  std::string escaped;
+  if (!value)
+    return escaped;
+
+  for (const char* ch = value; *ch; ch++)
+  {
+    if (*ch == '"' || *ch == '\\')
+      escaped.push_back('\\');
+    escaped.push_back(*ch);
+  }
+
+  return escaped;
+}
+
+static bool FindTicoJsonStringBounds(const std::string& text, const char* key, size_t& value_begin, size_t& value_end)
+{
+  const std::string pattern = std::string("\"") + key + "\"";
+  const size_t key_pos = text.find(pattern);
+  if (key_pos == std::string::npos)
+    return false;
+
+  const size_t colon_pos = text.find(':', key_pos + pattern.size());
+  if (colon_pos == std::string::npos)
+    return false;
+
+  const size_t quote_pos = text.find('"', colon_pos + 1);
+  if (quote_pos == std::string::npos)
+    return false;
+
+  bool escape = false;
+  for (size_t i = quote_pos + 1; i < text.size(); i++)
+  {
+    const char ch = text[i];
+    if (escape)
+    {
+      escape = false;
+      continue;
+    }
+    if (ch == '\\')
+    {
+      escape = true;
+      continue;
+    }
+    if (ch == '"')
+    {
+      value_begin = quote_pos + 1;
+      value_end = i;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void Achievements::SaveTicoRAToken(const char* token)
+{
+  if (!token || token[0] == 0)
+    return;
+
+  std::ifstream input("sdmc:/tico/config/accounts.jsonc");
+  std::ostringstream ss;
+  if (input.is_open())
+    ss << input.rdbuf();
+
+  std::string text = ss.str();
+  if (text.find('{') == std::string::npos || text.find('}') == std::string::npos)
+    text = "{\n}\n";
+
+  const std::string escaped_token = EscapeTicoJsonString(token);
+  size_t value_begin = 0;
+  size_t value_end = 0;
+  if (FindTicoJsonStringBounds(text, "ra_token", value_begin, value_end))
+  {
+    text.replace(value_begin, value_end - value_begin, escaped_token);
+  }
+  else
+  {
+    const size_t object_end = text.rfind('}');
+    const bool has_existing_entry = text.find(':') != std::string::npos && text.find(':') < object_end;
+    std::string insertion = has_existing_entry ? ",\n" : "\n";
+    insertion += "    \"ra_token\": \"";
+    insertion += escaped_token;
+    insertion += "\"\n";
+    text.insert(object_end, insertion);
+  }
+
+  std::ofstream output("sdmc:/tico/config/accounts.jsonc");
+  if (output.is_open())
+    output << text;
+}
+#endif
+
 bool Achievements::IsActive()
 {
 #ifdef ENABLE_RAINTEGRATION
@@ -418,11 +535,18 @@ bool Achievements::Initialize()
 
   std::string username = Host::GetBaseStringSettingValue("Cheevos", "Username");
   std::string api_token = Host::GetBaseStringSettingValue("Cheevos", "Token");
+  std::string password = Host::GetBaseStringSettingValue("Cheevos", "Password");
   if (!username.empty() && !api_token.empty())
   {
     Log_InfoPrintf("Attempting login with user '%s'...", username.c_str());
     s_login_request = rc_client_begin_login_with_token(s_client, username.c_str(), api_token.c_str(),
                                                        ClientLoginWithTokenCallback, nullptr);
+  }
+  else if (!username.empty() && !password.empty())
+  {
+    Log_InfoPrintf("Attempting password login with user '%s'...", username.c_str());
+    s_login_request = rc_client_begin_login_with_password(s_client, username.c_str(), password.c_str(),
+                                                         ClientLoginWithPasswordAsyncCallback, nullptr);
   }
 
   // Hardcore mode isn't enabled when achievements first starts, if a game is already running.
@@ -904,6 +1028,13 @@ void Achievements::ClientLoadGameCallback(int result, const char* error_message,
   {
     // Unknown game.
     Log_InfoPrintf("Unknown game '%s', disabling achievements.", s_game_hash.c_str());
+#ifdef __SWITCH__
+    if (g_settings.achievements_notifications)
+    {
+      TicoDuck::PushRANotification("RetroAchievements", "Rom hash doesn't match or unable to recognize the game.",
+                                   "ra_icon", ACHIEVEMENT_SUMMARY_NOTIFICATION_TIME);
+    }
+#endif
     DisableHardcoreMode();
     return;
   }
@@ -947,7 +1078,7 @@ void Achievements::ClientLoadGameCallback(int result, const char* error_message,
   s_game_icon = {};
 
   // ensure fullscreen UI is ready for notifications
-  FullscreenUI::Initialize();
+  (void)ShouldUseFullscreenUI();
 
   if (const std::string_view badge_name = info->badge_name; !badge_name.empty())
   {
@@ -967,7 +1098,16 @@ void Achievements::ClientLoadGameCallback(int result, const char* error_message,
   }
 
   UpdateGameSummary();
+  PreloadAchievementBadges();
   DisplayAchievementSummary();
+
+#ifdef __SWITCH__
+  if (g_settings.achievements_notifications)
+  {
+    TicoDuck::PushRANotification("RetroAchievements", fmt::format("Playing: {}", s_game_title),
+                                 s_game_icon.empty() ? "ra_icon" : s_game_icon, ACHIEVEMENT_SUMMARY_NOTIFICATION_TIME);
+  }
+#endif
 
   Host::OnAchievementsRefreshed();
 }
@@ -1006,7 +1146,7 @@ void Achievements::ClearGameHash()
 
 void Achievements::DisplayAchievementSummary()
 {
-  if (g_settings.achievements_notifications && FullscreenUI::Initialize())
+  if (g_settings.achievements_notifications && ShouldUseFullscreenUI())
   {
     std::string title;
     if (IsHardcoreModeActive())
@@ -1036,9 +1176,38 @@ void Achievements::DisplayAchievementSummary()
     PlatformMisc::PlaySoundAsync(EmuFolders::GetOverridableResourcePath(INFO_SOUND_NAME).c_str());
 }
 
+void Achievements::PreloadAchievementBadges()
+{
+  if (!s_client || !HasActiveGame())
+    return;
+
+  rc_client_achievement_list_t* list =
+    rc_client_create_achievement_list(s_client, RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE_AND_UNOFFICIAL,
+                                      RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_PROGRESS);
+  if (!list)
+    return;
+
+  for (u32 bucket_index = 0; bucket_index < list->num_buckets; bucket_index++)
+  {
+    const rc_client_achievement_bucket_t& bucket = list->buckets[bucket_index];
+    for (u32 achievement_index = 0; achievement_index < bucket.num_achievements; achievement_index++)
+    {
+      const rc_client_achievement_t* achievement = bucket.achievements[achievement_index];
+      if (!achievement || achievement->badge_name[0] == 0)
+        continue;
+
+      GetAchievementBadgePath(achievement, achievement->state);
+      if (achievement->state != RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED)
+        GetAchievementBadgePath(achievement, RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED);
+    }
+  }
+
+  rc_client_destroy_achievement_list(list);
+}
+
 void Achievements::DisplayHardcoreDeferredMessage()
 {
-  if (g_settings.achievements_hardcore_mode && !s_hardcore_mode && System::IsValid() && FullscreenUI::Initialize())
+  if (g_settings.achievements_hardcore_mode && !s_hardcore_mode && System::IsValid() && ShouldUseFullscreenUI())
   {
     ImGuiFullscreen::ShowToast(std::string(),
                                TRANSLATE_STR("Achievements", "Hardcore mode will be enabled on system reset."),
@@ -1064,7 +1233,7 @@ void Achievements::HandleUnlockEvent(const rc_client_event_t* event)
   Log_InfoPrintf("Achievement %s (%u) for game %u unlocked", cheevo->title, cheevo->id, s_game_id);
   UpdateGameSummary();
 
-  if (g_settings.achievements_notifications && FullscreenUI::Initialize())
+  if (g_settings.achievements_notifications)
   {
     std::string title;
     if (cheevo->category == RC_CLIENT_ACHIEVEMENT_CATEGORY_UNOFFICIAL)
@@ -1073,14 +1242,26 @@ void Achievements::HandleUnlockEvent(const rc_client_event_t* event)
       title = cheevo->title;
 
     std::string badge_path = GetAchievementBadgePath(cheevo, cheevo->state);
+#ifdef __SWITCH__
+    TicoDuck::PushRANotification(title, cheevo->description, badge_path,
+                                 static_cast<float>(g_settings.achievements_notification_duration));
+#endif
 
-    ImGuiFullscreen::AddNotification(fmt::format("achievement_unlock_{}", cheevo->id),
-                                     static_cast<float>(g_settings.achievements_notification_duration),
-                                     std::move(title), cheevo->description, std::move(badge_path));
+    if (ShouldUseFullscreenUI())
+    {
+      ImGuiFullscreen::AddNotification(fmt::format("achievement_unlock_{}", cheevo->id),
+                                       static_cast<float>(g_settings.achievements_notification_duration),
+                                       std::move(title), cheevo->description, std::move(badge_path));
+    }
   }
 
   if (g_settings.achievements_sound_effects)
+  {
     PlatformMisc::PlaySoundAsync(EmuFolders::GetOverridableResourcePath(UNLOCK_SOUND_NAME).c_str());
+#ifdef __SWITCH__
+    TicoDuck::PlayRATrophySound();
+#endif
+  }
 }
 
 void Achievements::HandleGameCompleteEvent(const rc_client_event_t* event)
@@ -1088,22 +1269,33 @@ void Achievements::HandleGameCompleteEvent(const rc_client_event_t* event)
   Log_InfoPrintf("Game %u complete", s_game_id);
   UpdateGameSummary();
 
-  if (g_settings.achievements_notifications && FullscreenUI::Initialize())
+  if (g_settings.achievements_notifications)
   {
     std::string title = fmt::format(TRANSLATE_FS("Achievements", "Mastered {}"), s_game_title);
     std::string message = fmt::format(TRANSLATE_FS("Achievements", "{} achievements, {} points"),
                                       s_game_summary.num_unlocked_achievements, s_game_summary.points_unlocked);
 
-    ImGuiFullscreen::AddNotification("achievement_mastery", GAME_COMPLETE_NOTIFICATION_TIME, std::move(title),
-                                     std::move(message), s_game_icon);
+#ifdef __SWITCH__
+    TicoDuck::PushRANotification(title, message, s_game_icon.empty() ? "ra_icon" : s_game_icon,
+                                 GAME_COMPLETE_NOTIFICATION_TIME);
+#endif
+
+    if (ShouldUseFullscreenUI())
+      ImGuiFullscreen::AddNotification("achievement_mastery", GAME_COMPLETE_NOTIFICATION_TIME, std::move(title),
+                                       std::move(message), s_game_icon);
   }
+
+#ifdef __SWITCH__
+  if (g_settings.achievements_sound_effects)
+    TicoDuck::PlayRATrophySound();
+#endif
 }
 
 void Achievements::HandleLeaderboardStartedEvent(const rc_client_event_t* event)
 {
   Log_DevPrintf("Leaderboard %u (%s) started", event->leaderboard->id, event->leaderboard->title);
 
-  if (g_settings.achievements_leaderboard_notifications && FullscreenUI::Initialize())
+  if (g_settings.achievements_leaderboard_notifications && ShouldUseFullscreenUI())
   {
     std::string title = event->leaderboard->title;
     std::string message = TRANSLATE_STR("Achievements", "Leaderboard attempt started.");
@@ -1118,7 +1310,7 @@ void Achievements::HandleLeaderboardFailedEvent(const rc_client_event_t* event)
 {
   Log_DevPrintf("Leaderboard %u (%s) failed", event->leaderboard->id, event->leaderboard->title);
 
-  if (g_settings.achievements_leaderboard_notifications && FullscreenUI::Initialize())
+  if (g_settings.achievements_leaderboard_notifications && ShouldUseFullscreenUI())
   {
     std::string title = event->leaderboard->title;
     std::string message = TRANSLATE_STR("Achievements", "Leaderboard attempt failed.");
@@ -1133,7 +1325,7 @@ void Achievements::HandleLeaderboardSubmittedEvent(const rc_client_event_t* even
 {
   Log_DevPrintf("Leaderboard %u (%s) submitted", event->leaderboard->id, event->leaderboard->title);
 
-  if (g_settings.achievements_leaderboard_notifications && FullscreenUI::Initialize())
+  if (g_settings.achievements_leaderboard_notifications && ShouldUseFullscreenUI())
   {
     static const char* value_strings[NUM_RC_CLIENT_LEADERBOARD_FORMATS] = {
       TRANSLATE_NOOP("Achievements", "Your Time: {}{}"),
@@ -1163,7 +1355,7 @@ void Achievements::HandleLeaderboardScoreboardEvent(const rc_client_event_t* eve
   Log_DevPrintf("Leaderboard %u scoreboard rank %u of %u", event->leaderboard_scoreboard->leaderboard_id,
                 event->leaderboard_scoreboard->new_rank, event->leaderboard_scoreboard->num_entries);
 
-  if (g_settings.achievements_leaderboard_notifications && FullscreenUI::Initialize())
+  if (g_settings.achievements_leaderboard_notifications && ShouldUseFullscreenUI())
   {
     static const char* value_strings[NUM_RC_CLIENT_LEADERBOARD_FORMATS] = {
       TRANSLATE_NOOP("Achievements", "Your Time: {} (Best: {})"),
@@ -1314,7 +1506,7 @@ void Achievements::HandleServerDisconnectedEvent(const rc_client_event_t* event)
 {
   Log_WarningPrintf("Server disconnected.");
 
-  if (FullscreenUI::Initialize())
+    if (ShouldUseFullscreenUI())
   {
     ImGuiFullscreen::ShowToast(
       TRANSLATE_STR("Achievements", "Achievements Disconnected"),
@@ -1328,7 +1520,7 @@ void Achievements::HandleServerReconnectedEvent(const rc_client_event_t* event)
 {
   Log_WarningPrintf("Server reconnected.");
 
-  if (FullscreenUI::Initialize())
+    if (ShouldUseFullscreenUI())
   {
     ImGuiFullscreen::ShowToast(TRANSLATE_STR("Achievements", "Achievements Reconnected"),
                                TRANSLATE_STR("Achievements", "All pending unlock requests have completed."),
@@ -1411,7 +1603,7 @@ void Achievements::SetHardcoreMode(bool enabled, bool force_display_message)
   // new mode
   s_hardcore_mode = enabled;
 
-  if (System::IsValid() && (HasActiveGame() || force_display_message) && FullscreenUI::Initialize())
+  if (System::IsValid() && (HasActiveGame() || force_display_message) && ShouldUseFullscreenUI())
   {
     ImGuiFullscreen::ShowToast(std::string(),
                                enabled ? TRANSLATE_STR("Achievements", "Hardcore mode is now enabled.") :
@@ -1696,8 +1888,45 @@ void Achievements::ClientLoginWithPasswordCallback(int result, const char* error
   Host::SetBaseStringSettingValue("Cheevos", "Token", user->token);
   Host::SetBaseStringSettingValue("Cheevos", "LoginTimestamp", fmt::format("{}", std::time(nullptr)).c_str());
   Host::CommitBaseSettingChanges();
+#ifdef __SWITCH__
+  SaveTicoRAToken(user->token);
+#endif
 
   ShowLoginSuccess(client);
+}
+
+void Achievements::ClientLoginWithPasswordAsyncCallback(int result, const char* error_message, rc_client_t* client,
+                                                        void* userdata)
+{
+  s_login_request = nullptr;
+
+  if (result != RC_OK)
+  {
+    ReportFmtError("Login failed: {}", error_message ? error_message : "Unknown");
+    Host::OnAchievementsLoginRequested(LoginRequestReason::TokenInvalid);
+    return;
+  }
+
+  const rc_client_user_t* user = rc_client_get_user_info(client);
+  if (!user || !user->token)
+  {
+    ReportError("rc_client_get_user_info() returned NULL");
+    Host::OnAchievementsLoginRequested(LoginRequestReason::TokenInvalid);
+    return;
+  }
+
+  Host::SetBaseStringSettingValue("Cheevos", "Username", user->username);
+  Host::SetBaseStringSettingValue("Cheevos", "Token", user->token);
+  Host::SetBaseStringSettingValue("Cheevos", "LoginTimestamp", fmt::format("{}", std::time(nullptr)).c_str());
+  Host::CommitBaseSettingChanges();
+#ifdef __SWITCH__
+  SaveTicoRAToken(user->token);
+#endif
+
+  ShowLoginSuccess(client);
+
+  if (System::IsValid())
+    BeginLoadGame();
 }
 
 void Achievements::ClientLoginWithTokenCallback(int result, const char* error_message, rc_client_t* client,
@@ -1707,7 +1936,20 @@ void Achievements::ClientLoginWithTokenCallback(int result, const char* error_me
 
   if (result != RC_OK)
   {
-    ReportFmtError("Login failed: {}", error_message);
+    const std::string username = Host::GetBaseStringSettingValue("Cheevos", "Username");
+    const std::string password = Host::GetBaseStringSettingValue("Cheevos", "Password");
+    if (!username.empty() && !password.empty())
+    {
+      Log_WarningPrintf("Token login failed for '%s', retrying with password.", username.c_str());
+      Host::DeleteBaseSettingValue("Cheevos", "Token");
+      Host::CommitBaseSettingChanges();
+      s_login_request = rc_client_begin_login_with_password(s_client, username.c_str(), password.c_str(),
+                                                           ClientLoginWithPasswordAsyncCallback, nullptr);
+      if (s_login_request)
+        return;
+    }
+
+    ReportFmtError("Login failed: {}", error_message ? error_message : "Unknown");
     Host::OnAchievementsLoginRequested(LoginRequestReason::TokenInvalid);
     return;
   }
@@ -1740,7 +1982,7 @@ void Achievements::ShowLoginNotification()
   if (!user)
     return;
 
-  if (g_settings.achievements_notifications && FullscreenUI::Initialize())
+  if (g_settings.achievements_notifications && ShouldUseFullscreenUI())
   {
     std::string badge_path = GetLoggedInUserBadgePath();
     std::string title = user->display_name;
@@ -1847,7 +2089,7 @@ void Achievements::ConfirmHardcoreModeDisableAsync(const char* trigger, std::fun
   }
 #endif
 
-  if (!FullscreenUI::Initialize())
+  if (!ShouldUseFullscreenUI())
   {
     Host::AddOSDMessage(fmt::format(TRANSLATE_FS("Achievements", "Cannot {} while hardcode mode is active."), trigger),
                         Host::OSD_WARNING_DURATION);

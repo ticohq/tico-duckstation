@@ -1,8 +1,10 @@
 ## Installation
 
-To use it put the switch folder from the 7z file onto the root of your SD card, so that there is a `duckstation` folder inside the `switch` folder.
+This branch builds the GPL Switch port with the Tico overlay enabled for the nogui frontend.
 
-Alternatively you can also put the duckstation folder wherever you like.
+To use it put the switch folder from the 7z file onto the root of your SD card, so that there is a `tico-duckstation` folder inside the `switch` folder.
+
+Alternatively you can also put the tico-duckstation folder wherever you like.
 
 ## Building
 

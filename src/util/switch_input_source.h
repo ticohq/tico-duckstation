@@ -37,17 +37,20 @@ public:
     NUM_CONTROLLERS = 4,
     NUM_BUTTONS = 28,
     NUM_AXIS = 4,
+    NUM_VIBRATION_HANDLES = 6,
   };
-private:
+
   struct ControllerData
   {
-    HidVibrationDeviceHandle vibration_handles[4];
+    HidVibrationDeviceHandle vibration_handles[NUM_VIBRATION_HANDLES];
+    bool vibration_handle_valid[NUM_VIBRATION_HANDLES] = {};
 
     PadState pad_state;
     bool connected = false;
     u64 buttons = 0;
   };
 
+private:
   using ControllerDataArray = std::array<ControllerData, NUM_CONTROLLERS>;
 
   ControllerDataArray m_controllers;

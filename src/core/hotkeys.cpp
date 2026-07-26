@@ -148,7 +148,7 @@ static bool CanPause()
 #endif
 
 BEGIN_HOTKEY_LIST(g_common_hotkeys)
-#ifndef __ANDROID__
+#if !defined(__ANDROID__) && !defined(__SWITCH__)
 DEFINE_HOTKEY("OpenPauseMenu", TRANSLATE_NOOP("Hotkeys", "General"), TRANSLATE_NOOP("Hotkeys", "Open Pause Menu"),
               [](s32 pressed) {
                 if (!pressed && CanPause())
