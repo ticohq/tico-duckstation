@@ -1200,6 +1200,15 @@ void FullscreenUI::DoChangeDisc()
 
 void FullscreenUI::DoCheatsMenu()
 {
+  if (!g_settings.enable_cheats)
+  {
+    Host::AddKeyedOSDMessage("cheats_disabled",
+                             FSUI_STR("Cheats are not enabled. Enable them in Settings > Console first."),
+                             Host::OSD_INFO_DURATION);
+    ReturnToPreviousWindow();
+    return;
+  }
+
   CheatList* cl = System::GetCheatList();
   if (!cl)
   {
@@ -5295,7 +5304,7 @@ void FullscreenUI::DrawPauseMenu()
         }
 
         if (ActiveButton(FSUI_ICONSTR(ICON_FA_FROWN_OPEN, "Cheat List"), false,
-                         !System::GetGameSerial().empty() && g_settings.enable_cheats))
+                         !System::GetGameSerial().empty()))
         {
           s_current_main_window = MainWindowType::None;
           DoCheatsMenu();
@@ -7119,6 +7128,7 @@ TRANSLATE_NOOP("FullscreenUI", "Change View");
 TRANSLATE_NOOP("FullscreenUI", "Changes settings for the application.");
 TRANSLATE_NOOP("FullscreenUI", "Changes the aspect ratio used to display the console's output to the screen.");
 TRANSLATE_NOOP("FullscreenUI", "Cheat List");
+TRANSLATE_NOOP("FullscreenUI", "Cheats are not enabled. Enable them in Settings > Console first.");
 TRANSLATE_NOOP("FullscreenUI", "Chooses the backend to use for rendering the console/game visuals.");
 TRANSLATE_NOOP("FullscreenUI", "Chooses the language used for UI elements.");
 TRANSLATE_NOOP("FullscreenUI", "Chroma Smoothing For 24-Bit Display");
