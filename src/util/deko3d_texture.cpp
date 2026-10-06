@@ -18,13 +18,35 @@ std::unique_ptr<Deko3DTexture> Deko3DTexture::Create(u32 width, u32 height, u32 
   else
     dk_image_type = samples > 1 ? DkImageType_2DMS : DkImageType_2D;
 
-  static constexpr std::array<DkImageFormat, static_cast<u32>(Format::MaxCount)> dk_image_format_mapping{
-    {DkImageFormat_None,         DkImageFormat_RGBA8_Unorm,  DkImageFormat_BGRA8_Unorm,  DkImageFormat_BGR565_Unorm,
-     DkImageFormat_BGR5A1_Unorm, DkImageFormat_R8_Unorm,     DkImageFormat_Z16,          DkImageFormat_R16_Unorm,
-     DkImageFormat_R16_Sint,     DkImageFormat_R16_Uint,     DkImageFormat_R16_Float,    DkImageFormat_R32_Sint,
-     DkImageFormat_R32_Uint,     DkImageFormat_R32_Float,    DkImageFormat_RG8_Unorm,    DkImageFormat_RG16_Unorm,
-     DkImageFormat_RG16_Float,   DkImageFormat_RG32_Float,   DkImageFormat_RGBA16_Unorm, DkImageFormat_RGBA16_Float,
-     DkImageFormat_RGBA32_Float, DkImageFormat_RGB10A2_Unorm}};
+  // one entry per GPUTexture::Format, in its order (D24S8..D32FS8 included)
+  static constexpr std::array<DkImageFormat, static_cast<u32>(Format::MaxCount)> dk_image_format_mapping{{
+    DkImageFormat_None,          // Unknown
+    DkImageFormat_RGBA8_Unorm,   // RGBA8
+    DkImageFormat_BGRA8_Unorm,   // BGRA8
+    DkImageFormat_BGR565_Unorm,  // RGB565
+    DkImageFormat_BGR5A1_Unorm,  // RGBA5551
+    DkImageFormat_R8_Unorm,      // R8
+    DkImageFormat_Z16,           // D16
+    DkImageFormat_Z24S8,         // D24S8
+    DkImageFormat_ZF32,          // D32F
+    DkImageFormat_ZF32_X24S8,    // D32FS8
+    DkImageFormat_R16_Unorm,     // R16
+    DkImageFormat_R16_Sint,      // R16I
+    DkImageFormat_R16_Uint,      // R16U
+    DkImageFormat_R16_Float,     // R16F
+    DkImageFormat_R32_Sint,      // R32I
+    DkImageFormat_R32_Uint,      // R32U
+    DkImageFormat_R32_Float,     // R32F
+    DkImageFormat_RG8_Unorm,     // RG8
+    DkImageFormat_RG16_Unorm,    // RG16
+    DkImageFormat_RG16_Float,    // RG16F
+    DkImageFormat_RG32_Float,    // RG32F
+    DkImageFormat_RGBA16_Unorm,  // RGBA16
+    DkImageFormat_RGBA16_Float,  // RGBA16F
+    DkImageFormat_RGBA32_Float,  // RGBA32F
+    DkImageFormat_RGB10A2_Unorm, // RGB10A2
+  }};
+  static_assert(static_cast<u32>(Format::MaxCount) == 25, "a format was added: map it above");
 
   Deko3DDevice& dev = Deko3DDevice::GetInstance();
 

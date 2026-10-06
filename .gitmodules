@@ -11,3 +11,6 @@
 [submodule "tico/deps/SPIRV-Cross"]
 	path = tico/deps/SPIRV-Cross
 	url = https://github.com/KhronosGroup/SPIRV-Cross.git
+[submodule "tico/deps/SPIRV-Reflect"]
+	path = tico/deps/SPIRV-Reflect
+	url = https://github.com/KhronosGroup/SPIRV-Reflect.git
