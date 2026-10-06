@@ -1882,19 +1882,22 @@ std::string EmuFolders::UserResources;
 void EmuFolders::SetDefaults()
 {
 #ifdef __SWITCH__
-  Bios = "sdmc:/tico/system/psx";
+  // DuckStation's own files live in sdmc:/tico/system/duckstation (the BIOS
+  // at its top, where tico's BIOS check looks: module.json's system_dir);
+  // the game's saves, states and pictures in tico's per-console folders
+  Bios = "sdmc:/tico/system/duckstation";
   Cache = "sdmc:/tico/cache/duckstation";
-  Cheats = "sdmc:/tico/system/psx/cheats";
+  Cheats = "sdmc:/tico/system/duckstation/cheats";
   Covers = "sdmc:/tico/assets/covers/psx";
   Dumps = "sdmc:/tico/cache/duckstation/dumps";
-  GameSettings = "sdmc:/tico/config/duckstation/gamesettings";
-  InputProfiles = "sdmc:/tico/config/duckstation/inputprofiles";
+  GameSettings = "sdmc:/tico/system/duckstation/gamesettings";
+  InputProfiles = "sdmc:/tico/system/duckstation/inputprofiles";
   MemoryCards = "sdmc:/tico/saves/psx";
   SaveStates = "sdmc:/tico/states/psx";
   Screenshots = "sdmc:/tico/screenshots/psx";
-  Shaders = "sdmc:/tico/config/duckstation/shaders";
+  Shaders = "sdmc:/tico/system/duckstation/shaders";
   Textures = "sdmc:/tico/textures/psx";
-  UserResources = "sdmc:/tico/config/duckstation/resources";
+  UserResources = "sdmc:/tico/system/duckstation/resources";
 #else
   Bios = Path::Combine(DataRoot, "bios");
   Cache = Path::Combine(DataRoot, "cache");

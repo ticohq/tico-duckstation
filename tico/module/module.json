@@ -38,5 +38,6 @@
       }
     }
   ],
-  "achievements": true
+  "achievements": true,
+  "system_dir": "duckstation"
 }

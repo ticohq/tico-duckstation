@@ -745,10 +745,11 @@ void NoGUIHost::SetDataDirectory()
 {
 #ifdef __SWITCH__
   FileSystem::EnsureDirectoryExists("sdmc:/tico", false);
+  FileSystem::EnsureDirectoryExists("sdmc:/tico/system", false);
+  FileSystem::EnsureDirectoryExists("sdmc:/tico/system/duckstation", false);
   FileSystem::EnsureDirectoryExists("sdmc:/tico/config", false);
-  FileSystem::EnsureDirectoryExists("sdmc:/tico/config/duckstation", false);
   FileSystem::EnsureDirectoryExists("sdmc:/tico/config/cores", false);
-  EmuFolders::DataRoot = "sdmc:/tico/config/duckstation";
+  EmuFolders::DataRoot = "sdmc:/tico/system/duckstation";
   return;
 #endif
 
@@ -781,15 +782,24 @@ bool NoGUIHost::InitializeConfig(std::string settings_filename)
     return false;
 
 #ifdef __SWITCH__
-  settings_filename = Path::Combine(EmuFolders::DataRoot, "settings.ini");
-  if (FileSystem::FileExists("sdmc:/tico/cores/settings.ini"))
-    FileSystem::DeleteFile("sdmc:/tico/cores/settings.ini");
+  // No settings.ini: tico's config (module settings.json) is the only
+  // source. The settings are built in memory at every launch, from
+  // DuckStation's defaults and then tico's duckstation.jsonc, and never
+  // saved (an INISettingsInterface without a file). Earlier builds' files go.
+  for (const char* old_ini : {"sdmc:/tico/cores/settings.ini", "sdmc:/tico/config/duckstation/settings.ini",
+                              "sdmc:/tico/system/duckstation/settings.ini"})
+  {
+    if (FileSystem::FileExists(old_ini))
+      FileSystem::DeleteFile(old_ini);
+  }
+  settings_filename.clear();
+  Log_InfoPrint("Settings come from tico's duckstation.jsonc (no settings.ini).");
 #else
   if (settings_filename.empty())
     settings_filename = Path::Combine(EmuFolders::DataRoot, "settings.ini");
+  Log_InfoPrintf("Loading config from %s.", settings_filename.c_str());
 #endif
 
-  Log_InfoPrintf("Loading config from %s.", settings_filename.c_str());
   s_base_settings_interface = std::make_unique<INISettingsInterface>(std::move(settings_filename));
   Host::Internal::SetBaseSettingsLayer(s_base_settings_interface.get());
 
@@ -994,6 +1004,10 @@ void Host::RequestExitBigPicture()
 
 void NoGUIHost::SaveSettings()
 {
+#ifdef __SWITCH__
+  // nothing to save: the settings come from tico's config at every launch
+  return;
+#endif
   auto lock = Host::GetSettingsLock();
   if (!s_base_settings_interface->Save())
     Log_ErrorPrintf("Failed to save settings.");

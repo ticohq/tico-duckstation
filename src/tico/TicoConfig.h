@@ -3,7 +3,7 @@
 namespace TicoConfig
 {
 constexpr const char* TEST_ROM = "sdmc:/tico/roms/psx/game.cue";
-constexpr const char* SYSTEM_PATH = "sdmc:/tico/system/psx";
+constexpr const char* SYSTEM_PATH = "sdmc:/tico/system/duckstation";
 constexpr const char* SAVES_PATH = "sdmc:/tico/saves/psx";
 constexpr const char* STATES_PATH = "sdmc:/tico/states/psx";
 } // namespace TicoConfig
