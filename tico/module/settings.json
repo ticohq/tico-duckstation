@@ -392,14 +392,6 @@
                   "value": "Vulkan"
                 },
                 {
-                  "label": "OpenGL",
-                  "value": "OpenGL"
-                },
-                {
-                  "label": "Zink (OpenGL on Vulkan)",
-                  "value": "Zink"
-                },
-                {
                   "label": "Software",
                   "value": "Software"
                 }

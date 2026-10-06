@@ -518,9 +518,6 @@ static void ApplyTicoAchievementSettings(SettingsInterface& si)
 
 // Every duckstation_<Section>_<Key> in tico's config sets that key of
 // DuckStation's settings, so settings.json alone defines what tico shows.
-// The renderer is the one exception: Zink is DuckStation's OpenGL renderer
-// with Mesa's GL driver switched to Zink, which has to be chosen before EGL
-// starts.
 static void ApplyTicoGenericSettings(SettingsInterface& si, const std::string& text)
 {
   static constexpr std::string_view prefix = "duckstation_";
@@ -556,16 +553,9 @@ static void ApplyTicoGenericSettings(SettingsInterface& si, const std::string& t
     else
       continue;
 
-    if (section == "GPU" && key == "Renderer")
-    {
-      const bool zink = (value == "Zink");
-      if (zink || value == "OpenGL")
-      {
-        setenv("MESA_SWITCH_GL_DRIVER", zink ? "zink" : "nvc0", 1);
-        setenv("MESA_LOADER_DRIVER_OVERRIDE", zink ? "zink" : "nouveau", 1);
-        value = "OpenGL";
-      }
-    }
+    // OpenGL and Zink are no longer built: a config that still names one gets deko3D
+    if (section == "GPU" && key == "Renderer" && (value == "OpenGL" || value == "Zink"))
+      value = "deko3D";
     si.SetStringValue(section.c_str(), key.c_str(), value.c_str());
   }
 }

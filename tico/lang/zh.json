@@ -100,7 +100,6 @@
     "settings_duckstation_value_new_recompiler_experimental": "新重编译器（实验性）",
     "settings_duckstation_value_recompiler": "重编译器",
     "settings_duckstation_value_software": "软件",
-    "settings_duckstation_value_zink_opengl_on_vulkan": "Zink（基于 Vulkan 的 OpenGL）",
     "settings_duckstation_vibration_bias": "Vibration Bias",
     "settings_duckstation_widescreen_hack": "宽屏 Hack",
     "emulator_save_state": "保存状态",

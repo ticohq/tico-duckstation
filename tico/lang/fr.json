@@ -100,7 +100,6 @@
     "settings_duckstation_value_new_recompiler_experimental": "Nouveau recompilateur (expérimental)",
     "settings_duckstation_value_recompiler": "Recompilateur",
     "settings_duckstation_value_software": "Logiciel",
-    "settings_duckstation_value_zink_opengl_on_vulkan": "Zink (OpenGL sur Vulkan)",
     "settings_duckstation_vibration_bias": "Vibration Bias",
     "settings_duckstation_widescreen_hack": "Hack Écran Large",
     "emulator_save_state": "Sauvegarder",

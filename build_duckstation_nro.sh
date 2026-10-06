@@ -1,7 +1,6 @@
 #!/bin/bash
 # Builds tico-duckstation for tico: the core and its renderers (deko3D,
-# Vulkan on Mesa's NVK, OpenGL and Zink on Mesa, and Software), then the tico
-# frontend and the NRO. Runs inside the switch-dev image:
+# Vulkan on Mesa's NVK, and Software), then the tico frontend and the NRO. Runs inside the switch-dev image:
 #
 #   docker run --rm -v "$PWD:/work" -w /work ghcr.io/autorunhq/switch-dev:2026.10.05 ./build_duckstation_nro.sh
 #
@@ -141,7 +140,7 @@ fi
 "$PORTLIBS/bin/aarch64-none-elf-cmake" -S "$ROOT_DIR" -B "$CORE_BUILD" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_NOGUI_FRONTEND=ON -DBUILD_QT_FRONTEND=OFF -DBUILD_REGTEST=OFF -DBUILD_TESTS=OFF \
-    -DENABLE_OPENGL=ON -DENABLE_VULKAN=ON -DENABLE_CUBEB=OFF \
+    -DENABLE_OPENGL=OFF -DENABLE_VULKAN=ON -DENABLE_CUBEB=OFF \
     -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DTICO_DEPS_DIR="$DEPS_DIR" \
     -DTICO_GLSLANG_SOURCE="$TICO_DIR/deps/glslang" -DTICO_GLSLANG_BUILD="$GLSLANG_BUILD" \
