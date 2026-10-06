@@ -1733,7 +1733,7 @@ bool GPUDevice::TranslateVulkanSpvToLanguage(const std::span<const u8> spirv, GP
     break;
 #endif
 
-#ifdef ENABLE_OPENGL
+#if defined(ENABLE_OPENGL) || defined(__SWITCH__)
     case GPUShaderLanguage::GLSL:
     case GPUShaderLanguage::GLSLES:
     {
@@ -1763,6 +1763,36 @@ bool GPUDevice::TranslateVulkanSpvToLanguage(const std::span<const u8> spirv, GP
           static_cast<int>(sres));
         return {};
       }
+
+#ifdef __SWITCH__
+      // deko3D's slots: the uniform buffer (MapUniformBuffer) is binding 1,
+      // push constants (PushUniformBuffer) a uniform buffer at binding 0; the
+      // textures keep their binding (the slot), GLSL has no sets
+      if (GetRenderAPI() == RenderAPI::Deko3D)
+      {
+        if ((sres = ::spvc_compiler_options_set_bool(
+               soptions, SPVC_COMPILER_OPTION_GLSL_EMIT_PUSH_CONSTANT_AS_UNIFORM_BUFFER, true)) != SPVC_SUCCESS)
+        {
+          Error::SetStringFmt(error, "spvc_compiler_options_set_bool(EMIT_PUSH_CONSTANT_AS_UNIFORM_BUFFER) failed: {}",
+                              static_cast<int>(sres));
+          return {};
+        }
+
+        const spvc_reflected_resource* push_constants;
+        size_t push_constants_count;
+        if ((sres = dyn_libs::spvc_resources_get_resource_list_for_type(
+               resources, SPVC_RESOURCE_TYPE_PUSH_CONSTANT, &push_constants, &push_constants_count)) != SPVC_SUCCESS)
+        {
+          Error::SetStringFmt(error, "spvc_resources_get_resource_list_for_type() failed: {}", static_cast<int>(sres));
+          return {};
+        }
+
+        for (size_t i = 0; i < ubos_count; i++)
+          ::spvc_compiler_set_decoration(scompiler, ubos[i].id, SpvDecorationBinding, 1);
+        for (size_t i = 0; i < push_constants_count; i++)
+          ::spvc_compiler_set_decoration(scompiler, push_constants[i].id, SpvDecorationBinding, 0);
+      }
+#endif
     }
     break;
 #endif

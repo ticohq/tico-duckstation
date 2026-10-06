@@ -36,6 +36,10 @@
 #include <thread>
 #include "fmt/printf.h"
 
+#ifdef __SWITCH__
+#include "tico/TicoDuckBridge.h"
+#endif
+
 Log_SetChannel(GPU);
 
 std::unique_ptr<GPU> g_gpu;
@@ -2030,6 +2034,19 @@ bool GPU::RenderDisplay(GPUTexture* target, const GSVector4i display_rect, const
      PostProcessing::DisplayChain.CheckTargets(hdformat, target_width, target_height));
   const GSVector4i real_draw_rect =
     g_gpu_device->UsesLowerLeftOrigin() ? GPUDevice::FlipToLowerLeft(draw_rect, target_height) : draw_rect;
+#ifdef __SWITCH__
+  // tico's shader preset, when one is chosen, draws the picture instead
+  if (postfx && display_texture && !really_postfx)
+  {
+    const int drawn = TicoDuck::ApplyShaderChain(
+      display_texture,
+      GSVector4i(display_texture_view_x, display_texture_view_y, display_texture_view_x + display_texture_view_width,
+                 display_texture_view_y + display_texture_view_height),
+      target, real_draw_rect, ComputeDisplayAspectRatio(), System::GetThrottleFrequency());
+    if (drawn != 0)
+      return (drawn > 0);
+  }
+#endif
   if (really_postfx)
   {
     g_gpu_device->ClearRenderTarget(PostProcessing::DisplayChain.GetInputTexture(), GPUDevice::DEFAULT_CLEAR_COLOR);

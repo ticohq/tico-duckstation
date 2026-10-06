@@ -181,7 +181,6 @@
     "emulator_pad_gamecube": "GameCube-Controller",
     "emulator_pad_other": "Controller",
     "emulator_disc": "Disc",
-    "emulator_bios_use_openbios": "OpenBIOS verwenden (manche Spiele laufen nicht)",
     "emulator_bios_missing": "Das PlayStation-BIOS fehlt. Lege eines, etwa %s, in %s ab",
-    "emulator_bios_unknown": "%s ist kein PlayStation-BIOS, das SwanStation kennt. Lege ein bekanntes in %s ab"
+    "emulator_bios_unknown": "%s ist kein PlayStation-BIOS, das DuckStation kennt. Lege ein bekanntes in %s ab"
 }

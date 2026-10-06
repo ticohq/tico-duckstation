@@ -1057,8 +1057,14 @@ void NoGUIHost::StartSystem(SystemBootParameters params)
 {
   Host::RunOnCPUThread([params = std::move(params)]() {
     Error error;
+    const std::string path = params.filename;
     if (!System::BootSystem(std::move(params), &error))
     {
+#ifdef __SWITCH__
+      // the overlay explains it (a missing BIOS for the game's region, say)
+      if (TicoDuck::OnBootFailed(path, error.GetDescription()))
+        return;
+#endif
       Host::ReportErrorAsync(TRANSLATE_SV("System", "Error"),
                              fmt::format(TRANSLATE_FS("System", "Failed to boot system: {}"), error.GetDescription()));
     }

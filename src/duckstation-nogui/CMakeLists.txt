@@ -21,9 +21,14 @@ if(NINTENDO_SWITCH)
   # the tico overlay (quick menu, settings, states, RetroAchievements toasts)
   set(TICO_FRONTEND "${CMAKE_SOURCE_DIR}/tico/frontend")
   target_sources(duckstation-nogui PRIVATE
+    ${TICO_FRONTEND}/DuckCheats.cpp
     ${TICO_FRONTEND}/DuckDiscs.cpp
+    ${TICO_FRONTEND}/DuckLibrary.cpp
+    ${TICO_FRONTEND}/DuckShaders.cpp
+    ${TICO_FRONTEND}/DuckSlangChain.cpp
     ${TICO_FRONTEND}/TicoChainload.cpp
     ${TICO_FRONTEND}/TicoDuckBridge.cpp
+    ${TICO_FRONTEND}/TicoSlang.cpp
     ${TICO_FRONTEND}/UsbStorage.cpp
     ${TICO_FRONTEND}/overlay/imgui_overlay.cpp
     ${TICO_FRONTEND}/overlay/overlay_ui.cpp
@@ -33,6 +38,13 @@ if(NINTENDO_SWITCH)
   )
   target_include_directories(duckstation-nogui PRIVATE
     "${TICO_FRONTEND}" "${TICO_FRONTEND}/deps/usbhsfs/include")
+  # RetroArch slang presets (TicoSlang): glslang compiles them for their
+  # reflection, SPIRV-Reflect reads it
+  set(TICO_SPIRV_REFLECT "${CMAKE_SOURCE_DIR}/tico/deps/SPIRV-Reflect")
+  target_sources(duckstation-nogui PRIVATE "${TICO_SPIRV_REFLECT}/spirv_reflect.c")
+  set_source_files_properties("${TICO_SPIRV_REFLECT}/spirv_reflect.c" PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+  target_include_directories(duckstation-nogui PRIVATE
+    "${TICO_SPIRV_REFLECT}" "${TICO_GLSLANG_SOURCE}" "${TICO_GLSLANG_BUILD}/include")
   # USB drives: FAT/exFAT, and NTFS read only
   target_link_libraries(duckstation-nogui PRIVATE
     "${TICO_FRONTEND}/deps/usbhsfs/lib/libusbhsfs.a" "${TICO_FRONTEND}/deps/usbhsfs/lib/libusbntfs.a")
@@ -46,7 +58,7 @@ if(NINTENDO_SWITCH)
       "${TICO_GLSLANG_BUILD}/glslang/libglslang.a"
       "${TICO_GLSLANG_BUILD}/glslang/libglslang-default-resource-limits.a"
       "${TICO_DEPS_DIR}/lib/libuam.a"
-      # SPIR-V to GLSL, for deko3D's post-processing shaders
+      # SPIR-V to GLSL, for deko3D's post-processing and slang shaders
       "${TICO_DEPS_DIR}/lib/libspirv-cross-c.a" "${TICO_DEPS_DIR}/lib/libspirv-cross-glsl.a"
       "${TICO_DEPS_DIR}/lib/libspirv-cross-util.a" "${TICO_DEPS_DIR}/lib/libspirv-cross-core.a"
       "-Wl,--start-group"
@@ -70,6 +82,7 @@ if(NINTENDO_SWITCH)
   # (the module's settings.json, which tico reads too)
   file(COPY ${TICO_FRONTEND}/romfs/assets DESTINATION ${CMAKE_BINARY_DIR}/romfs)
   file(COPY ${TICO_FRONTEND}/romfs/fonts DESTINATION ${CMAKE_BINARY_DIR}/romfs)
+  file(COPY ${TICO_FRONTEND}/romfs/shaders DESTINATION ${CMAKE_BINARY_DIR}/romfs)
   file(COPY ${CMAKE_SOURCE_DIR}/tico/lang DESTINATION ${CMAKE_BINARY_DIR}/romfs)
   file(COPY ${CMAKE_SOURCE_DIR}/tico/module/settings.json DESTINATION ${CMAKE_BINARY_DIR}/romfs/module)
 

@@ -8,7 +8,10 @@
 
 #include "tico/TicoDuckBridge.h"
 
+#include "DuckCheats.h"
 #include "DuckDiscs.h"
+#include "DuckLibrary.h"
+#include "DuckShaders.h"
 #include "TicoChainload.h"
 #include "TicoConfig.h"
 #include "TicoLogger.h"
@@ -21,9 +24,11 @@
 #include "overlay/translation_manager.h"
 
 #include "core/achievements.h"
+#include "core/bios.h"
 #include "core/host.h"
 #include "core/settings.h"
 #include "core/system.h"
+#include "util/cd_image.h"
 #include "util/gpu_device.h"
 #include "util/platform_misc.h"
 
@@ -101,6 +106,15 @@ std::string s_resolved_rom; // a USB game's mount path, which argv[1] then point
 std::string s_title;
 bool s_chainload_launcher = false;
 bool s_relaunch = false;
+// started without a game: the menu is the library
+bool s_standalone = false;
+// launched from the library (--from-library): Exit Game goes back to it
+bool s_from_library = false;
+bool s_back_to_library = false;
+std::string s_argv0;
+std::vector<std::string> s_launch_args;  // this launch's arguments, for Restart
+std::vector<std::string> s_library_game; // the game picked in the library, launched on exit
+bool s_boot_failed = false;              // a notice says why; its only choice leaves
 ExitApplicationCallback s_exit_callback = nullptr;
 SettingsReloadCallback s_settings_reload_callback = nullptr;
 
@@ -424,6 +438,17 @@ void EndSession()
   });
 }
 
+// Leaves the way the session came: back to the library, to tico, or (started
+// from the homebrew menu without a game) just quits.
+void LeaveSession()
+{
+  if (s_from_library)
+    s_back_to_library = true;
+  else if (!s_standalone)
+    s_chainload_launcher = true;
+  EndSession();
+}
+
 // Once the game's first frame has run, the menu asks whether to continue from
 // the auto save, if there is one (not after Restart, nor in hardcore).
 void OfferResume()
@@ -463,12 +488,18 @@ void RunMenuAction()
     case Action::None:
       return;
     case Action::Resume:
-      CloseMenu();
+      // the library and a failed boot have nothing to go back to
+      if (!s_standalone && !s_boot_failed)
+        CloseMenu();
       return;
     case Action::Exit:
       INFO_LOG("{}", "Exit requested");
-      s_chainload_launcher = true;
-      EndSession();
+      LeaveSession();
+      return;
+    case Action::NoticeChoice:
+      // the boot failure notice offers only to leave
+      OverlayUI::ConsumeNoticeChoice();
+      LeaveSession();
       return;
     case Action::Restart:
       // this NRO starts again with the same arguments (a renderer change
@@ -663,6 +694,37 @@ bool InitOverlay()
   OverlayUI::PlayerCallbacks players;
   players.ports = [] { return ControllerNames(); };
   OverlayUI::SetPlayerCallbacks(std::move(players));
+  // cheats from sdmc:/tico/cheats/psx/<game>.cht or .cheats, read again for another disc
+  OverlayUI::SetCheatCallbacks(
+    [] {
+      std::vector<OverlayUI::CheatMenuEntry> entries;
+      if (!System::IsValid())
+        return entries;
+      const std::string disc = System::GetMediaFileName();
+      if (DuckCheats::NeedsReload(disc))
+        DuckCheats::Load(disc, "psx");
+      const auto& cheats = DuckCheats::List();
+      for (size_t i = 0; i < cheats.size(); ++i)
+        entries.push_back({cheats[i].name, cheats[i].enabled, true, static_cast<int>(i), false});
+      return entries;
+    },
+    [](int index) {
+      if (index < 0 || !System::IsValid() || Achievements::IsHardcoreModeActive())
+        return false;
+      DuckCheats::Toggle(static_cast<size_t>(index));
+      return true;
+    });
+  if (s_standalone)
+  {
+    // the games in tico's ROM folders; one picked starts in a new launch of this NRO
+    DuckLibrary::Register([](const std::string& game, const std::string& slug) {
+      s_library_game = {game, std::string(), slug, "--from-library"};
+      EndSession();
+    });
+    OverlayUI::SetGameTitle("DuckStation");
+    OverlayUI::SetLibraryMode(true);
+  }
+  DuckShaders::Init();
   OverlayUI::ReloadSettings();
   return true;
 }
@@ -675,6 +737,10 @@ void ShutdownOverlay()
   OverlayUI::SetSlotPreviewCallback(nullptr);
   OverlayUI::SetDiscCallback(nullptr);
   OverlayUI::SetPlayerCallbacks({});
+  OverlayUI::SetCheatCallbacks(nullptr, nullptr);
+  DuckShaders::Shutdown();
+  if (s_standalone)
+    DuckLibrary::Unregister();
   for (ImTextureID& picture : s_slot_pictures)
   {
     s_host->DestroyTexture(picture);
@@ -703,8 +769,25 @@ bool IsTicoSoundEnabled()
 
 } // namespace
 
-void PrepareLaunch(int argc, char* argv[])
+void PrepareLaunch(int& argc, char* argv[])
 {
+  s_argv0 = (argc > 0 && argv[0]) ? argv[0] : "";
+  // --from-library is ours: kept for Restart, taken out of what DuckStation parses
+  for (int i = 1; i < argc; i++)
+  {
+    if (argv[i] && std::strcmp(argv[i], "--from-library") == 0)
+    {
+      s_from_library = true;
+      for (int j = i; j < argc - 1; j++)
+        argv[j] = argv[j + 1];
+      argc--;
+      i--;
+      continue;
+    }
+    s_launch_args.emplace_back(argv[i] ? argv[i] : "");
+  }
+  if (s_from_library)
+    s_launch_args.emplace_back("--from-library");
   s_argc = argc;
   s_argv = argv;
   // DuckStation's own messages (OSD) in tico's font
@@ -730,6 +813,7 @@ void PrepareLaunch(int argc, char* argv[])
     s_title = FileStem(s_rom_path);
   else
     s_title = "DuckStation";
+  s_standalone = s_rom_path.empty();
 }
 
 void SetExitApplicationCallback(ExitApplicationCallback callback)
@@ -761,6 +845,8 @@ void Initialize()
   }
   s_last_frame = Common::Timer::GetCurrentValue();
   s_offer_resume = !s_rom_path.empty();
+  if (s_standalone)
+    OpenMenu();
 }
 
 void OnGPUDeviceCreated()
@@ -771,11 +857,14 @@ void OnGPUDeviceCreated()
   if (!s_ready)
     ERROR_LOG("{}", "tico overlay unavailable on the new GPU device");
   s_last_frame = Common::Timer::GetCurrentValue();
+  if (s_ready && (s_standalone || s_boot_failed))
+    OpenMenu();
 }
 
 void OnGPUDeviceReleasing()
 {
   // the menu closes with it; the session (auto save, resume prompt) goes on
+  DuckShaders::ReleaseGPU();
   ShutdownOverlay();
 }
 
@@ -783,7 +872,9 @@ void Shutdown()
 {
   WriteAutoSave(); // HOME: the session ends without the menu
   s_enabled = false;
+  DuckShaders::ReleaseGPU();
   ShutdownOverlay();
+  DuckShaders::Destroy();
   s_previous_buttons = 0;
 }
 
@@ -803,6 +894,7 @@ void RenderOverlay()
     delta_time = 1.0f / 60.0f;
 
   UpdateHud(delta_time);
+  DuckShaders::Update();
   s_host->LoadBadges();
   s_draw_data = ImGuiOverlay::BuildFrame(static_cast<float>(g_gpu_device->GetWindowWidth()),
                                          static_cast<float>(g_gpu_device->GetWindowHeight()), delta_time);
@@ -812,6 +904,20 @@ void DrawOverlay()
 {
   if (s_ready && s_draw_data && g_gpu_device)
     g_gpu_device->RenderImGuiDrawData(s_draw_data);
+}
+
+int ApplyShaderChain(GPUTexture* source, const GSVector4i source_rect, GPUTexture* target,
+                     const GSVector4i draw_rect, float aspect, double fps)
+{
+  switch (DuckShaders::Apply(source, source_rect, target, draw_rect, aspect, fps))
+  {
+    case DuckSlangChain::Result::Drawn:
+      return 1;
+    case DuckSlangChain::Result::Skipped:
+      return -1;
+    default:
+      return 0;
+  }
 }
 
 bool ShouldChainloadLauncher()
@@ -824,9 +930,55 @@ void ExitApplication()
   UsbStorage::Shutdown(); // flush and unmount before tico takes over again
   const Tico::LogCallback log = [](const std::string& message) { INFO_LOG("{}", message.c_str()); };
   if (s_relaunch)
-    Tico::RelaunchSelf(s_argc, s_argv, log);
+    Tico::LaunchSelf(s_argv0.c_str(), s_launch_args, log);
+  else if (!s_library_game.empty())
+    Tico::LaunchSelf(s_argv0.c_str(), s_library_game, log);
+  else if (s_back_to_library)
+    Tico::LaunchSelf(s_argv0.c_str(), {}, log);
   else if (s_chainload_launcher)
     Tico::ChainloadLauncher(log);
+}
+
+bool OnBootFailed(const std::string& path, const std::string& error)
+{
+  if (!s_ready)
+    return false;
+
+  // the BIOS for the game's region, as DuckStation looks for one
+  ConsoleRegion region = g_settings.region;
+  if (region == ConsoleRegion::Auto)
+  {
+    std::unique_ptr<CDImage> image = CDImage::Open(path.c_str(), false, nullptr);
+    region = image ? System::GetConsoleRegionForDiscRegion(System::GetRegionForImage(image.get())) :
+                     ConsoleRegion::NTSC_U;
+  }
+  std::string message;
+  if (!BIOS::GetBIOSImage(region, nullptr).has_value())
+  {
+    const char* file = (region == ConsoleRegion::NTSC_J) ? "scph5500.bin" :
+                       (region == ConsoleRegion::PAL)    ? "scph5502.bin" :
+                                                           "scph5501.bin";
+    // "%s" twice: the file, then the folder (not printf: a translation's other % must not matter)
+    message = tr("emulator_bios_missing");
+    const std::string values[] = {file, EmuFolders::Bios};
+    for (const std::string& value : values)
+    {
+      const size_t at = message.find("%s");
+      if (at != std::string::npos)
+        message.replace(at, 2, value);
+    }
+  }
+  else
+  {
+    message = tr("emulator_load_game_failed") + "\n" + error;
+  }
+
+  ERROR_LOG("Boot failed: {}", error);
+  s_boot_failed = true;
+  s_offer_resume = false;
+  OpenMenu();
+  OverlayUI::ShowNotice(message, {tr("emulator_exit_game")});
+  return true;
 }
 
 void PushRANotification(std::string title, std::string description, std::string badge_path, float duration)

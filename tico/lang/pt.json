@@ -187,7 +187,6 @@
     "emulator_pad_gamecube": "Controle de GameCube",
     "emulator_pad_other": "Controle",
     "emulator_disc": "Disco",
-    "emulator_bios_use_openbios": "Usar OpenBIOS (alguns jogos não funcionam)",
     "emulator_bios_missing": "A BIOS do PlayStation está faltando. Coloque uma, como %s, em %s",
-    "emulator_bios_unknown": "%s não é uma BIOS do PlayStation que o SwanStation conhece. Coloque uma conhecida em %s"
+    "emulator_bios_unknown": "%s não é uma BIOS do PlayStation que o DuckStation conhece. Coloque uma conhecida em %s"
 }
