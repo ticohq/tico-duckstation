@@ -112,7 +112,7 @@ if(ENABLE_OPENGL)
     target_link_libraries(util PRIVATE "opengl32.lib")
   endif()
 
-  if(LINUX OR FREEBSD OR ANDROID)
+  if(LINUX OR FREEBSD OR ANDROID OR NINTENDO_SWITCH)
     target_sources(util PRIVATE
       opengl_context_egl.cpp
       opengl_context_egl.h
@@ -168,7 +168,11 @@ if(ENABLE_VULKAN)
   target_link_libraries(util PUBLIC vulkan-headers)
 endif()
 
-if(ENABLE_VULKAN OR APPLE)
+if(NINTENDO_SWITCH AND ENABLE_VULKAN)
+  # GLSL to SPIR-V through glslang (shaderc pulls in SPIRV-Tools); the tico
+  # build links its libraries into the NRO
+  target_include_directories(util PRIVATE "${TICO_GLSLANG_SOURCE}" "${TICO_GLSLANG_BUILD}/include")
+elseif(ENABLE_VULKAN OR APPLE)
   target_link_libraries(util PUBLIC Shaderc::shaderc_shared)
 endif()
 

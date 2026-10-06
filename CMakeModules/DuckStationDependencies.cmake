@@ -34,7 +34,8 @@ if(ENABLE_X11)
   endif()
 endif()
 
-if(ENABLE_VULKAN OR APPLE)
+# on the Switch, Vulkan's shaders are compiled with glslang instead
+if((ENABLE_VULKAN OR APPLE) AND NOT NINTENDO_SWITCH)
   find_package(Shaderc REQUIRED)
 endif()
 

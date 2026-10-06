@@ -8,11 +8,23 @@
 #include "common/assert.h"
 #include "common/log.h"
 
+#ifdef __SWITCH__
+// shaderc is glslang plus SPIRV-Tools; on the Switch glslang does the
+// compiling alone (no SPIR-V optimisation pass)
+#include <SPIRV/GlslangToSpv.h>
+#include <cstring>
+#include <vector>
+#include <glslang/Public/ResourceLimits.h>
+#include <glslang/Public/ShaderLang.h>
+#else
 #include "shaderc/shaderc.hpp"
+#endif
 
 Log_SetChannel(VulkanDevice);
 
+#ifndef __SWITCH__
 static std::unique_ptr<shaderc::Compiler> s_shaderc_compiler;
+#endif
 
 VulkanShader::VulkanShader(GPUShaderStage stage, VkShaderModule mod) : GPUShader(stage), m_module(mod)
 {
@@ -43,6 +55,67 @@ std::unique_ptr<GPUShader> VulkanDevice::CreateShaderFromBinary(GPUShaderStage s
 
   return std::unique_ptr<GPUShader>(new VulkanShader(stage, mod));
 }
+
+#ifdef __SWITCH__
+
+std::unique_ptr<GPUShader> VulkanDevice::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
+                                                                const char* entry_point,
+                                                                DynamicHeapArray<u8>* out_binary)
+{
+  static constexpr const std::array<EShLanguage, static_cast<size_t>(GPUShaderStage::MaxCount)> stage_langs = {{
+    EShLangVertex,
+    EShLangFragment,
+    EShLangGeometry,
+    EShLangCompute,
+  }};
+
+  // TODO: NOT thread safe, yet (as with shaderc).
+  static bool s_glslang_initialized = false;
+  if (!s_glslang_initialized)
+  {
+    glslang::InitializeProcess();
+    s_glslang_initialized = true;
+  }
+
+  const EShLanguage lang = stage_langs[static_cast<size_t>(stage)];
+  glslang::TShader shader(lang);
+  const char* source_ptr = source.data();
+  const int source_length = static_cast<int>(source.length());
+  shader.setStringsWithLengths(&source_ptr, &source_length, 1);
+  shader.setEntryPoint(entry_point);
+  shader.setEnvInput(glslang::EShSourceGlsl, lang, glslang::EShClientVulkan, 100);
+  shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_0);
+  shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
+
+  const EShMessages messages = static_cast<EShMessages>(EShMsgSpvRules | EShMsgVulkanRules);
+  glslang::TProgram program;
+  if (!shader.parse(GetDefaultResources(), 100, false, messages) ||
+      (program.addShader(&shader), !program.link(messages)))
+  {
+    const std::string errors = std::string(shader.getInfoLog()) + program.getInfoLog();
+    DumpBadShader(source, errors);
+    Log_ErrorFmt("Failed to compile shader to SPIR-V:\n{}", errors);
+    return {};
+  }
+
+  std::vector<u32> spirv;
+  glslang::SpvOptions options;
+  options.generateDebugInfo = m_debug_device;
+  options.disableOptimizer = true;
+  glslang::GlslangToSpv(*program.getIntermediate(lang), spirv, &options);
+
+  const size_t spirv_size = spirv.size() * sizeof(u32);
+  DebugAssert(spirv_size > 0);
+  if (out_binary)
+  {
+    out_binary->resize(spirv_size);
+    std::memcpy(out_binary->data(), spirv.data(), spirv_size);
+  }
+
+  return CreateShaderFromBinary(stage, std::span<const u8>(reinterpret_cast<const u8*>(spirv.data()), spirv_size));
+}
+
+#else
 
 std::unique_ptr<GPUShader> VulkanDevice::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
                                                                 const char* entry_point,
@@ -100,6 +173,8 @@ std::unique_ptr<GPUShader> VulkanDevice::CreateShaderFromSource(GPUShaderStage s
 
   return CreateShaderFromBinary(stage, std::span<const u8>(reinterpret_cast<const u8*>(result.cbegin()), spirv_size));
 }
+
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 

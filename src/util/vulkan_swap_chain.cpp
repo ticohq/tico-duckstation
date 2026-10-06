@@ -131,6 +131,25 @@ VkSurfaceKHR VulkanSwapChain::CreateVulkanSurface(VkInstance instance, VkPhysica
   }
 #endif
 
+#if defined(VK_USE_PLATFORM_VI_NN)
+  if (wi->type == WindowInfo::Type::Switch)
+  {
+    // window_handle is the NWindow (nwindowGetDefault())
+    const VkViSurfaceCreateInfoNN surface_create_info = {VK_STRUCTURE_TYPE_VI_SURFACE_CREATE_INFO_NN, nullptr, 0,
+                                                         wi->window_handle};
+
+    VkSurfaceKHR surface;
+    VkResult res = vkCreateViSurfaceNN(instance, &surface_create_info, nullptr, &surface);
+    if (res != VK_SUCCESS)
+    {
+      LOG_VULKAN_ERROR(res, "vkCreateViSurfaceNN failed: ");
+      return VK_NULL_HANDLE;
+    }
+
+    return surface;
+  }
+#endif
+
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
   if (wi->type == WindowInfo::Type::Android)
   {

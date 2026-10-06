@@ -18,6 +18,37 @@ Log_SetChannel(OpenGLContext);
 static DynamicLibrary s_egl_library;
 static std::atomic_uint32_t s_egl_refcount = 0;
 
+#ifdef __SWITCH__
+// Mesa's EGL is linked statically on the Switch; glad's own eglGetProcAddress
+// macro hides the real one in this file, so it is reached by its symbol.
+extern "C" void* nx_eglGetProcAddress(const char* name) __asm__("eglGetProcAddress");
+
+static bool LoadEGL()
+{
+  s_egl_refcount.fetch_add(1, std::memory_order_acq_rel);
+  return true;
+}
+
+static void UnloadEGL()
+{
+  s_egl_refcount.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+static bool LoadGLADEGL(EGLDisplay display, Error* error)
+{
+  const int version = gladLoadEGL(display, [](const char* name) { return (GLADapiproc)nx_eglGetProcAddress(name); });
+  if (version == 0)
+  {
+    Error::SetStringView(error, "Loading GLAD EGL functions failed");
+    return false;
+  }
+
+  Log_DevFmt("GLAD EGL Version: {}.{}", GLAD_VERSION_MAJOR(version), GLAD_VERSION_MINOR(version));
+  return true;
+}
+
+#else
+
 static bool LoadEGL()
 {
   // We're not going to be calling this from multiple threads concurrently.
@@ -66,6 +97,8 @@ static bool LoadGLADEGL(EGLDisplay display, Error* error)
   Log_DevFmt("GLAD EGL Version: {}.{}", GLAD_VERSION_MAJOR(version), GLAD_VERSION_MINOR(version));
   return true;
 }
+
+#endif
 
 OpenGLContextEGL::OpenGLContextEGL(const WindowInfo& wi) : OpenGLContext(wi)
 {
@@ -127,6 +160,12 @@ bool OpenGLContextEGL::Initialize(std::span<const Version> versions_to_try, Erro
 
 EGLDisplay OpenGLContextEGL::GetPlatformDisplay(Error* error)
 {
+#ifdef __SWITCH__
+  // the one display, on which the window surface is the NWindow; Mesa picks
+  // nvc0 or Zink from MESA_SWITCH_GL_DRIVER, which the frontend sets first
+  if (m_wi.type == WindowInfo::Type::Switch)
+    return GetFallbackDisplay(error);
+#endif
   EGLDisplay dpy = TryGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, "EGL_MESA_platform_surfaceless");
   if (dpy == EGL_NO_DISPLAY)
     dpy = GetFallbackDisplay(error);

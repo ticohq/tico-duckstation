@@ -1,0 +1,7 @@
+[submodule "tico/deps/glslang"]
+	path = tico/deps/glslang
+	url = https://github.com/KhronosGroup/glslang.git
+[submodule "tico/deps/uam"]
+	path = tico/deps/uam
+	url = https://github.com/RSDuck/uam.git
+	branch = library-target

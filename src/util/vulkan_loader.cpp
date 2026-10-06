@@ -15,7 +15,7 @@
 #include <cstring>
 #include <string>
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__SWITCH__)
 #include <dlfcn.h>
 #endif
 
@@ -25,8 +25,7 @@
 
 Log_SetChannel(VulkanDevice);
 
-extern "C" {
-
+VULKAN_ENTRY_POINTS_BEGIN
 #define VULKAN_MODULE_ENTRY_POINT(name, required) PFN_##name name;
 #define VULKAN_INSTANCE_ENTRY_POINT(name, required) PFN_##name name;
 #define VULKAN_DEVICE_ENTRY_POINT(name, required) PFN_##name name;
@@ -34,7 +33,7 @@ extern "C" {
 #undef VULKAN_DEVICE_ENTRY_POINT
 #undef VULKAN_INSTANCE_ENTRY_POINT
 #undef VULKAN_MODULE_ENTRY_POINT
-}
+VULKAN_ENTRY_POINTS_END
 
 void Vulkan::ResetVulkanLibraryFunctionPointers()
 {
@@ -98,6 +97,64 @@ void Vulkan::UnloadVulkanLibrary()
   if (s_vulkan_module)
     FreeLibrary(s_vulkan_module);
   s_vulkan_module = nullptr;
+}
+
+#elif defined(__SWITCH__)
+
+// Horizon has no dynamic loader: Mesa's NVK is linked statically, and its
+// vkGetInstanceProcAddr hands out every other entry point. Weak, so a build
+// without NVK reports Vulkan as unavailable instead of failing to link.
+extern "C" PFN_vkVoidFunction nx_vkGetInstanceProcAddr(VkInstance instance, const char* name) __asm__(
+  "vkGetInstanceProcAddr") __attribute__((weak));
+
+static bool s_vulkan_loaded = false;
+
+bool Vulkan::IsVulkanLibraryLoaded()
+{
+  return s_vulkan_loaded;
+}
+
+bool Vulkan::LoadVulkanLibrary()
+{
+  AssertMsg(!s_vulkan_loaded, "Vulkan module is not loaded.");
+  if (!nx_vkGetInstanceProcAddr)
+  {
+    Log_ErrorPrintf("Vulkan: no driver linked");
+    return false;
+  }
+
+  bool required_functions_missing = false;
+  auto LoadFunction = [&](PFN_vkVoidFunction* func_ptr, const char* name, bool is_required) {
+    *func_ptr = nx_vkGetInstanceProcAddr(VK_NULL_HANDLE, name);
+    if (!(*func_ptr) && is_required)
+    {
+      Log_ErrorPrintf("Vulkan: Failed to load required module function %s", name);
+      required_functions_missing = true;
+    }
+  };
+
+  // vkGetInstanceProcAddr itself is the one name the driver resolves directly
+  vkGetInstanceProcAddr = nx_vkGetInstanceProcAddr;
+#define VULKAN_MODULE_ENTRY_POINT(name, required)                                                                      \
+  if (reinterpret_cast<void*>(&name) != reinterpret_cast<void*>(&vkGetInstanceProcAddr))                             \
+    LoadFunction(reinterpret_cast<PFN_vkVoidFunction*>(&name), #name, required);
+#include "vulkan_entry_points.inl"
+#undef VULKAN_MODULE_ENTRY_POINT
+
+  if (required_functions_missing)
+  {
+    ResetVulkanLibraryFunctionPointers();
+    return false;
+  }
+
+  s_vulkan_loaded = true;
+  return true;
+}
+
+void Vulkan::UnloadVulkanLibrary()
+{
+  ResetVulkanLibraryFunctionPointers();
+  s_vulkan_loaded = false;
 }
 
 #else

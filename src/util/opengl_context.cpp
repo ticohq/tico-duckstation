@@ -21,6 +21,8 @@
 #include "opengl_context_agl.h"
 #elif defined(__ANDROID__)
 #include "opengl_context_egl_android.h"
+#elif defined(__SWITCH__)
+#include "opengl_context_egl.h"
 #else
 #ifdef ENABLE_EGL
 #ifdef ENABLE_WAYLAND
@@ -159,6 +161,9 @@ std::unique_ptr<OpenGLContext> OpenGLContext::Create(const WindowInfo& wi, Error
   context = OpenGLContextAGL::Create(wi, versions_to_try, error);
 #elif defined(__ANDROID__)
   context = ContextEGLAndroid::Create(wi, versions_to_try, error);
+#elif defined(__SWITCH__)
+  if (wi.type == WindowInfo::Type::Switch || wi.type == WindowInfo::Type::Surfaceless)
+    context = OpenGLContextEGL::Create(wi, versions_to_try, error);
 #else
 #if defined(ENABLE_X11)
   if (wi.type == WindowInfo::Type::X11)

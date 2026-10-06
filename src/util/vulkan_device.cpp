@@ -257,6 +257,10 @@ bool VulkanDevice::SelectInstanceExtensions(ExtensionList* extension_list, const
   if (wi.type == WindowInfo::Type::MacOS && !SupportsExtension(VK_EXT_METAL_SURFACE_EXTENSION_NAME, true))
     return false;
 #endif
+#if defined(VK_USE_PLATFORM_VI_NN)
+  if (wi.type == WindowInfo::Type::Switch && !SupportsExtension(VK_NN_VI_SURFACE_EXTENSION_NAME, true))
+    return false;
+#endif
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
   if (wi.type == WindowInfo::Type::Android && !SupportsExtension(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME, true))
     return false;

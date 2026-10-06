@@ -33,6 +33,13 @@ detect_page_size()
 # Build options. Depends on system attributes.
 include(DuckStationBuildOptions)
 
+# The tico Switch build brings its own libraries (build_duckstation_nro.sh):
+# uam for deko3D's shaders, and glslang standing in for shaderc on Vulkan.
+if(NINTENDO_SWITCH AND TICO_DEPS_DIR)
+  include_directories("${TICO_DEPS_DIR}/include")
+  link_directories("${TICO_DEPS_DIR}/lib")
+endif()
+
 # Set _DEBUG macro for Debug builds.
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -D_DEBUG")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -D_DEBUG")

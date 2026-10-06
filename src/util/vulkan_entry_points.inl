@@ -56,6 +56,10 @@ VULKAN_INSTANCE_ENTRY_POINT(vkCreateWaylandSurfaceKHR, false)
 VULKAN_INSTANCE_ENTRY_POINT(vkCreateMetalSurfaceEXT, false)
 #endif
 
+#if defined(VK_USE_PLATFORM_VI_NN)
+VULKAN_INSTANCE_ENTRY_POINT(vkCreateViSurfaceNN, false)
+#endif
+
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
 VULKAN_INSTANCE_ENTRY_POINT(vkCreateAndroidSurfaceKHR, false)
 #endif
