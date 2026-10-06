@@ -1125,7 +1125,9 @@ bool GPU_HW::CompilePipelines(Error* error)
   static constexpr u32 NUM_BATCH_TEXTURED_LIMITS_VERTEX_ATTRIBUTES = 5;
 
   GPUPipeline::GraphicsConfig plconfig = {};
-  plconfig.layout = GPUPipeline::Layout::SingleTextureAndUBO;
+  // the batch shaders take their uniforms as push constants (WriteBatchUniformBuffer):
+  // with the UBO layout, Vulkan bound their texture to the wrong set and they read zeros
+  plconfig.layout = GPUPipeline::Layout::SingleTextureAndPushConstants;
   plconfig.input_layout.vertex_stride = sizeof(BatchVertex);
   plconfig.rasterization = GPUPipeline::RasterizationState::GetNoCullState();
   plconfig.primitive = GPUPipeline::Primitive::Triangles;
