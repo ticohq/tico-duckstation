@@ -3,9 +3,6 @@
 
 #include "system.h"
 #include "achievements.h"
-#ifdef __SWITCH__
-#include "common/switch_thread_report.h"
-#endif
 #include "bios.h"
 #include "bus.h"
 #include "cdrom.h"
@@ -2037,9 +2034,6 @@ void System::Execute()
 
 void System::FrameDone()
 {
-#ifdef __SWITCH__
-  SwitchThreadReport::Tick("emulation");
-#endif
   s_frame_number++;
 
   // Vertex buffer is shared, need to flush what we have.

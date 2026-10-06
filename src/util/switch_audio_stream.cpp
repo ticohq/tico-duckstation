@@ -3,7 +3,6 @@
 #include "common/assert.h"
 #include "common/error.h"
 #include "common/log.h"
-#include "common/switch_thread_report.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -119,7 +118,6 @@ void SwitchAudioStream::AudioThread(void* userdata)
 
   while (this_ptr->m_state != State::Stop)
   {
-    SwitchThreadReport::Tick("audio");
     AudioDriverWaveBuf* refill_buffer = nullptr;
     for (int i = 0; i < 2; i++)
     {

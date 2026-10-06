@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "nogui_host.h"
-#include "common/switch_thread_report.h"
 #include "nogui_platform.h"
 
 #include "scmversion/scmversion.h"
@@ -1318,7 +1317,6 @@ void NoGUIHost::CPUThreadMainLoop()
       continue;
     }
 
-    SwitchThreadReport::Tick("emulation (paused)");
     Host::PumpMessagesOnCPUThread();
     System::Internal::IdlePollUpdate();
     System::PresentDisplay(false, false);

@@ -1,5 +1,4 @@
 #include "switch_nogui_platform.h"
-#include "common/switch_thread_report.h"
 
 #include "core/host.h"
 
@@ -192,7 +191,6 @@ void SwitchNoGUIPlatform::RunMessageLoop()
   static constexpr auto APPLET_POLL_INTERVAL = std::chrono::milliseconds(10);
   while (m_message_loop_running.load(std::memory_order_acquire))
   {
-    SwitchThreadReport::Tick("host loop");
     if (!appletMainLoop())
       NoGUIHost::StopRunning();
 
