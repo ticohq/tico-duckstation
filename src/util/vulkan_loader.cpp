@@ -133,10 +133,13 @@ bool Vulkan::LoadVulkanLibrary()
     }
   };
 
-  // vkGetInstanceProcAddr itself is the one name the driver resolves directly
+  // vkGetInstanceProcAddr itself is the one name the driver resolves directly.
+  // Without an instance the driver only gives out the global commands, so
+  // vkDestroyInstance waits for LoadVulkanInstanceFunctions.
   vkGetInstanceProcAddr = nx_vkGetInstanceProcAddr;
 #define VULKAN_MODULE_ENTRY_POINT(name, required)                                                                      \
-  if (reinterpret_cast<void*>(&name) != reinterpret_cast<void*>(&vkGetInstanceProcAddr))                             \
+  if (reinterpret_cast<void*>(&name) != reinterpret_cast<void*>(&vkGetInstanceProcAddr) &&                           \
+      reinterpret_cast<void*>(&name) != reinterpret_cast<void*>(&vkDestroyInstance))                                 \
     LoadFunction(reinterpret_cast<PFN_vkVoidFunction*>(&name), #name, required);
 #include "vulkan_entry_points.inl"
 #undef VULKAN_MODULE_ENTRY_POINT
@@ -264,6 +267,11 @@ bool Vulkan::LoadVulkanInstanceFunctions(VkInstance instance)
   LoadFunction(reinterpret_cast<PFN_vkVoidFunction*>(&name), #name, required);
 #include "vulkan_entry_points.inl"
 #undef VULKAN_INSTANCE_ENTRY_POINT
+
+#ifdef __SWITCH__
+  // not a global command: the driver hands it out for an instance only
+  LoadFunction(reinterpret_cast<PFN_vkVoidFunction*>(&vkDestroyInstance), "vkDestroyInstance", true);
+#endif
 
   return !required_functions_missing;
 }
