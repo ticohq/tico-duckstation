@@ -14,7 +14,6 @@
 #include "fmt/format.h"
 
 #include <algorithm>
-#include <cerrno>
 #include <cinttypes>
 #include <map>
 
@@ -60,13 +59,10 @@ CDImageCueSheet::~CDImageCueSheet()
 
 bool CDImageCueSheet::OpenAndParse(const char* filename, Error* error)
 {
-  std::FILE* fp = FileSystem::OpenCFile(filename, "rb");
+  std::FILE* fp = FileSystem::OpenSharedCFile(filename, "rb", FileSystem::FileShareMode::DenyWrite, error);
   if (!fp)
   {
-    Log_ErrorPrintf("Failed to open cuesheet '%s': errno %d", filename, errno);
-    if (error)
-      error->SetErrno(errno);
-
+    Error::AddPrefixFmt(error, "Failed to open cuesheet '{}': ", Path::GetFileName(filename));
     return false;
   }
 
@@ -90,7 +86,7 @@ bool CDImageCueSheet::OpenAndParse(const char* filename, Error* error)
     if (!track)
       break;
 
-    const std::string track_filename(track->file);
+    const std::string& track_filename = track->file;
     LBA track_start = track->start.ToLBA();
 
     u32 track_file_index = 0;
@@ -114,18 +110,17 @@ bool CDImageCueSheet::OpenAndParse(const char* filename, Error* error)
         track_fp = FileSystem::OpenCFile(alternative_filename.c_str(), "rb");
         if (track_fp)
         {
-          Log_WarningPrintf("Your cue sheet references an invalid file '%s', but this was found at '%s' instead.",
-                            track_filename.c_str(), alternative_filename.c_str());
+          WARNING_LOG("Your cue sheet references an invalid file '{}', but this was found at '{}' instead.",
+                      track_filename, alternative_filename);
         }
       }
 
       if (!track_fp)
       {
-        Log_ErrorPrintf("Failed to open track filename '%s' (from '%s' and '%s'): %s", track_full_filename.c_str(),
-                        track_filename.c_str(), filename, track_error.GetDescription().c_str());
-        Error::SetString(error,
-                         fmt::format("Failed to open track filename '{}' (from '{}' and '{}'): {}", track_full_filename,
-                                     track_filename, filename, track_error.GetDescription()));
+        ERROR_LOG("Failed to open track filename '{}' (from '{}' and '{}'): {}", track_full_filename, track_filename,
+                  filename, track_error.GetDescription());
+        Error::SetStringFmt(error, "Failed to open track filename '{}' (from '{}' and '{}'): {}", track_full_filename,
+                            track_filename, Path::GetFileName(filename), track_error.GetDescription());
         return false;
       }
 
@@ -136,7 +131,7 @@ bool CDImageCueSheet::OpenAndParse(const char* filename, Error* error)
       // from a 256 KB buffer.
       std::setvbuf(track_fp, nullptr, _IOFBF, 256 * 1024);
 #endif
-      m_files.push_back(TrackFile{std::move(track_filename), track_fp, 0});
+      m_files.push_back(TrackFile{track_filename, track_fp, 0});
     }
 
     // data type determines the sector size
@@ -161,10 +156,10 @@ bool CDImageCueSheet::OpenAndParse(const char* filename, Error* error)
       file_size /= track_sector_size;
       if (track_start >= file_size)
       {
-        Log_ErrorPrintf("Failed to open track %u in '%s': track start is out of range (%u vs %" PRIu64 ")", track_num,
-                        filename, track_start, file_size);
-        Error::SetString(error, fmt::format("Failed to open track {} in '{}': track start is out of range ({} vs {}))",
-                                            track_num, filename, track_start, file_size));
+        ERROR_LOG("Failed to open track {} in '{}': track start is out of range ({} vs {})", track_num, filename,
+                  track_start, file_size);
+        Error::SetStringFmt(error, "Failed to open track {} in '{}': track start is out of range ({} vs {}))",
+                            track_num, Path::GetFileName(filename), track_start, file_size);
         return false;
       }
 
@@ -297,8 +292,8 @@ bool CDImageCueSheet::OpenAndParse(const char* filename, Error* error)
 
   if (m_tracks.empty())
   {
-    Log_ErrorPrintf("File '%s' contains no tracks", filename);
-    Error::SetString(error, fmt::format("File '{}' contains no tracks", filename));
+    ERROR_LOG("File '{}' contains no tracks", filename);
+    Error::SetStringFmt(error, "File '{}' contains no tracks", Path::GetFileName(filename));
     return false;
   }
 

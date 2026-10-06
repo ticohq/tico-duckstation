@@ -2,6 +2,7 @@
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="..\..\dep\msvc\vsprops\Configurations.props" />
   <ItemGroup>
+    <ClInclude Include="compress_helpers.h" />
     <ClInclude Include="image.h" />
     <ClInclude Include="imgui_animated.h" />
     <ClInclude Include="audio_stream.h" />
@@ -36,7 +37,7 @@
     <ClInclude Include="input_manager.h" />
     <ClInclude Include="input_source.h" />
     <ClInclude Include="iso_reader.h" />
-    <ClInclude Include="jit_code_buffer.h" />
+    <ClInclude Include="media_capture.h" />
     <ClInclude Include="metal_device.h">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClInclude>
@@ -87,32 +88,16 @@
     <ClInclude Include="sdl_input_source.h" />
     <ClInclude Include="shadergen.h" />
     <ClInclude Include="shiftjis.h" />
+    <ClInclude Include="sockets.h" />
     <ClInclude Include="state_wrapper.h" />
-    <ClInclude Include="cd_xa.h" />
-    <ClInclude Include="vulkan_builders.h">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClInclude>
-    <ClInclude Include="vulkan_device.h">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClInclude>
-    <ClInclude Include="vulkan_entry_points.h">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClInclude>
-    <ClInclude Include="vulkan_loader.h">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClInclude>
-    <ClInclude Include="vulkan_pipeline.h">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClInclude>
-    <ClInclude Include="vulkan_stream_buffer.h">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClInclude>
-    <ClInclude Include="vulkan_swap_chain.h">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClInclude>
-    <ClInclude Include="vulkan_texture.h">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClInclude>
+    <ClInclude Include="vulkan_builders.h" />
+    <ClInclude Include="vulkan_device.h" />
+    <ClInclude Include="vulkan_entry_points.h" />
+    <ClInclude Include="vulkan_loader.h" />
+    <ClInclude Include="vulkan_pipeline.h" />
+    <ClInclude Include="vulkan_stream_buffer.h" />
+    <ClInclude Include="vulkan_swap_chain.h" />
+    <ClInclude Include="vulkan_texture.h" />
     <ClInclude Include="wav_writer.h" />
     <ClInclude Include="win32_raw_input_source.h" />
     <ClInclude Include="window_info.h" />
@@ -131,6 +116,7 @@
     <ClCompile Include="cd_image_mds.cpp" />
     <ClCompile Include="cd_image_memory.cpp" />
     <ClCompile Include="cd_image_pbp.cpp" />
+    <ClCompile Include="compress_helpers.cpp" />
     <ClCompile Include="cubeb_audio_stream.cpp" />
     <ClCompile Include="cue_parser.cpp" />
     <ClCompile Include="cd_image_ppf.cpp" />
@@ -162,8 +148,8 @@
     <ClCompile Include="input_manager.cpp" />
     <ClCompile Include="input_source.cpp" />
     <ClCompile Include="iso_reader.cpp" />
-    <ClCompile Include="jit_code_buffer.cpp" />
     <ClCompile Include="cd_subchannel_replacement.cpp" />
+    <ClCompile Include="media_capture.cpp" />
     <ClCompile Include="opengl_context.cpp">
       <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </ClCompile>
@@ -204,35 +190,19 @@
     <ClCompile Include="shadergen.cpp" />
     <ClCompile Include="shiftjis.cpp" />
     <ClCompile Include="page_fault_handler.cpp" />
+    <ClCompile Include="sockets.cpp" />
     <ClCompile Include="state_wrapper.cpp" />
-    <ClCompile Include="cd_xa.cpp" />
-    <ClCompile Include="vulkan_builders.cpp">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="vulkan_device.cpp">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="vulkan_loader.cpp">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="vulkan_pipeline.cpp">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="vulkan_stream_buffer.cpp">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="vulkan_swap_chain.cpp">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="vulkan_texture.cpp">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClCompile>
+    <ClCompile Include="vulkan_builders.cpp" />
+    <ClCompile Include="vulkan_device.cpp" />
+    <ClCompile Include="vulkan_loader.cpp" />
+    <ClCompile Include="vulkan_pipeline.cpp" />
+    <ClCompile Include="vulkan_stream_buffer.cpp" />
+    <ClCompile Include="vulkan_swap_chain.cpp" />
+    <ClCompile Include="vulkan_texture.cpp" />
     <ClCompile Include="wav_writer.cpp" />
     <ClCompile Include="win32_raw_input_source.cpp" />
     <ClCompile Include="window_info.cpp" />
-    <ClCompile Include="xaudio2_audio_stream.cpp" />
     <ClCompile Include="xinput_source.cpp" />
-    <ClCompile Include="zstd_byte_stream.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\dep\cubeb\cubeb.vcxproj">
@@ -240,6 +210,9 @@
     </ProjectReference>
     <ProjectReference Include="..\..\dep\d3d12ma\d3d12ma.vcxproj">
       <Project>{f351c4d8-594a-4850-b77b-3c1249812cce}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\..\dep\freesurround\freesurround.vcxproj">
+      <Project>{1b0366e5-6f82-47b4-9fdd-d699c86aa077}</Project>
     </ProjectReference>
     <ProjectReference Include="..\..\dep\imgui\imgui.vcxproj">
       <Project>{bb08260f-6fbc-46af-8924-090ee71360c6}</Project>
@@ -249,9 +222,6 @@
     </ProjectReference>
     <ProjectReference Include="..\..\dep\reshadefx\reshadefx.vcxproj">
       <Project>{27b8d4bb-4f01-4432-bc14-9bf6ca458eee}</Project>
-    </ProjectReference>
-    <ProjectReference Include="..\..\dep\soundtouch\soundtouch.vcxproj">
-      <Project>{751d9f62-881c-454e-bce8-cb9cf5f1d22f}</Project>
     </ProjectReference>
     <ProjectReference Include="..\..\dep\glad\glad.vcxproj" Condition="'$(Platform)'!='ARM64'">
       <Project>{43540154-9e1e-409c-834f-b84be5621388}</Project>

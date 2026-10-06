@@ -62,46 +62,55 @@ bool PostProcessing::GLSLShader::IsValid() const
   return !m_name.empty() && !m_code.empty();
 }
 
+bool PostProcessing::GLSLShader::WantsDepthBuffer() const
+{
+  return false;
+}
+
 u32 PostProcessing::GLSLShader::GetUniformsSize() const
 {
   // lazy packing. todo improve.
   return sizeof(CommonUniforms) + (sizeof(ShaderOption::ValueVector) * static_cast<u32>(m_options.size()));
 }
 
-void PostProcessing::GLSLShader::FillUniformBuffer(void* buffer, u32 texture_width, s32 texture_height,
-                                                   s32 texture_view_x, s32 texture_view_y, s32 texture_view_width,
-                                                   s32 texture_view_height, u32 window_width, u32 window_height,
-                                                   s32 original_width, s32 original_height, float time) const
+void PostProcessing::GLSLShader::FillUniformBuffer(void* buffer, s32 viewport_x, s32 viewport_y, s32 viewport_width,
+                                                   s32 viewport_height, u32 window_width, u32 window_height,
+                                                   s32 original_width, s32 original_height, s32 native_width,
+                                                   s32 native_height, float time) const
 {
   CommonUniforms* common = static_cast<CommonUniforms*>(buffer);
 
-  const float rcp_texture_width = 1.0f / static_cast<float>(texture_width);
-  const float rcp_texture_height = 1.0f / static_cast<float>(texture_height);
-  common->src_rect[0] = static_cast<float>(texture_view_x) * rcp_texture_width;
-  common->src_rect[1] = static_cast<float>(texture_view_y) * rcp_texture_height;
-  common->src_rect[2] = (static_cast<float>(texture_view_x + texture_view_width - 1)) * rcp_texture_width;
-  common->src_rect[3] = (static_cast<float>(texture_view_y + texture_view_height - 1)) * rcp_texture_height;
-  common->src_size[0] = (static_cast<float>(texture_view_width)) * rcp_texture_width;
-  common->src_size[1] = (static_cast<float>(texture_view_height)) * rcp_texture_height;
-  common->resolution[0] = static_cast<float>(texture_width);
-  common->resolution[1] = static_cast<float>(texture_height);
-  common->rcp_resolution[0] = rcp_texture_width;
-  common->rcp_resolution[1] = rcp_texture_height;
-  common->window_resolution[0] = static_cast<float>(window_width);
-  common->window_resolution[1] = static_cast<float>(window_height);
-  common->rcp_window_resolution[0] = 1.0f / static_cast<float>(window_width);
-  common->rcp_window_resolution[1] = 1.0f / static_cast<float>(window_height);
-
-  // pad the "original size" relative to the positioning on the screen
-  const float view_scale_x = static_cast<float>(original_width) / static_cast<float>(texture_view_width);
-  const float view_scale_y = static_cast<float>(original_height) / static_cast<float>(texture_view_height);
-  const s32 view_pad_x = texture_view_x + (texture_width - texture_view_width - texture_view_x);
-  const s32 view_pad_y = texture_view_y + (texture_height - texture_view_height - texture_view_y);
-  common->original_size[0] = static_cast<float>(original_width);
-  common->original_size[1] = static_cast<float>(original_height);
-  common->padded_original_size[0] = common->original_size[0] + static_cast<float>(view_pad_x) * view_scale_x;
-  common->padded_original_size[1] = common->original_size[1] + static_cast<float>(view_pad_y) * view_scale_y;
-
+  const float internal_pixel_width = static_cast<float>(viewport_width) / static_cast<float>(original_width);
+  const float internal_pixel_height = static_cast<float>(viewport_height) / static_cast<float>(original_height);
+  const float native_pixel_width = (static_cast<float>(viewport_width) / static_cast<float>(native_width));
+  const float native_pixel_height = (static_cast<float>(viewport_height) / static_cast<float>(native_height));
+  common->src_rect[0] = static_cast<float>(viewport_x) / static_cast<float>(window_width);
+  common->src_rect[1] = static_cast<float>(viewport_y) / static_cast<float>(window_height);
+  common->src_rect[2] = (static_cast<float>(viewport_x + viewport_width - 1)) / static_cast<float>(window_width);
+  common->src_rect[3] = (static_cast<float>(viewport_y + viewport_height - 1)) / static_cast<float>(window_height);
+  common->src_size[0] = static_cast<float>(viewport_width) / static_cast<float>(window_width);
+  common->src_size[1] = static_cast<float>(viewport_height) / static_cast<float>(window_height);
+  common->window_size[0] = static_cast<float>(window_width);
+  common->window_size[1] = static_cast<float>(window_height);
+  common->rcp_window_size[0] = 1.0f / static_cast<float>(window_width);
+  common->rcp_window_size[1] = 1.0f / static_cast<float>(window_height);
+  common->viewport_size[0] = static_cast<float>(viewport_width);
+  common->viewport_size[1] = static_cast<float>(viewport_height);
+  common->window_to_viewport_ratio[0] = static_cast<float>(window_width) / static_cast<float>(viewport_width);
+  common->window_to_viewport_ratio[1] = static_cast<float>(window_height) / static_cast<float>(viewport_height);
+  common->internal_size[0] = static_cast<float>(original_width);
+  common->internal_size[1] = static_cast<float>(original_height);
+  common->internal_pixel_size[0] = internal_pixel_width;
+  common->internal_pixel_size[1] = internal_pixel_height;
+  common->norm_internal_pixel_size[0] = internal_pixel_width / static_cast<float>(window_width);
+  common->norm_internal_pixel_size[1] = internal_pixel_height / static_cast<float>(window_height);
+  common->native_size[0] = static_cast<float>(native_width);
+  common->native_size[1] = static_cast<float>(native_height);
+  common->native_pixel_size[0] = native_pixel_width;
+  common->native_pixel_size[1] = native_pixel_height;
+  common->norm_native_pixel_size[0] = native_pixel_width / static_cast<float>(window_width);
+  common->norm_native_pixel_size[1] = native_pixel_height / static_cast<float>(window_height);
+  common->upscale_multiplier = static_cast<float>(original_width) / static_cast<float>(native_width);
   common->time = time;
 
   u8* option_values = reinterpret_cast<u8*>(common + 1);
@@ -112,7 +121,8 @@ void PostProcessing::GLSLShader::FillUniformBuffer(void* buffer, u32 texture_wid
   }
 }
 
-bool PostProcessing::GLSLShader::CompilePipeline(GPUTexture::Format format, u32 width, u32 height, ProgressCallback* progress)
+bool PostProcessing::GLSLShader::CompilePipeline(GPUTexture::Format format, u32 width, u32 height,
+                                                 ProgressCallback* progress)
 {
   if (m_pipeline)
     m_pipeline.reset();
@@ -120,10 +130,10 @@ bool PostProcessing::GLSLShader::CompilePipeline(GPUTexture::Format format, u32 
   PostProcessingGLSLShaderGen shadergen(g_gpu_device->GetRenderAPI(), g_gpu_device->GetFeatures().dual_source_blend,
                                         g_gpu_device->GetFeatures().framebuffer_fetch);
 
-  std::unique_ptr<GPUShader> vs =
-    g_gpu_device->CreateShader(GPUShaderStage::Vertex, shadergen.GeneratePostProcessingVertexShader(*this));
-  std::unique_ptr<GPUShader> fs =
-    g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GeneratePostProcessingFragmentShader(*this));
+  std::unique_ptr<GPUShader> vs = g_gpu_device->CreateShader(GPUShaderStage::Vertex, shadergen.GetLanguage(),
+                                                             shadergen.GeneratePostProcessingVertexShader(*this));
+  std::unique_ptr<GPUShader> fs = g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GetLanguage(),
+                                                             shadergen.GeneratePostProcessingFragmentShader(*this));
   if (!vs || !fs)
     return false;
 
@@ -157,9 +167,9 @@ bool PostProcessing::GLSLShader::CompilePipeline(GPUTexture::Format format, u32 
   return true;
 }
 
-bool PostProcessing::GLSLShader::Apply(GPUTexture* input, GPUTexture* final_target, s32 final_left, s32 final_top,
-                                       s32 final_width, s32 final_height, s32 orig_width, s32 orig_height,
-                                       u32 target_width, u32 target_height)
+bool PostProcessing::GLSLShader::Apply(GPUTexture* input_color, GPUTexture* input_depth, GPUTexture* final_target,
+                                       GSVector4i final_rect, s32 orig_width, s32 orig_height, s32 native_width,
+                                       s32 native_height, u32 target_width, u32 target_height)
 {
   GL_SCOPE_FMT("GLSL Shader {}", m_name);
 
@@ -176,13 +186,13 @@ bool PostProcessing::GLSLShader::Apply(GPUTexture* input, GPUTexture* final_targ
   }
 
   g_gpu_device->SetPipeline(m_pipeline.get());
-  g_gpu_device->SetTextureSampler(0, input, m_sampler.get());
-  g_gpu_device->SetViewportAndScissor(final_left, final_top, final_width, final_height);
+  g_gpu_device->SetTextureSampler(0, input_color, m_sampler.get());
+  g_gpu_device->SetViewportAndScissor(final_rect);
 
   const u32 uniforms_size = GetUniformsSize();
   void* uniforms = g_gpu_device->MapUniformBuffer(uniforms_size);
-  FillUniformBuffer(uniforms, input->GetWidth(), input->GetHeight(), final_left, final_top, final_width, final_height,
-                    target_width, target_height, orig_width, orig_height,
+  FillUniformBuffer(uniforms, final_rect.left, final_rect.top, final_rect.width(), final_rect.height(), target_width,
+                    target_height, orig_width, orig_height, native_width, native_height,
                     static_cast<float>(PostProcessing::GetTimer().GetTimeSeconds()));
   g_gpu_device->UnmapUniformBuffer(uniforms_size);
   g_gpu_device->Draw(3, 0);
@@ -254,7 +264,7 @@ void PostProcessing::GLSLShader::LoadOptions()
           else if (sub == "OptionRangeInteger")
             current_option.type = ShaderOption::Type::Int;
           else
-            Log_ErrorPrintf("Invalid option type: '%s'", line_str.c_str());
+            ERROR_LOG("Invalid option type: '{}'", line_str);
 
           continue;
         }
@@ -304,7 +314,7 @@ void PostProcessing::GLSLShader::LoadOptions()
         }
         else
         {
-          Log_ErrorPrintf("Invalid option key: '%s'", line_str.c_str());
+          ERROR_LOG("Invalid option key: '{}'", line_str);
         }
       }
     }
@@ -323,7 +333,7 @@ void PostProcessing::GLSLShader::LoadOptions()
 
 PostProcessingGLSLShaderGen::PostProcessingGLSLShaderGen(RenderAPI render_api, bool supports_dual_source_blend,
                                                          bool supports_framebuffer_fetch)
-  : ShaderGen(render_api, supports_dual_source_blend, supports_framebuffer_fetch)
+  : ShaderGen(render_api, GPUShaderLanguage::GLSLVK, supports_dual_source_blend, supports_framebuffer_fetch)
 {
 }
 
@@ -345,7 +355,7 @@ std::string PostProcessingGLSLShaderGen::GeneratePostProcessingVertexShader(cons
   #if API_OPENGL || API_OPENGL_ES || API_VULKAN || API_DEKO3D
     v_pos.y = -v_pos.y;
   #endif
-  v_tex0 = src_rect.xy + (src_size * v_tex0);
+  v_tex0 = u_src_rect.xy + (u_src_size * v_tex0);
 }
 )";
 
@@ -360,108 +370,44 @@ std::string PostProcessingGLSLShaderGen::GeneratePostProcessingFragmentShader(co
   WriteUniformBuffer(ss, shader, false);
   DeclareTexture(ss, "samp0", 0);
 
-  // Rename main, since we need to set up globals
-  if (!m_glsl)
-  {
-    // TODO: vecn -> floatn
-
-    ss << R"(
-#define main real_main
-static float2 v_tex0;
-static float4 v_pos;
-static float4 o_col0;
-// Wrappers for sampling functions.
-#define texture(sampler, coords) sampler.Sample(sampler##_ss, coords)
-#define textureOffset(sampler, coords, offset) sampler.Sample(sampler##_ss, coords, offset)
-#define gl_FragCoord v_pos
-)";
-  }
-  else
-  {
-    if (m_use_glsl_interface_blocks)
-    {
-      if (IsVulkan() || IsMetal() || IsDeko3D())
-        ss << "layout(location = 0) ";
-
-      ss << "in VertexData {\n";
-      ss << "  float2 v_tex0;\n";
-      ss << "};\n";
-    }
-    else
-    {
-      ss << "in float2 v_tex0;\n";
-    }
-
-    if (m_use_glsl_binding_layout)
-    {
-      ss << "layout(location = 0) out float4 o_col0;\n";
-    }
-    else
-    {
-      ss << "out float4 o_col0;\n";
-    }
-  }
-
   ss << R"(
+layout(location = 0) in VertexData {
+  vec2 v_tex0;
+};
+
+layout(location = 0) out float4 o_col0;
+
 float4 Sample() { return texture(samp0, v_tex0); }
 float4 SampleLocation(float2 location) { return texture(samp0, location); }
 #define SampleOffset(offset) textureOffset(samp0, v_tex0, offset)
-float2 GetFragCoord()
-{
-  return gl_FragCoord.xy;
-}
-float2 GetWindowResolution()
-{
-  return window_resolution;
-}
-float2 GetResolution()
-{
-  return resolution;
-}
-float2 GetInvResolution()
-{
-  return rcp_resolution;
-}
-float2 GetCoordinates()
-{
-  return v_tex0;
-}
-float2 GetOriginalSize()
-{
-  return original_size;
-}
-float2 GetPaddedOriginalSize()
-{
-  return padded_original_size;
-}
-float GetTime()
-{
-  return time;
-}
-void SetOutput(float4 color)
-{
-  o_col0 = color;
-}
+float2 GetFragCoord() { return gl_FragCoord.xy; }
+float2 GetCoordinates() { return v_tex0; }
+float2 GetWindowSize() { return u_window_size; }
+float2 GetInvWindowSize() { return u_rcp_window_size; }
+float2 GetViewportSize() { return u_viewport_size; }
+float2 GetWindowToViewportRatio() { return u_window_to_viewport_ratio; }
+float2 GetInternalSize() { return u_internal_size; }
+float2 GetInternalPixelSize() { return u_internal_pixel_size; }
+float2 GetInvInternalPixelSize() { return u_norm_internal_pixel_size; }
+float2 GetNativeSize() { return u_native_size; }
+float2 GetNativePixelSize() { return u_native_pixel_size; }
+float2 GetInvNativePixelSize() { return u_norm_native_pixel_size; }
+float GetUpscaleMultiplier() { return u_upscale_multiplier; }
+float GetTime() { return u_time; }
+void SetOutput(float4 color) { o_col0 = color; }
+
+// Deprecated, only present for backwards compatibility.
+float2 GetResolution() { return u_window_size; }
+float2 GetInvResolution() { return u_rcp_window_size; }
+float2 GetOriginalSize() { return u_internal_size; }
+float2 GetPaddedOriginalSize() { return u_internal_size * u_window_to_viewport_ratio; }
+float2 GetWindowResolution() { return u_window_size; }
+
 #define GetOption(x) (x)
 #define OptionEnabled(x) ((x) != 0)
 )";
 
   ss << shader.GetCode();
-
-  if (!m_glsl)
-  {
-    ss << R"(
-#undef main
-void main(in float2 v_tex0_ : TEXCOORD0, in float4 v_pos_ : SV_Position, out float4 o_col0_ : SV_Target)
-{
-  v_pos = v_pos_;
-  v_tex0 = v_tex0_;
-  real_main();
-  o_col0_ = o_col0;
-}
-)";
-  }
-
   return ss.str();
 }
 
@@ -472,16 +418,20 @@ void PostProcessingGLSLShaderGen::WriteUniformBuffer(std::stringstream& ss, cons
 
   WriteUniformBufferDeclaration(ss, use_push_constants);
   ss << "{\n";
-  ss << "  float4 src_rect;\n";
-  ss << "  float2 src_size;\n";
-  ss << "  float2 resolution;\n";
-  ss << "  float2 rcp_resolution;\n";
-  ss << "  float2 window_resolution;\n";
-  ss << "  float2 rcp_window_resolution;\n";
-  ss << "  float2 original_size;\n";
-  ss << "  float2 padded_original_size;\n";
-  ss << "  float time;\n";
-  ss << "  float ubo_pad" << (pad_counter++) << ";\n";
+  ss << "  float4 u_src_rect;\n";
+  ss << "  float2 u_src_size;\n";
+  ss << "  float2 u_window_size;\n";
+  ss << "  float2 u_rcp_window_size;\n";
+  ss << "  float2 u_viewport_size;\n";
+  ss << "  float2 u_window_to_viewport_ratio;\n";
+  ss << "  float2 u_internal_size;\n";
+  ss << "  float2 u_internal_pixel_size;\n";
+  ss << "  float2 u_norm_internal_pixel_size;\n";
+  ss << "  float2 u_native_size;\n";
+  ss << "  float2 u_native_pixel_size;\n";
+  ss << "  float2 u_norm_native_pixel_size;\n";
+  ss << "  float u_upscale_multiplier;\n";
+  ss << "  float u_time;\n";
   ss << "\n";
 
   static constexpr std::array<const char*, PostProcessing::ShaderOption::MAX_VECTOR_COMPONENTS + 1> vector_size_suffix =
@@ -493,14 +443,14 @@ void PostProcessingGLSLShaderGen::WriteUniformBuffer(std::stringstream& ss, cons
       case PostProcessing::ShaderOption::Type::Bool:
         ss << "  int " << option.name << ";\n";
         for (u32 i = option.vector_size; i < PostProcessing::ShaderOption::MAX_VECTOR_COMPONENTS; i++)
-          ss << "  int ubo_pad" << (pad_counter++) << ";\n";
+          ss << "  int u_ubo_pad" << (pad_counter++) << ";\n";
         break;
 
       case PostProcessing::ShaderOption::Type::Int:
       {
         ss << "  int" << vector_size_suffix[option.vector_size] << " " << option.name << ";\n";
         for (u32 i = option.vector_size; i < PostProcessing::ShaderOption::MAX_VECTOR_COMPONENTS; i++)
-          ss << "  int ubo_pad" << (pad_counter++) << ";\n";
+          ss << "  int u_ubo_pad" << (pad_counter++) << ";\n";
       }
       break;
 
@@ -509,7 +459,7 @@ void PostProcessingGLSLShaderGen::WriteUniformBuffer(std::stringstream& ss, cons
       {
         ss << "  float" << vector_size_suffix[option.vector_size] << " " << option.name << ";\n";
         for (u32 i = option.vector_size; i < PostProcessing::ShaderOption::MAX_VECTOR_COMPONENTS; i++)
-          ss << "  float ubo_pad" << (pad_counter++) << ";\n";
+          ss << "  float u_ubo_pad" << (pad_counter++) << ";\n";
       }
       break;
     }

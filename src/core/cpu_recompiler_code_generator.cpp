@@ -926,6 +926,14 @@ Value CodeGenerator::NotValue(const Value& val)
   return res;
 }
 
+const TickCount* CodeGenerator::GetFetchMemoryAccessTimePtr() const
+{
+  const TickCount* ptr =
+    Bus::GetMemoryAccessTimePtr(m_block->pc & PHYSICAL_MEMORY_ADDRESS_MASK, MemoryAccessSize::Word);
+  AssertMsg(ptr, "Address has dynamic fetch ticks");
+  return ptr;
+}
+
 void CodeGenerator::GenerateExceptionExit(Instruction instruction, const CodeCache::InstructionInfo& info,
                                           Exception excode, Condition condition /* = Condition::Always */)
 {
@@ -980,13 +988,13 @@ void CodeGenerator::BlockPrologue()
 
   if (m_block->protection == CodeCache::PageProtectionMode::ManualCheck)
   {
-    Log_DebugPrintf("Generate manual protection for PC %08X", m_block->pc);
+    DEBUG_LOG("Generate manual protection for PC {:08X}", m_block->pc);
     const u8* ram_ptr = Bus::g_ram + VirtualAddressToPhysical(m_block->pc);
     const u8* shadow_ptr = reinterpret_cast<const u8*>(m_block->Instructions());
     EmitBlockProtectCheck(ram_ptr, shadow_ptr, m_block->size * sizeof(Instruction));
   }
 
-  EmitStoreCPUStructField(offsetof(State, exception_raised), Value::FromConstantU8(0));
+  EmitStoreCPUStructField(OFFSETOF(State, exception_raised), Value::FromConstantU8(0));
 
   if (g_settings.bios_tty_logging)
   {
@@ -996,8 +1004,7 @@ void CodeGenerator::BlockPrologue()
       EmitFunctionCall(nullptr, &CPU::HandleB0Syscall);
   }
 
-  if (m_block->uncached_fetch_ticks > 0 || m_block->icache_line_count > 0)
-    EmitICacheCheckAndUpdate();
+  EmitICacheCheckAndUpdate();
 
   // we don't know the state of the last block, so assume load delays might be in progress
   // TODO: Pull load delay into register cache
@@ -1036,21 +1043,21 @@ void CodeGenerator::InstructionPrologue(Instruction instruction, const CodeCache
   if (m_branch_was_taken_dirty)
   {
     Value temp = m_register_cache.AllocateScratch(RegSize_8);
-    EmitLoadCPUStructField(temp.host_reg, RegSize_8, offsetof(State, branch_was_taken));
-    EmitStoreCPUStructField(offsetof(State, current_instruction_was_branch_taken), temp);
-    EmitStoreCPUStructField(offsetof(State, branch_was_taken), Value::FromConstantU8(0));
+    EmitLoadCPUStructField(temp.host_reg, RegSize_8, OFFSETOF(State, branch_was_taken));
+    EmitStoreCPUStructField(OFFSETOF(State, current_instruction_was_branch_taken), temp);
+    EmitStoreCPUStructField(OFFSETOF(State, branch_was_taken), Value::FromConstantU8(0));
     m_current_instruction_was_branch_taken_dirty = true;
     m_branch_was_taken_dirty = false;
   }
   else if (m_current_instruction_was_branch_taken_dirty)
   {
-    EmitStoreCPUStructField(offsetof(State, current_instruction_was_branch_taken), Value::FromConstantU8(0));
+    EmitStoreCPUStructField(OFFSETOF(State, current_instruction_was_branch_taken), Value::FromConstantU8(0));
     m_current_instruction_was_branch_taken_dirty = false;
   }
 
   if (m_current_instruction_in_branch_delay_slot_dirty && !info.is_branch_delay_slot)
   {
-    EmitStoreCPUStructField(offsetof(State, current_instruction_in_branch_delay_slot), Value::FromConstantU8(0));
+    EmitStoreCPUStructField(OFFSETOF(State, current_instruction_in_branch_delay_slot), Value::FromConstantU8(0));
     m_current_instruction_in_branch_delay_slot_dirty = false;
   }
 
@@ -1064,7 +1071,7 @@ void CodeGenerator::InstructionPrologue(Instruction instruction, const CodeCache
   if (info.is_branch_delay_slot && g_settings.cpu_recompiler_memory_exceptions)
   {
     // m_current_instruction_in_branch_delay_slot = true
-    EmitStoreCPUStructField(offsetof(State, current_instruction_in_branch_delay_slot), Value::FromConstantU8(1));
+    EmitStoreCPUStructField(OFFSETOF(State, current_instruction_in_branch_delay_slot), Value::FromConstantU8(1));
     m_current_instruction_in_branch_delay_slot_dirty = true;
   }
 
@@ -1079,7 +1086,7 @@ void CodeGenerator::InstructionEpilogue(Instruction instruction, const CodeCache
   if (m_load_delay_dirty)
   {
     // we have to invalidate the register cache, since the load delayed register might've been cached
-    Log_DebugPrint("Emitting delay slot flush");
+    DEBUG_LOG("Emitting delay slot flush");
     EmitFlushInterpreterLoadDelay();
     m_register_cache.InvalidateAllNonDirtyGuestRegisters();
     m_load_delay_dirty = false;
@@ -1088,7 +1095,7 @@ void CodeGenerator::InstructionEpilogue(Instruction instruction, const CodeCache
   // copy if the previous instruction was a load, reset the current value on the next instruction
   if (m_next_load_delay_dirty)
   {
-    Log_DebugPrint("Emitting delay slot flush (with move next)");
+    DEBUG_LOG("Emitting delay slot flush (with move next)");
     EmitMoveNextInterpreterLoadDelay();
     m_next_load_delay_dirty = false;
     m_load_delay_dirty = true;
@@ -1097,7 +1104,7 @@ void CodeGenerator::InstructionEpilogue(Instruction instruction, const CodeCache
 
 void CodeGenerator::TruncateBlockAtCurrentInstruction()
 {
-  Log_DevPrintf("Truncating block %08X at %08X", m_block->pc, m_current_instruction.info->pc);
+  DEV_LOG("Truncating block {:08X} at {:08X}", m_block->pc, m_current_instruction.info->pc);
   m_block_end.instruction = m_current_instruction.instruction + 1;
   m_block_end.info = m_current_instruction.info + 1;
   WriteNewPC(CalculatePC(), true);
@@ -1111,24 +1118,24 @@ void CodeGenerator::AddPendingCycles(bool commit)
   if (m_gte_done_cycle > m_delayed_cycles_add)
   {
     Value temp = m_register_cache.AllocateScratch(RegSize_32);
-    EmitLoadCPUStructField(temp.GetHostRegister(), RegSize_32, offsetof(State, pending_ticks));
+    EmitLoadCPUStructField(temp.GetHostRegister(), RegSize_32, OFFSETOF(State, pending_ticks));
     if (m_delayed_cycles_add > 0)
     {
       EmitAdd(temp.GetHostRegister(), temp.GetHostRegister(), Value::FromConstantU32(m_delayed_cycles_add), false);
-      EmitStoreCPUStructField(offsetof(State, pending_ticks), temp);
+      EmitStoreCPUStructField(OFFSETOF(State, pending_ticks), temp);
       EmitAdd(temp.GetHostRegister(), temp.GetHostRegister(),
               Value::FromConstantU32(m_gte_done_cycle - m_delayed_cycles_add), false);
-      EmitStoreCPUStructField(offsetof(State, gte_completion_tick), temp);
+      EmitStoreCPUStructField(OFFSETOF(State, gte_completion_tick), temp);
     }
     else
     {
       EmitAdd(temp.GetHostRegister(), temp.GetHostRegister(), Value::FromConstantU32(m_gte_done_cycle), false);
-      EmitStoreCPUStructField(offsetof(State, gte_completion_tick), temp);
+      EmitStoreCPUStructField(OFFSETOF(State, gte_completion_tick), temp);
     }
   }
   else
   {
-    EmitAddCPUStructField(offsetof(State, pending_ticks), Value::FromConstantU32(m_delayed_cycles_add));
+    EmitAddCPUStructField(OFFSETOF(State, pending_ticks), Value::FromConstantU32(m_delayed_cycles_add));
   }
 
   if (commit)
@@ -1141,7 +1148,7 @@ void CodeGenerator::AddPendingCycles(bool commit)
 void CodeGenerator::AddGTETicks(TickCount ticks)
 {
   m_gte_done_cycle = m_delayed_cycles_add + ticks;
-  Log_DebugPrintf("Adding %d GTE ticks", ticks);
+  DEBUG_LOG("Adding {} GTE ticks", ticks);
 }
 
 void CodeGenerator::StallUntilGTEComplete()
@@ -1151,7 +1158,7 @@ void CodeGenerator::StallUntilGTEComplete()
     // simple case - in block scheduling
     if (m_gte_done_cycle > m_delayed_cycles_add)
     {
-      Log_DebugPrintf("Stalling for %d ticks from GTE", m_gte_done_cycle - m_delayed_cycles_add);
+      DEBUG_LOG("Stalling for {} ticks from GTE", m_gte_done_cycle - m_delayed_cycles_add);
       m_delayed_cycles_add += (m_gte_done_cycle - m_delayed_cycles_add);
     }
 
@@ -1180,7 +1187,7 @@ Value CodeGenerator::GetCurrentInstructionPC(u32 offset /* = 0 */)
 void CodeGenerator::WriteNewPC(const Value& value, bool commit)
 {
   // TODO: This _could_ be moved into the register cache, but would it gain anything?
-  EmitStoreCPUStructField(offsetof(CPU::State, pc), value);
+  EmitStoreCPUStructField(OFFSETOF(CPU::State, pc), value);
   if (commit)
   {
     m_pc_valid = value.IsConstant();
@@ -1191,6 +1198,8 @@ void CodeGenerator::WriteNewPC(const Value& value, bool commit)
 
 bool CodeGenerator::Compile_Fallback(Instruction instruction, const CodeCache::InstructionInfo& info)
 {
+  WARNING_LOG("Compiling instruction fallback at PC=0x{:08X}, instruction=0x{:08X}", info.pc, instruction.bits);
+
   InstructionPrologue(instruction, info, 1, true);
 
   // flush and invalidate all guest registers, since the fallback could change any of them
@@ -1201,23 +1210,14 @@ bool CodeGenerator::Compile_Fallback(Instruction instruction, const CodeCache::I
     m_register_cache.WriteLoadDelayToCPU(true);
   }
 
-  EmitStoreCPUStructField(offsetof(State, current_instruction_pc), Value::FromConstantU32(info.pc));
-  EmitStoreCPUStructField(offsetof(State, current_instruction.bits), Value::FromConstantU32(instruction.bits));
+  EmitStoreCPUStructField(OFFSETOF(State, current_instruction_pc), Value::FromConstantU32(info.pc));
+  EmitStoreCPUStructField(OFFSETOF(State, current_instruction.bits), Value::FromConstantU32(instruction.bits));
 
-  // emit the function call
-  if (CanInstructionTrap(instruction, false /*m_block->key.user_mode*/))
-  {
-    // TODO: Use carry flag or something here too
-    Value return_value = m_register_cache.AllocateScratch(RegSize_8);
-    EmitFunctionCall(&return_value,
-                     g_settings.gpu_pgxp_enable ? &Thunks::InterpretInstructionPGXP : &Thunks::InterpretInstruction);
-    EmitExceptionExitOnBool(return_value);
-  }
-  else
-  {
-    EmitFunctionCall(nullptr,
-                     g_settings.gpu_pgxp_enable ? &Thunks::InterpretInstructionPGXP : &Thunks::InterpretInstruction);
-  }
+  // TODO: Use carry flag or something here too
+  Value return_value = m_register_cache.AllocateScratch(RegSize_8);
+  EmitFunctionCall(&return_value,
+                   g_settings.gpu_pgxp_enable ? &Thunks::InterpretInstructionPGXP : &Thunks::InterpretInstruction);
+  EmitExceptionExitOnBool(return_value);
 
   m_current_instruction_in_branch_delay_slot_dirty = info.is_branch_instruction;
   m_branch_was_taken_dirty = info.is_branch_instruction;
@@ -1325,11 +1325,10 @@ bool CodeGenerator::Compile_Bitwise(Instruction instruction, const CodeCache::In
               ((lhs.HasConstantValue(0) && instruction.r.rt != Reg::zero && dest != instruction.r.rs) ||
                (rhs.HasConstantValue(0) && instruction.r.rs != Reg::zero && dest != instruction.r.rt)))
           {
-            const auto rs = lhs.HasConstantValue(0) ? static_cast<CPU::Reg>(instruction.r.rt) : static_cast<CPU::Reg>(instruction.r.rs);
+            const auto rs = lhs.HasConstantValue(0) ? static_cast<CPU::Reg>(instruction.r.rt) :
+                                                      static_cast<CPU::Reg>(instruction.r.rs);
 
-            EmitFunctionCall(nullptr, &PGXP::CPU_MOVE_Packed,
-                             Value::FromConstantU32(
-                               PGXP::PackMoveArgs(dest, rs)),
+            EmitFunctionCall(nullptr, &PGXP::CPU_MOVE_Packed, Value::FromConstantU32(PGXP::PackMoveArgs(dest, rs)),
                              lhs.HasConstantValue(0) ? rhs : lhs);
           }
         }
@@ -1359,11 +1358,10 @@ bool CodeGenerator::Compile_Bitwise(Instruction instruction, const CodeCache::In
               ((lhs.HasConstantValue(0) && instruction.r.rt != Reg::zero && dest != instruction.r.rs) ||
                (rhs.HasConstantValue(0) && instruction.r.rs != Reg::zero && dest != instruction.r.rt)))
           {
-            const auto rs = lhs.HasConstantValue(0) ? static_cast<CPU::Reg>(instruction.r.rt) : static_cast<CPU::Reg>(instruction.r.rs);
+            const auto rs = lhs.HasConstantValue(0) ? static_cast<CPU::Reg>(instruction.r.rt) :
+                                                      static_cast<CPU::Reg>(instruction.r.rs);
 
-            EmitFunctionCall(nullptr, &PGXP::CPU_MOVE_Packed,
-                             Value::FromConstantU32(
-                               PGXP::PackMoveArgs(dest, rs)),
+            EmitFunctionCall(nullptr, &PGXP::CPU_MOVE_Packed, Value::FromConstantU32(PGXP::PackMoveArgs(dest, rs)),
                              lhs.HasConstantValue(0) ? rhs : lhs);
           }
         }
@@ -1669,8 +1667,8 @@ bool CodeGenerator::Compile_Store(Instruction instruction, const CodeCache::Inst
         VirtualAddressToPhysical(m_block->pc + (m_block->size * sizeof(Instruction)));
       if (phys_addr >= block_start && phys_addr < block_end)
       {
-        Log_WarningPrintf("Instruction %08X speculatively writes to %08X inside block %08X-%08X. Truncating block.",
-                          info.pc, phys_addr, block_start, block_end);
+        WARNING_LOG("Instruction {:08X} speculatively writes to {:08X} inside block {:08X}-{:08X}. Truncating block.",
+                    info.pc, phys_addr, block_start, block_end);
         TruncateBlockAtCurrentInstruction();
       }
     }
@@ -1711,7 +1709,7 @@ bool CodeGenerator::Compile_LoadLeftRight(Instruction instruction, const CodeCac
     // we don't actually care if it's our target reg or not, if it's not, it won't affect anything
     if (m_load_delay_dirty)
     {
-      Log_DevPrintf("Flushing interpreter load delay for lwl/lwr instruction at 0x%08X", info.pc);
+      DEV_LOG("Flushing interpreter load delay for lwl/lwr instruction at 0x{:08X}", info.pc);
       EmitFlushInterpreterLoadDelay();
       m_register_cache.InvalidateGuestRegister(instruction.r.rt);
       m_load_delay_dirty = false;
@@ -2388,8 +2386,8 @@ bool CodeGenerator::Compile_Branch(Instruction instruction, const CodeCache::Ins
 
       if (branch_target.IsConstant())
       {
-        Log_WarningPrintf("Misaligned constant target branch 0x%08X, this is strange",
-                          Truncate32(branch_target.constant_value));
+        WARNING_LOG("Misaligned constant target branch 0x{:08X}, this is strange",
+                    Truncate32(branch_target.constant_value));
       }
       else
       {
@@ -2404,7 +2402,7 @@ bool CodeGenerator::Compile_Branch(Instruction instruction, const CodeCache::Ins
       EmitBindLabel(&branch_okay);
 
       SwitchToFarCode();
-      EmitStoreCPUStructField(offsetof(State, cop0_regs.BadVaddr), branch_target);
+      EmitStoreCPUStructField(OFFSETOF(State, cop0_regs.BadVaddr), branch_target);
       EmitFunctionCall(
         nullptr, static_cast<void (*)(u32, u32)>(&CPU::RaiseException),
         Value::FromConstantU32(Cop0Registers::CAUSE::MakeValueForException(Exception::AdEL, false, false, 0)),
@@ -2433,8 +2431,8 @@ bool CodeGenerator::Compile_Branch(Instruction instruction, const CodeCache::Ins
       // check downcount
       Value pending_ticks = m_register_cache.AllocateScratch(RegSize_32);
       Value downcount = m_register_cache.AllocateScratch(RegSize_32);
-      EmitLoadCPUStructField(pending_ticks.GetHostRegister(), RegSize_32, offsetof(State, pending_ticks));
-      EmitLoadCPUStructField(downcount.GetHostRegister(), RegSize_32, offsetof(State, downcount));
+      EmitLoadCPUStructField(pending_ticks.GetHostRegister(), RegSize_32, OFFSETOF(State, pending_ticks));
+      EmitLoadCPUStructField(downcount.GetHostRegister(), RegSize_32, OFFSETOF(State, downcount));
 
       // pending < downcount
       LabelType return_to_dispatcher;
@@ -2666,53 +2664,53 @@ bool CodeGenerator::Compile_cop0(Instruction instruction, const CodeCache::Instr
         switch (reg)
         {
           case Cop0Reg::BPC:
-            offset = offsetof(State, cop0_regs.BPC);
+            offset = OFFSETOF(State, cop0_regs.BPC);
             break;
 
           case Cop0Reg::BPCM:
-            offset = offsetof(State, cop0_regs.BPCM);
+            offset = OFFSETOF(State, cop0_regs.BPCM);
             break;
 
           case Cop0Reg::BDA:
-            offset = offsetof(State, cop0_regs.BDA);
+            offset = OFFSETOF(State, cop0_regs.BDA);
             break;
 
           case Cop0Reg::BDAM:
-            offset = offsetof(State, cop0_regs.BDAM);
+            offset = OFFSETOF(State, cop0_regs.BDAM);
             break;
 
           case Cop0Reg::DCIC:
-            offset = offsetof(State, cop0_regs.dcic.bits);
+            offset = OFFSETOF(State, cop0_regs.dcic.bits);
             write_mask = Cop0Registers::DCIC::WRITE_MASK;
             break;
 
           case Cop0Reg::JUMPDEST:
-            offset = offsetof(State, cop0_regs.TAR);
+            offset = OFFSETOF(State, cop0_regs.TAR);
             write_mask = 0;
             break;
 
           case Cop0Reg::BadVaddr:
-            offset = offsetof(State, cop0_regs.BadVaddr);
+            offset = OFFSETOF(State, cop0_regs.BadVaddr);
             write_mask = 0;
             break;
 
           case Cop0Reg::SR:
-            offset = offsetof(State, cop0_regs.sr.bits);
+            offset = OFFSETOF(State, cop0_regs.sr.bits);
             write_mask = Cop0Registers::SR::WRITE_MASK;
             break;
 
           case Cop0Reg::CAUSE:
-            offset = offsetof(State, cop0_regs.cause.bits);
+            offset = OFFSETOF(State, cop0_regs.cause.bits);
             write_mask = Cop0Registers::CAUSE::WRITE_MASK;
             break;
 
           case Cop0Reg::EPC:
-            offset = offsetof(State, cop0_regs.EPC);
+            offset = OFFSETOF(State, cop0_regs.EPC);
             write_mask = 0;
             break;
 
           case Cop0Reg::PRID:
-            offset = offsetof(State, cop0_regs.PRID);
+            offset = OFFSETOF(State, cop0_regs.PRID);
             write_mask = 0;
             break;
 
@@ -2804,8 +2802,8 @@ bool CodeGenerator::Compile_cop0(Instruction instruction, const CodeCache::Instr
 
             // m_cop0_regs.sr.IEc && ((m_cop0_regs.cause.Ip & m_cop0_regs.sr.Im) != 0)
             LabelType no_interrupt;
-            EmitLoadCPUStructField(sr_value.host_reg, sr_value.size, offsetof(State, cop0_regs.sr.bits));
-            EmitLoadCPUStructField(cause_value.host_reg, cause_value.size, offsetof(State, cop0_regs.cause.bits));
+            EmitLoadCPUStructField(sr_value.host_reg, sr_value.size, OFFSETOF(State, cop0_regs.sr.bits));
+            EmitLoadCPUStructField(cause_value.host_reg, cause_value.size, OFFSETOF(State, cop0_regs.cause.bits));
             EmitBranchIfBitClear(sr_value.host_reg, sr_value.size, 0, &no_interrupt);
             EmitAnd(sr_value.host_reg, sr_value.host_reg, cause_value);
             EmitTest(sr_value.host_reg, Value::FromConstantU32(0xFF00));
@@ -2817,7 +2815,7 @@ bool CodeGenerator::Compile_cop0(Instruction instruction, const CodeCache::Instr
             m_register_cache.PushState();
             if (!info.is_last_instruction)
               WriteNewPC(CalculatePC(), false);
-            EmitStoreCPUStructField(offsetof(State, downcount), Value::FromConstantU32(0));
+            EmitStoreCPUStructField(OFFSETOF(State, downcount), Value::FromConstantU32(0));
             EmitExceptionExit();
             m_register_cache.PopState();
             SwitchToNearCode();
@@ -2831,21 +2829,21 @@ bool CodeGenerator::Compile_cop0(Instruction instruction, const CodeCache::Instr
 
             // if ((dcic & master_enable_bits) != master_enable_bits) goto not_enabled;
             LabelType not_enabled;
-            EmitLoadCPUStructField(dcic_value.GetHostRegister(), dcic_value.size, offsetof(State, cop0_regs.dcic.bits));
+            EmitLoadCPUStructField(dcic_value.GetHostRegister(), dcic_value.size, OFFSETOF(State, cop0_regs.dcic.bits));
             EmitAnd(dcic_value.GetHostRegister(), dcic_value.GetHostRegister(),
                     Value::FromConstantU32(Cop0Registers::DCIC::MASTER_ENABLE_BITS));
             EmitConditionalBranch(Condition::NotEqual, false, dcic_value.host_reg,
                                   Value::FromConstantU32(Cop0Registers::DCIC::MASTER_ENABLE_BITS), &not_enabled);
 
             // if ((dcic & breakpoint_bits) == 0) goto not_enabled;
-            EmitLoadCPUStructField(dcic_value.GetHostRegister(), dcic_value.size, offsetof(State, cop0_regs.dcic.bits));
+            EmitLoadCPUStructField(dcic_value.GetHostRegister(), dcic_value.size, OFFSETOF(State, cop0_regs.dcic.bits));
             EmitTest(dcic_value.GetHostRegister(),
                      Value::FromConstantU32(Cop0Registers::DCIC::ANY_BREAKPOINTS_ENABLED_BITS));
             EmitConditionalBranch(Condition::Zero, false, &not_enabled);
 
             // update dispatcher flag, if enabled, exit block
             EmitFunctionCall(nullptr, &UpdateDebugDispatcherFlag);
-            EmitLoadCPUStructField(dcic_value.GetHostRegister(), RegSize_8, offsetof(State, use_debug_dispatcher));
+            EmitLoadCPUStructField(dcic_value.GetHostRegister(), RegSize_8, OFFSETOF(State, using_debug_dispatcher));
             EmitBranchIfBitClear(dcic_value.GetHostRegister(), RegSize_8, 0, &not_enabled);
 
             m_register_cache.UninhibitAllocation();
@@ -2883,7 +2881,7 @@ bool CodeGenerator::Compile_cop0(Instruction instruction, const CodeCache::Instr
         // shift mode bits right two, preserving upper bits
         static constexpr u32 mode_bits_mask = UINT32_C(0b1111);
         Value sr = m_register_cache.AllocateScratch(RegSize_32);
-        EmitLoadCPUStructField(sr.host_reg, RegSize_32, offsetof(State, cop0_regs.sr.bits));
+        EmitLoadCPUStructField(sr.host_reg, RegSize_32, OFFSETOF(State, cop0_regs.sr.bits));
         {
           Value new_mode_bits = m_register_cache.AllocateScratch(RegSize_32);
           EmitShr(new_mode_bits.host_reg, sr.host_reg, new_mode_bits.size, Value::FromConstantU32(2));
@@ -2892,17 +2890,17 @@ bool CodeGenerator::Compile_cop0(Instruction instruction, const CodeCache::Instr
           EmitOr(sr.host_reg, sr.host_reg, new_mode_bits);
         }
 
-        EmitStoreCPUStructField(offsetof(State, cop0_regs.sr.bits), sr);
+        EmitStoreCPUStructField(OFFSETOF(State, cop0_regs.sr.bits), sr);
 
         Value cause_value = m_register_cache.AllocateScratch(RegSize_32);
-        EmitLoadCPUStructField(cause_value.host_reg, cause_value.size, offsetof(State, cop0_regs.cause.bits));
+        EmitLoadCPUStructField(cause_value.host_reg, cause_value.size, OFFSETOF(State, cop0_regs.cause.bits));
 
         LabelType no_interrupt;
         EmitAnd(sr.host_reg, sr.host_reg, cause_value);
         EmitTest(sr.host_reg, Value::FromConstantU32(0xFF00));
         EmitConditionalBranch(Condition::Zero, false, &no_interrupt);
         m_register_cache.InhibitAllocation();
-        EmitStoreCPUStructField(offsetof(State, downcount), Value::FromConstantU32(0));
+        EmitStoreCPUStructField(OFFSETOF(State, downcount), Value::FromConstantU32(0));
         EmitBindLabel(&no_interrupt);
         m_register_cache.UninhibitAllocation();
 
@@ -3058,8 +3056,7 @@ bool CodeGenerator::Compile_cop2(Instruction instruction, const CodeCache::Instr
       if (g_settings.gpu_pgxp_enable)
         EmitFunctionCall(nullptr, PGXP::CPU_SWC2, Value::FromConstantU32(instruction.bits), address, value);
 
-      SpeculativeValue spec_base = SpeculativeReadReg(instruction.i.rs);
-      if (spec_base)
+      if (spec_address)
         SpeculativeWriteMemory(*spec_address, std::nullopt);
     }
 

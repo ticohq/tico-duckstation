@@ -5,6 +5,7 @@
 #include "common/align.h"
 #include "common/assert.h"
 #include "common/log.h"
+#include "fmt/printf.h"
 
 Log_SetChannel(Deko3DStreamBuffer);
 
@@ -38,8 +39,8 @@ bool Deko3DStreamBuffer::ReserveMemory(u32 num_bytes, u32 alignment)
   // Check for sane allocations
   if (required_bytes > GetCurrentSize())
   {
-    Log_ErrorPrintf("Attempting to allocate %u bytes from a %u byte stream buffer", static_cast<u32>(num_bytes),
-                    static_cast<u32>(GetCurrentSize()));
+    ERROR_LOG("{}", fmt::sprintf("Attempting to allocate %u bytes from a %u byte stream buffer", static_cast<u32>(num_bytes),
+                    static_cast<u32>(GetCurrentSize())));
     Panic("Stream buffer overflow");
     return false;
   }

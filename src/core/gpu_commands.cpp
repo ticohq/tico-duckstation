@@ -1,13 +1,14 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
-#include "common/assert.h"
-#include "common/log.h"
-#include "common/string_util.h"
 #include "gpu.h"
 #include "interrupt_controller.h"
 #include "system.h"
 #include "texture_replacements.h"
+
+#include "common/assert.h"
+#include "common/log.h"
+#include "common/string_util.h"
 
 #include <utility>
 
@@ -52,7 +53,7 @@ void GPU::TryExecuteCommands()
           m_blit_buffer.push_back(FifoPop());
         m_blit_remaining_words -= words_to_copy;
 
-        Log_DebugPrintf("VRAM write burst of %u words, %u words remaining", words_to_copy, m_blit_remaining_words);
+        DEBUG_LOG("VRAM write burst of {} words, {} words remaining", words_to_copy, m_blit_remaining_words);
         if (m_blit_remaining_words == 0)
           FinishVRAMWrite();
 
@@ -87,12 +88,12 @@ void GPU::TryExecuteCommands()
             m_blit_buffer.push_back(FifoPop());
         }
 
-        Log_DebugPrintf("Added %u words to polyline", words_to_copy);
+        DEBUG_LOG("Added {} words to polyline", words_to_copy);
         if (found_terminator)
         {
           // drop terminator
           m_fifo.RemoveOne();
-          Log_DebugPrintf("Drawing poly-line with %u vertices", GetPolyLineVertexCount());
+          DEBUG_LOG("Drawing poly-line with {} vertices", GetPolyLineVertexCount());
           DispatchRenderCommand();
           m_blit_buffer.clear();
           EndCommand();
@@ -178,12 +179,12 @@ GPU::GP0CommandHandlerTable GPU::GenerateGP0CommandHandlerTable()
 bool GPU::HandleUnknownGP0Command()
 {
   const u32 command = FifoPeek() >> 24;
-  Log_ErrorPrintf("Unimplemented GP0 command 0x%02X", command);
+  ERROR_LOG("Unimplemented GP0 command 0x{:02X}", command);
 
   SmallString dump;
   for (u32 i = 0; i < m_fifo.GetSize(); i++)
     dump.append_format("{}{:08X}", (i > 0) ? " " : "", FifoPeek(i));
-  Log_ErrorPrintf("FIFO: %s", dump.c_str());
+  ERROR_LOG("FIFO: {}", dump);
 
   m_fifo.RemoveOne();
   EndCommand();
@@ -199,8 +200,9 @@ bool GPU::HandleNOPCommand()
 
 bool GPU::HandleClearCacheCommand()
 {
-  Log_DebugPrintf("GP0 clear cache");
+  DEBUG_LOG("GP0 clear cache");
   m_draw_mode.SetTexturePageChanged();
+  InvalidateCLUT();
   m_fifo.RemoveOne();
   AddCommandTicks(1);
   EndCommand();
@@ -209,10 +211,10 @@ bool GPU::HandleClearCacheCommand()
 
 bool GPU::HandleInterruptRequestCommand()
 {
-  Log_DebugPrintf("GP0 interrupt request");
+  DEBUG_LOG("GP0 interrupt request");
 
   m_GPUSTAT.interrupt_request = true;
-  InterruptController::SetLineState(InterruptController::IRQ::GPU, m_GPUSTAT.interrupt_request);
+  InterruptController::SetLineState(InterruptController::IRQ::GPU, true);
 
   m_fifo.RemoveOne();
   AddCommandTicks(1);
@@ -223,7 +225,7 @@ bool GPU::HandleInterruptRequestCommand()
 bool GPU::HandleSetDrawModeCommand()
 {
   const u32 param = FifoPop() & 0x00FFFFFFu;
-  Log_DebugPrintf("Set draw mode %08X", param);
+  DEBUG_LOG("Set draw mode {:08X}", param);
   SetDrawMode(Truncate16(param));
   AddCommandTicks(1);
   EndCommand();
@@ -242,9 +244,9 @@ bool GPU::HandleSetTextureWindowCommand()
 bool GPU::HandleSetDrawingAreaTopLeftCommand()
 {
   const u32 param = FifoPop() & 0x00FFFFFFu;
-  const u32 left = param & VRAM_WIDTH_MASK;
-  const u32 top = (param >> 10) & VRAM_HEIGHT_MASK;
-  Log_DebugPrintf("Set drawing area top-left: (%u, %u)", left, top);
+  const u32 left = param & DRAWING_AREA_COORD_MASK;
+  const u32 top = (param >> 10) & DRAWING_AREA_COORD_MASK;
+  DEBUG_LOG("Set drawing area top-left: ({}, {})", left, top);
   if (m_drawing_area.left != left || m_drawing_area.top != top)
   {
     FlushRender();
@@ -252,6 +254,7 @@ bool GPU::HandleSetDrawingAreaTopLeftCommand()
     m_drawing_area.left = left;
     m_drawing_area.top = top;
     m_drawing_area_changed = true;
+    SetClampedDrawingArea();
   }
 
   AddCommandTicks(1);
@@ -263,9 +266,9 @@ bool GPU::HandleSetDrawingAreaBottomRightCommand()
 {
   const u32 param = FifoPop() & 0x00FFFFFFu;
 
-  const u32 right = param & VRAM_WIDTH_MASK;
-  const u32 bottom = (param >> 10) & VRAM_HEIGHT_MASK;
-  Log_DebugPrintf("Set drawing area bottom-right: (%u, %u)", m_drawing_area.right, m_drawing_area.bottom);
+  const u32 right = param & DRAWING_AREA_COORD_MASK;
+  const u32 bottom = (param >> 10) & DRAWING_AREA_COORD_MASK;
+  DEBUG_LOG("Set drawing area bottom-right: ({}, {})", m_drawing_area.right, m_drawing_area.bottom);
   if (m_drawing_area.right != right || m_drawing_area.bottom != bottom)
   {
     FlushRender();
@@ -273,6 +276,7 @@ bool GPU::HandleSetDrawingAreaBottomRightCommand()
     m_drawing_area.right = right;
     m_drawing_area.bottom = bottom;
     m_drawing_area_changed = true;
+    SetClampedDrawingArea();
   }
 
   AddCommandTicks(1);
@@ -285,7 +289,7 @@ bool GPU::HandleSetDrawingOffsetCommand()
   const u32 param = FifoPop() & 0x00FFFFFFu;
   const s32 x = SignExtendN<11, s32>(param & 0x7FFu);
   const s32 y = SignExtendN<11, s32>((param >> 11) & 0x7FFu);
-  Log_DebugPrintf("Set drawing offset (%d, %d)", m_drawing_offset.x, m_drawing_offset.y);
+  DEBUG_LOG("Set drawing offset ({}, {})", m_drawing_offset.x, m_drawing_offset.y);
   if (m_drawing_offset.x != x || m_drawing_offset.y != y)
   {
     FlushRender();
@@ -310,8 +314,8 @@ bool GPU::HandleSetMaskBitCommand()
     FlushRender();
     m_GPUSTAT.bits = (m_GPUSTAT.bits & ~gpustat_mask) | gpustat_bits;
   }
-  Log_DebugPrintf("Set mask bit %u %u", BoolToUInt32(m_GPUSTAT.set_mask_while_drawing),
-                  BoolToUInt32(m_GPUSTAT.check_mask_before_draw));
+  DEBUG_LOG("Set mask bit {} {}", BoolToUInt32(m_GPUSTAT.set_mask_while_drawing),
+            BoolToUInt32(m_GPUSTAT.check_mask_before_draw));
 
   AddCommandTicks(1);
   EndCommand();
@@ -337,11 +341,10 @@ bool GPU::HandleRenderPolygonCommand()
     s_setup_time[BoolToUInt8(rc.quad_polygon)][BoolToUInt8(rc.shading_enable)][BoolToUInt8(rc.texture_enable)]));
   AddCommandTicks(setup_ticks);
 
-  Log_TracePrintf("Render %s %s %s %s polygon (%u verts, %u words per vert), %d setup ticks",
-                  rc.quad_polygon ? "four-point" : "three-point",
-                  rc.transparency_enable ? "semi-transparent" : "opaque",
-                  rc.texture_enable ? "textured" : "non-textured", rc.shading_enable ? "shaded" : "monochrome",
-                  ZeroExtend32(num_vertices), ZeroExtend32(words_per_vertex), setup_ticks);
+  TRACE_LOG("Render {} {} {} {} polygon ({} verts, {} words per vert), {} setup ticks",
+            rc.quad_polygon ? "four-point" : "three-point", rc.transparency_enable ? "semi-transparent" : "opaque",
+            rc.texture_enable ? "textured" : "non-textured", rc.shading_enable ? "shaded" : "monochrome", num_vertices,
+            words_per_vertex, setup_ticks);
 
   // set draw state up
   if (rc.texture_enable)
@@ -350,6 +353,7 @@ bool GPU::HandleRenderPolygonCommand()
     SetDrawMode((texpage_attribute & GPUDrawModeReg::POLYGON_TEXPAGE_MASK) |
                 (m_draw_mode.mode_reg.bits & ~GPUDrawModeReg::POLYGON_TEXPAGE_MASK));
     SetTexturePalette(Truncate16(FifoPeek(2) >> 16));
+    UpdateCLUTIfNeeded(m_draw_mode.mode_reg.texture_mode, m_draw_mode.palette_reg);
   }
 
   m_counters.num_vertices += num_vertices;
@@ -374,15 +378,17 @@ bool GPU::HandleRenderRectangleCommand()
     SynchronizeCRTC();
 
   if (rc.texture_enable)
+  {
     SetTexturePalette(Truncate16(FifoPeek(2) >> 16));
+    UpdateCLUTIfNeeded(m_draw_mode.mode_reg.texture_mode, m_draw_mode.palette_reg);
+  }
 
   const TickCount setup_ticks = 16;
   AddCommandTicks(setup_ticks);
 
-  Log_TracePrintf("Render %s %s %s rectangle (%u words), %d setup ticks",
-                  rc.transparency_enable ? "semi-transparent" : "opaque",
-                  rc.texture_enable ? "textured" : "non-textured", rc.shading_enable ? "shaded" : "monochrome",
-                  total_words, setup_ticks);
+  TRACE_LOG("Render {} {} {} rectangle ({} words), {} setup ticks",
+            rc.transparency_enable ? "semi-transparent" : "opaque", rc.texture_enable ? "textured" : "non-textured",
+            rc.shading_enable ? "shaded" : "monochrome", total_words, setup_ticks);
 
   m_counters.num_vertices++;
   m_counters.num_primitives++;
@@ -403,8 +409,8 @@ bool GPU::HandleRenderLineCommand()
   if (IsInterlacedRenderingEnabled() && IsCRTCScanlinePending())
     SynchronizeCRTC();
 
-  Log_TracePrintf("Render %s %s line (%u total words)", rc.transparency_enable ? "semi-transparent" : "opaque",
-                  rc.shading_enable ? "shaded" : "monochrome", total_words);
+  TRACE_LOG("Render {} {} line ({} total words)", rc.transparency_enable ? "semi-transparent" : "opaque",
+            rc.shading_enable ? "shaded" : "monochrome", total_words);
 
   m_counters.num_vertices += 2;
   m_counters.num_primitives++;
@@ -429,8 +435,8 @@ bool GPU::HandleRenderPolyLineCommand()
   const TickCount setup_ticks = 16;
   AddCommandTicks(setup_ticks);
 
-  Log_TracePrintf("Render %s %s poly-line, %d setup ticks", rc.transparency_enable ? "semi-transparent" : "opaque",
-                  rc.shading_enable ? "shaded" : "monochrome", setup_ticks);
+  TRACE_LOG("Render {} {} poly-line, {} setup ticks", rc.transparency_enable ? "semi-transparent" : "opaque",
+            rc.shading_enable ? "shaded" : "monochrome", setup_ticks);
 
   m_render_command.bits = rc.bits;
   m_fifo.RemoveOne();
@@ -463,7 +469,7 @@ bool GPU::HandleFillRectangleCommand()
   const u32 width = ((FifoPeek() & VRAM_WIDTH_MASK) + 0xF) & ~0xF;
   const u32 height = (FifoPop() >> 16) & VRAM_HEIGHT_MASK;
 
-  Log_DebugPrintf("Fill VRAM rectangle offset=(%u,%u), size=(%u,%u)", dst_x, dst_y, width, height);
+  DEBUG_LOG("Fill VRAM rectangle offset=({},{}), size=({},{})", dst_x, dst_y, width, height);
 
   if (width > 0 && height > 0)
     FillVRAM(dst_x, dst_y, width, height, color);
@@ -479,15 +485,27 @@ bool GPU::HandleCopyRectangleCPUToVRAMCommand()
   CHECK_COMMAND_SIZE(3);
   m_fifo.RemoveOne();
 
-  const u32 dst_x = FifoPeek() & VRAM_WIDTH_MASK;
-  const u32 dst_y = (FifoPop() >> 16) & VRAM_HEIGHT_MASK;
-  const u32 copy_width = ReplaceZero(FifoPeek() & VRAM_WIDTH_MASK, 0x400);
-  const u32 copy_height = ReplaceZero((FifoPop() >> 16) & VRAM_HEIGHT_MASK, 0x200);
+  const u32 coords = FifoPop();
+  const u32 size = FifoPop();
+
+  // Tenga Seiha does a bunch of completely-invalid VRAM writes on boot, then expects GPU idle to be set.
+  // It's unclear what actually happens, I need to write another test, but for now, just skip these uploads.
+  // Not setting GPU idle during the write command breaks Doom, so that's not an option.
+  if (size == 0xFFFFFFFFu) [[unlikely]]
+  {
+    ERROR_LOG("Ignoring likely-invalid VRAM write to ({},{})", (coords & VRAM_WIDTH_MASK),
+              ((coords >> 16) & VRAM_HEIGHT_MASK));
+    return true;
+  }
+
+  const u32 dst_x = coords & VRAM_WIDTH_MASK;
+  const u32 dst_y = (coords >> 16) & VRAM_HEIGHT_MASK;
+  const u32 copy_width = ReplaceZero(size & VRAM_WIDTH_MASK, 0x400);
+  const u32 copy_height = ReplaceZero((size >> 16) & VRAM_HEIGHT_MASK, 0x200);
   const u32 num_pixels = copy_width * copy_height;
   const u32 num_words = ((num_pixels + 1) / 2);
 
-  Log_DebugPrintf("Copy rectangle from CPU to VRAM offset=(%u,%u), size=(%u,%u)", dst_x, dst_y, copy_width,
-                  copy_height);
+  DEBUG_LOG("Copy rectangle from CPU to VRAM offset=({},{}), size=({},{})", dst_x, dst_y, copy_width, copy_height);
 
   EndCommand();
 
@@ -518,8 +536,8 @@ void GPU::FinishVRAMWrite()
 
     if (g_settings.texture_replacements.ShouldDumpVRAMWrite(m_vram_transfer.width, m_vram_transfer.height))
     {
-      g_texture_replacements.DumpVRAMWrite(m_vram_transfer.width, m_vram_transfer.height,
-                                           reinterpret_cast<const u16*>(m_blit_buffer.data()));
+      TextureReplacements::DumpVRAMWrite(m_vram_transfer.width, m_vram_transfer.height,
+                                         reinterpret_cast<const u16*>(m_blit_buffer.data()));
     }
 
     UpdateVRAM(m_vram_transfer.x, m_vram_transfer.y, m_vram_transfer.width, m_vram_transfer.height,
@@ -534,9 +552,8 @@ void GPU::FinishVRAMWrite()
     const u32 transferred_full_rows = transferred_pixels / m_vram_transfer.width;
     const u32 transferred_width_last_row = transferred_pixels % m_vram_transfer.width;
 
-    Log_WarningPrintf(
-      "Partial VRAM write - transfer finished with %u of %u words remaining (%u full rows, %u last row)",
-      m_blit_remaining_words, num_words, transferred_full_rows, transferred_width_last_row);
+    WARNING_LOG("Partial VRAM write - transfer finished with {} of {} words remaining ({} full rows, {} last row)",
+                m_blit_remaining_words, num_words, transferred_full_rows, transferred_width_last_row);
 
     const u8* blit_ptr = reinterpret_cast<const u8*>(m_blit_buffer.data());
     if (transferred_full_rows > 0)
@@ -568,8 +585,8 @@ bool GPU::HandleCopyRectangleVRAMToCPUCommand()
   m_vram_transfer.width = ((Truncate16(FifoPeek()) - 1) & VRAM_WIDTH_MASK) + 1;
   m_vram_transfer.height = ((Truncate16(FifoPop() >> 16) - 1) & VRAM_HEIGHT_MASK) + 1;
 
-  Log_DebugPrintf("Copy rectangle from VRAM to CPU offset=(%u,%u), size=(%u,%u)", m_vram_transfer.x, m_vram_transfer.y,
-                  m_vram_transfer.width, m_vram_transfer.height);
+  DEBUG_LOG("Copy rectangle from VRAM to CPU offset=({},{}), size=({},{})", m_vram_transfer.x, m_vram_transfer.y,
+            m_vram_transfer.width, m_vram_transfer.height);
   DebugAssert(m_vram_transfer.col == 0 && m_vram_transfer.row == 0);
 
   // all rendering should be done first...
@@ -604,8 +621,8 @@ bool GPU::HandleCopyRectangleVRAMToVRAMCommand()
   const u32 width = ReplaceZero(FifoPeek() & VRAM_WIDTH_MASK, 0x400);
   const u32 height = ReplaceZero((FifoPop() >> 16) & VRAM_HEIGHT_MASK, 0x200);
 
-  Log_DebugPrintf("Copy rectangle from VRAM to VRAM src=(%u,%u), dst=(%u,%u), size=(%u,%u)", src_x, src_y, dst_x, dst_y,
-                  width, height);
+  DEBUG_LOG("Copy rectangle from VRAM to VRAM src=({},{}), dst=({},{}), size=({},{})", src_x, src_y, dst_x, dst_y,
+            width, height);
 
   // Some VRAM copies aren't going to do anything. Most games seem to send a 2x2 VRAM copy at the end of a frame.
   const bool skip_copy =

@@ -12,6 +12,7 @@
 #include "common/align.h"
 #include "common/assert.h"
 #include "common/log.h"
+#include "common/memmap.h"
 
 #ifdef CPU_ARCH_X64
 
@@ -259,8 +260,8 @@ void CPU::CodeCache::DisassembleAndLogHostCode(const void* start, u32 size)
         else
           hex.append("   ");
       }
-      Log::WriteFmt("HostCode", "", LOGLEVEL_DEBUG, "  {:016X} {} {}",
-                    static_cast<u64>(reinterpret_cast<uintptr_t>(ptr)), hex, buffer);
+      Log::FastWrite("HostCode", "", LOGLEVEL_DEBUG, "  {:016X} {} {}",
+                     static_cast<u64>(reinterpret_cast<uintptr_t>(ptr)), hex, buffer);
     }
 
     ptr += disas_instruction.length;
@@ -293,12 +294,12 @@ u32 CPU::CodeCache::GetHostInstructionCount(const void* start, u32 size)
 
 void CPU::CodeCache::DisassembleAndLogHostCode(const void* start, u32 size)
 {
-  Log_ErrorPrint("Not compiled with ENABLE_HOST_DISASSEMBLY.");
+  ERROR_LOG("Not compiled with ENABLE_HOST_DISASSEMBLY.");
 }
 
 u32 CPU::CodeCache::GetHostInstructionCount(const void* start, u32 size)
 {
-  Log_ErrorPrint("Not compiled with ENABLE_HOST_DISASSEMBLY.");
+  ERROR_LOG("Not compiled with ENABLE_HOST_DISASSEMBLY.");
   return 0;
 }
 
@@ -368,10 +369,10 @@ static const Xbyak::Reg64 GetFastmemBasePtrReg()
   return GetHostReg64(RMEMBASEPTR);
 }
 
-CodeGenerator::CodeGenerator(JitCodeBuffer* code_buffer)
-  : m_code_buffer(code_buffer), m_register_cache(*this),
-    m_near_emitter(code_buffer->GetFreeCodeSpace(), code_buffer->GetFreeCodePointer()),
-    m_far_emitter(code_buffer->GetFreeFarCodeSpace(), code_buffer->GetFreeFarCodePointer()), m_emit(&m_near_emitter)
+CodeGenerator::CodeGenerator()
+  : m_register_cache(*this), m_near_emitter(CPU::CodeCache::GetFreeCodeSpace(), CPU::CodeCache::GetFreeCodePointer()),
+    m_far_emitter(CPU::CodeCache::GetFreeFarCodeSpace(), CPU::CodeCache::GetFreeFarCodePointer()),
+    m_emit(&m_near_emitter)
 {
   InitHostRegs();
 }
@@ -405,11 +406,6 @@ const char* CodeGenerator::GetHostRegName(HostReg reg, RegSize size /*= HostPoin
     default:
       return "";
   }
-}
-
-void CodeGenerator::AlignCodeBuffer(JitCodeBuffer* code_buffer)
-{
-  code_buffer->Align(16, 0x90);
 }
 
 void CodeGenerator::InitHostRegs()
@@ -509,7 +505,7 @@ void CodeGenerator::EmitBeginBlock(bool allocate_registers /* = true */)
       const bool fastmem_reg_allocated = m_register_cache.AllocateHostReg(RMEMBASEPTR);
       DebugAssert(fastmem_reg_allocated);
       UNREFERENCED_VARIABLE(fastmem_reg_allocated);
-      m_emit->mov(GetFastmemBasePtrReg(), m_emit->qword[GetCPUPtrReg() + offsetof(CPU::State, fastmem_base)]);
+      m_emit->mov(GetFastmemBasePtrReg(), m_emit->qword[GetCPUPtrReg() + OFFSETOF(CPU::State, fastmem_base)]);
     }
   }
 }
@@ -570,8 +566,8 @@ const void* CodeGenerator::FinalizeBlock(u32* out_host_code_size, u32* out_host_
   const void* code = m_near_emitter.getCode<const void*>();
   *out_host_code_size = near_size;
   *out_host_far_code_size = far_size;
-  m_code_buffer->CommitCode(near_size);
-  m_code_buffer->CommitFarCode(far_size);
+  CPU::CodeCache::CommitCode(near_size);
+  CPU::CodeCache::CommitFarCode(far_size);
 
   m_near_emitter.reset();
   m_far_emitter.reset();
@@ -1768,15 +1764,8 @@ void CodeGenerator::RestoreStackAfterCall(u32 adjust_size)
 
 void CodeGenerator::EmitCall(const void* ptr)
 {
-  if (Xbyak::inner::IsInInt32(reinterpret_cast<size_t>(ptr) - reinterpret_cast<size_t>(m_emit->getCurr())))
-  {
-    m_emit->call(ptr);
-  }
-  else
-  {
-    m_emit->mov(GetHostReg64(RRETURN), reinterpret_cast<size_t>(ptr));
-    m_emit->call(GetHostReg64(RRETURN));
-  }
+  DebugAssert(Xbyak::inner::IsInInt32(reinterpret_cast<size_t>(ptr) - reinterpret_cast<size_t>(m_emit->getCurr())));
+  m_emit->call(ptr);
 }
 
 void CodeGenerator::EmitFunctionCallPtr(Value* return_value, const void* ptr)
@@ -2226,12 +2215,12 @@ void CodeGenerator::EmitLoadGuestMemoryFastmem(Instruction instruction, const Co
 
   // we add the ticks *after* the add here, since we counted incorrectly, then correct for it below
   DebugAssert(m_delayed_cycles_add > 0);
-  EmitAddCPUStructField(offsetof(State, pending_ticks), Value::FromConstantU32(static_cast<u32>(m_delayed_cycles_add)));
+  EmitAddCPUStructField(OFFSETOF(State, pending_ticks), Value::FromConstantU32(static_cast<u32>(m_delayed_cycles_add)));
   m_delayed_cycles_add += Bus::RAM_READ_TICKS;
 
   EmitLoadGuestMemorySlowmem(instruction, info, address, size, result, true);
 
-  EmitAddCPUStructField(offsetof(State, pending_ticks),
+  EmitAddCPUStructField(OFFSETOF(State, pending_ticks),
                         Value::FromConstantU32(static_cast<u32>(-m_delayed_cycles_add)));
 
   // return to the block code
@@ -2422,11 +2411,11 @@ void CodeGenerator::EmitStoreGuestMemoryFastmem(Instruction instruction, const C
   SwitchToFarCode();
 
   DebugAssert(m_delayed_cycles_add > 0);
-  EmitAddCPUStructField(offsetof(State, pending_ticks), Value::FromConstantU32(static_cast<u32>(m_delayed_cycles_add)));
+  EmitAddCPUStructField(OFFSETOF(State, pending_ticks), Value::FromConstantU32(static_cast<u32>(m_delayed_cycles_add)));
 
   EmitStoreGuestMemorySlowmem(instruction, info, address, size, value, true);
 
-  EmitAddCPUStructField(offsetof(State, pending_ticks),
+  EmitAddCPUStructField(OFFSETOF(State, pending_ticks),
                         Value::FromConstantU32(static_cast<u32>(-m_delayed_cycles_add)));
 
   // return to the block code
@@ -2513,12 +2502,12 @@ void CodeGenerator::EmitStoreGuestMemorySlowmem(Instruction instruction, const C
 
 void CodeGenerator::EmitUpdateFastmemBase()
 {
-  m_emit->mov(GetFastmemBasePtrReg(), m_emit->qword[GetCPUPtrReg() + offsetof(CPU::State, fastmem_base)]);
+  m_emit->mov(GetFastmemBasePtrReg(), m_emit->qword[GetCPUPtrReg() + OFFSETOF(CPU::State, fastmem_base)]);
 }
 
 void CodeGenerator::BackpatchLoadStore(void* host_pc, JitCodeBuffer* code_buffer, const CodeCache::LoadstoreBackpatchInfo& lbi)
 {
-  Log_ProfileFmt("Backpatching {} (guest PC 0x{:08X}) to slowmem", host_pc, lbi.guest_pc);
+  DEV_LOG("Backpatching {} (guest PC 0x{:08X}) to slowmem", host_pc, lbi.guest_pc);
 
   // turn it into a jump to the slowmem handler
   Xbyak::CodeGenerator cg(lbi.code_size, host_pc);
@@ -2530,7 +2519,7 @@ void CodeGenerator::BackpatchLoadStore(void* host_pc, JitCodeBuffer* code_buffer
   for (s32 i = 0; i < nops; i++)
     cg.nop();
 
-  JitCodeBuffer::FlushInstructionCache(host_pc, lbi.code_size);
+  MemMap::FlushInstructionCache(host_pc, lbi.code_size);
 }
 
 void CodeGenerator::EmitLoadGlobal(HostReg host_reg, RegSize size, const void* ptr)
@@ -2732,9 +2721,9 @@ void CodeGenerator::EmitFlushInterpreterLoadDelay()
   Value reg = m_register_cache.AllocateScratch(RegSize_8);
   Value value = m_register_cache.AllocateScratch(RegSize_32);
 
-  auto load_delay_reg = m_emit->byte[GetCPUPtrReg() + offsetof(State, load_delay_reg)];
-  auto load_delay_value = m_emit->dword[GetCPUPtrReg() + offsetof(State, load_delay_value)];
-  auto reg_ptr = m_emit->dword[GetCPUPtrReg() + offsetof(State, regs.r[0]) + GetHostReg64(reg.host_reg) * 4];
+  auto load_delay_reg = m_emit->byte[GetCPUPtrReg() + OFFSETOF(State, load_delay_reg)];
+  auto load_delay_value = m_emit->dword[GetCPUPtrReg() + OFFSETOF(State, load_delay_value)];
+  auto reg_ptr = m_emit->dword[GetCPUPtrReg() + OFFSETOF(State, regs.r[0]) + GetHostReg64(reg.host_reg) * 4];
 
   Xbyak::Label skip_flush;
 
@@ -2760,10 +2749,10 @@ void CodeGenerator::EmitMoveNextInterpreterLoadDelay()
   Value reg = m_register_cache.AllocateScratch(RegSize_8);
   Value value = m_register_cache.AllocateScratch(RegSize_32);
 
-  auto load_delay_reg = m_emit->byte[GetCPUPtrReg() + offsetof(State, load_delay_reg)];
-  auto load_delay_value = m_emit->dword[GetCPUPtrReg() + offsetof(State, load_delay_value)];
-  auto next_load_delay_reg = m_emit->byte[GetCPUPtrReg() + offsetof(State, next_load_delay_reg)];
-  auto next_load_delay_value = m_emit->dword[GetCPUPtrReg() + offsetof(State, next_load_delay_value)];
+  auto load_delay_reg = m_emit->byte[GetCPUPtrReg() + OFFSETOF(State, load_delay_reg)];
+  auto load_delay_value = m_emit->dword[GetCPUPtrReg() + OFFSETOF(State, load_delay_value)];
+  auto next_load_delay_reg = m_emit->byte[GetCPUPtrReg() + OFFSETOF(State, next_load_delay_reg)];
+  auto next_load_delay_value = m_emit->dword[GetCPUPtrReg() + OFFSETOF(State, next_load_delay_value)];
 
   m_emit->mov(GetHostReg32(value), next_load_delay_value);
   m_emit->mov(GetHostReg8(reg), next_load_delay_reg);
@@ -2777,7 +2766,7 @@ void CodeGenerator::EmitCancelInterpreterLoadDelayForReg(Reg reg)
   if (!m_load_delay_dirty)
     return;
 
-  auto load_delay_reg = m_emit->byte[GetCPUPtrReg() + offsetof(State, load_delay_reg)];
+  auto load_delay_reg = m_emit->byte[GetCPUPtrReg() + OFFSETOF(State, load_delay_reg)];
 
   Xbyak::Label skip_cancel;
 
@@ -2793,12 +2782,21 @@ void CodeGenerator::EmitCancelInterpreterLoadDelayForReg(Reg reg)
 
 void CodeGenerator::EmitICacheCheckAndUpdate()
 {
-  if (GetSegmentForAddress(m_pc) >= Segment::KSEG1)
+  if (!m_block->HasFlag(CodeCache::BlockFlags::IsUsingICache))
   {
-    m_emit->add(m_emit->dword[GetCPUPtrReg() + offsetof(State, pending_ticks)],
-                static_cast<u32>(m_block->uncached_fetch_ticks));
+    if (m_block->HasFlag(CodeCache::BlockFlags::NeedsDynamicFetchTicks))
+    {
+      m_emit->mov(m_emit->eax, m_block->size);
+      m_emit->mul(m_emit->dword[m_emit->rip + GetFetchMemoryAccessTimePtr()]);
+      m_emit->add(m_emit->dword[GetCPUPtrReg() + OFFSETOF(State, pending_ticks)], m_emit->eax);
+    }
+    else
+    {
+      m_emit->add(m_emit->dword[GetCPUPtrReg() + OFFSETOF(State, pending_ticks)],
+                  static_cast<u32>(m_block->uncached_fetch_ticks));
+    }
   }
-  else
+  else if (m_block->icache_line_count > 0)
   {
     VirtualMemoryAddress current_pc = m_pc & ICACHE_TAG_ADDRESS_MASK;
     for (u32 i = 0; i < m_block->icache_line_count; i++, current_pc += ICACHE_LINE_SIZE)
@@ -2809,13 +2807,13 @@ void CodeGenerator::EmitICacheCheckAndUpdate()
         continue;
 
       const u32 line = GetICacheLine(current_pc);
-      const u32 offset = offsetof(State, icache_tags) + (line * sizeof(u32));
+      const u32 offset = OFFSETOF(State, icache_tags) + (line * sizeof(u32));
       Xbyak::Label cache_hit;
 
       m_emit->cmp(m_emit->dword[GetCPUPtrReg() + offset], tag);
       m_emit->je(cache_hit);
       m_emit->mov(m_emit->dword[GetCPUPtrReg() + offset], tag);
-      m_emit->add(m_emit->dword[GetCPUPtrReg() + offsetof(State, pending_ticks)], static_cast<u32>(fill_ticks));
+      m_emit->add(m_emit->dword[GetCPUPtrReg() + OFFSETOF(State, pending_ticks)], static_cast<u32>(fill_ticks));
       m_emit->L(cache_hit);
     }
   }
@@ -2879,8 +2877,8 @@ void CodeGenerator::EmitBlockProtectCheck(const u8* ram_ptr, const u8* shadow_pt
 
 void CodeGenerator::EmitStallUntilGTEComplete()
 {
-  m_emit->mov(GetHostReg32(RRETURN), m_emit->dword[GetCPUPtrReg() + offsetof(State, pending_ticks)]);
-  m_emit->mov(GetHostReg32(RARG1), m_emit->dword[GetCPUPtrReg() + offsetof(State, gte_completion_tick)]);
+  m_emit->mov(GetHostReg32(RRETURN), m_emit->dword[GetCPUPtrReg() + OFFSETOF(State, pending_ticks)]);
+  m_emit->mov(GetHostReg32(RARG1), m_emit->dword[GetCPUPtrReg() + OFFSETOF(State, gte_completion_tick)]);
 
   if (m_delayed_cycles_add > 0)
   {
@@ -2890,7 +2888,7 @@ void CodeGenerator::EmitStallUntilGTEComplete()
 
   m_emit->cmp(GetHostReg32(RARG1), GetHostReg32(RRETURN));
   m_emit->cmova(GetHostReg32(RRETURN), GetHostReg32(RARG1));
-  m_emit->mov(m_emit->dword[GetCPUPtrReg() + offsetof(State, pending_ticks)], GetHostReg32(RRETURN));
+  m_emit->mov(m_emit->dword[GetCPUPtrReg() + OFFSETOF(State, pending_ticks)], GetHostReg32(RRETURN));
 }
 
 void CodeGenerator::EmitBranch(const void* address, bool allow_scratch)

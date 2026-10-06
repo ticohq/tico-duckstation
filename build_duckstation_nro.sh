@@ -72,6 +72,41 @@ cmake -S "$TICO_DIR/deps/glslang" -B "$GLSLANG_BUILD" -G Ninja \
 cmake --build "$GLSLANG_BUILD"
 
 # ============================================================
+# Step 2c: SoundTouch (audio time stretching) and SPIRV-Cross (shaders
+# translated for OpenGL and deko3D), static, at the versions DuckStation pins
+# ============================================================
+SOUNDTOUCH_LIB="$DEPS_DIR/lib/libSoundTouchDLL.a"
+if [ ! -f "$SOUNDTOUCH_LIB" ]; then
+    echo "--- Step 2c: Building SoundTouch ---"
+    # its CMake only installs the C wrapper (DuckStation's API), as a shared
+    # library: the sources are compiled into two static libraries instead
+    ST_SRC="$TICO_DIR/deps/soundtouch"
+    ST_BUILD="$DEPS_DIR/soundtouch-build"
+    rm -rf "$ST_BUILD"
+    mkdir -p "$ST_BUILD" "$DEPS_DIR/include/soundtouch"
+    ST_FLAGS="-O2 -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE -ffunction-sections -D__SWITCH__ -DSOUNDTOUCH_FLOAT_SAMPLES -I$LIBNX/include -I$ST_SRC/include"
+    for src in "$ST_SRC"/source/SoundTouch/*.cpp "$ST_SRC/source/SoundTouchDLL/SoundTouchDLL.cpp"; do
+        "$DEVKITA64/bin/aarch64-none-elf-g++" $ST_FLAGS -c "$src" -o "$ST_BUILD/$(basename "$src" .cpp).o"
+    done
+    "$DEVKITA64/bin/aarch64-none-elf-ar" rcs "$DEPS_DIR/lib/libSoundTouch.a" \
+        $(ls "$ST_BUILD"/*.o | grep -v SoundTouchDLL.o)
+    "$DEVKITA64/bin/aarch64-none-elf-ar" rcs "$SOUNDTOUCH_LIB" "$ST_BUILD/SoundTouchDLL.o"
+    install -m644 "$ST_SRC"/include/*.h "$ST_SRC/source/SoundTouchDLL/SoundTouchDLL.h" "$DEPS_DIR/include/soundtouch/"
+fi
+
+SPIRV_CROSS_LIB="$DEPS_DIR/lib/libspirv-cross-c.a"
+if [ ! -f "$SPIRV_CROSS_LIB" ]; then
+    echo "--- Step 2c: Building SPIRV-Cross ---"
+    cmake -S "$TICO_DIR/deps/SPIRV-Cross" -B "$DEPS_DIR/spirv-cross-build" -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/Switch.cmake" -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="$DEPS_DIR" -DSPIRV_CROSS_SHARED=OFF -DSPIRV_CROSS_STATIC=ON \
+        -DSPIRV_CROSS_CLI=OFF -DSPIRV_CROSS_ENABLE_TESTS=OFF -DSPIRV_CROSS_ENABLE_GLSL=ON \
+        -DSPIRV_CROSS_ENABLE_HLSL=OFF -DSPIRV_CROSS_ENABLE_MSL=OFF -DSPIRV_CROSS_ENABLE_CPP=OFF \
+        -DSPIRV_CROSS_ENABLE_REFLECT=OFF -DSPIRV_CROSS_ENABLE_C_API=ON -DSPIRV_CROSS_ENABLE_UTIL=ON > /dev/null
+    cmake --build "$DEPS_DIR/spirv-cross-build" --target install > /dev/null
+fi
+
+# ============================================================
 # Step 2b: Mesa's NVK (Vulkan), linked statically
 # ============================================================
 # Point MESA_NVK_DIR at builddir-switch of a mesa-switch tree; without one,

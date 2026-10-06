@@ -3,9 +3,12 @@
 
 # binaries folder
 /bin/
-/Build/
 /build/
 /build-*/
+
+# dependency build temp files
+deps-build/
+/deps/
 
 # vs stuff
 .vs
@@ -40,12 +43,7 @@ CMakeLists.txt.user
 __pycache__
 
 # other repos
-/dep/mac
 /android
-
-# UWP crap
-Generated Files
-/packages
 
 # tico build (build_duckstation_nro.sh)
 /build_core/

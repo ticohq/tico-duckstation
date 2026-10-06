@@ -5,6 +5,7 @@
 #include "gpu_device.h"
 
 #include "common/align.h"
+#include "common/assert.h"
 #include "common/bitutils.h"
 #include "common/log.h"
 #include "common/string_util.h"
@@ -33,6 +34,9 @@ const char* GPUTexture::GetFormatName(Format format)
     "RGB5551", // RGBA5551
     "R8",      // R8
     "D16",     // D16
+    "D24S8",   // D24S8
+    "D32F",    // D32F
+    "D32FS8S", // D32FS8
     "R16",     // R16
     "R16I",    // R16I
     "R16U",    // R16U
@@ -149,6 +153,9 @@ u32 GPUTexture::GetPixelSize(GPUTexture::Format format)
     2,  // RGBA5551
     1,  // R8
     2,  // D16
+    4,  // D24S8
+    4,  // D32F
+    8,  // D32FS8
     2,  // R16
     2,  // R16I
     2,  // R16U
@@ -171,13 +178,12 @@ u32 GPUTexture::GetPixelSize(GPUTexture::Format format)
 
 bool GPUTexture::IsDepthFormat(Format format)
 {
-  return (format == Format::D16);
+  return (format >= Format::D16 && format <= Format::D32FS8);
 }
 
 bool GPUTexture::IsDepthStencilFormat(Format format)
 {
-  // None needed yet.
-  return false;
+  return (format == Format::D24S8 || format == Format::D32FS8);
 }
 
 bool GPUTexture::IsCompressedFormat(Format format)
@@ -190,40 +196,47 @@ bool GPUTexture::ValidateConfig(u32 width, u32 height, u32 layers, u32 levels, u
 {
   if (width > MAX_WIDTH || height > MAX_HEIGHT || layers > MAX_LAYERS || levels > MAX_LEVELS || samples > MAX_SAMPLES)
   {
-    Log_ErrorPrintf("Invalid dimensions: %ux%ux%u %u %u.", width, height, layers, levels, samples);
+    ERROR_LOG("Invalid dimensions: {}x{}x{} {} {}.", width, height, layers, levels, samples);
     return false;
   }
 
   const u32 max_texture_size = g_gpu_device->GetMaxTextureSize();
   if (width > max_texture_size || height > max_texture_size)
   {
-    Log_ErrorPrintf("Texture width (%u) or height (%u) exceeds max texture size (%u).", width, height,
-                    max_texture_size);
+    ERROR_LOG("Texture width ({}) or height ({}) exceeds max texture size ({}).", width, height, max_texture_size);
     return false;
   }
 
   const u32 max_samples = g_gpu_device->GetMaxMultisamples();
   if (samples > max_samples)
   {
-    Log_ErrorPrintf("Texture samples (%u) exceeds max samples (%u).", samples, max_samples);
+    ERROR_LOG("Texture samples ({}) exceeds max samples ({}).", samples, max_samples);
     return false;
   }
 
-  if (samples > 1 && levels > 1)
+  if (samples > 1)
   {
-    Log_ErrorPrintf("Multisampled textures can't have mip levels.");
-    return false;
+    if (levels > 1)
+    {
+      ERROR_LOG("Multisampled textures can't have mip levels.");
+      return false;
+    }
+    else if (type != Type::RenderTarget && type != Type::DepthStencil)
+    {
+      ERROR_LOG("Multisampled textures must be render targets or depth stencil targets.");
+      return false;
+    }
   }
 
   if (layers > 1 && type != Type::Texture && type != Type::DynamicTexture)
   {
-    Log_ErrorPrintf("Texture arrays are not supported on targets.");
+    ERROR_LOG("Texture arrays are not supported on targets.");
     return false;
   }
 
   if (levels > 1 && type != Type::Texture && type != Type::DynamicTexture)
   {
-    Log_ErrorPrintf("Mipmaps are not supported on targets.");
+    ERROR_LOG("Mipmaps are not supported on targets.");
     return false;
   }
 
@@ -318,7 +331,7 @@ bool GPUTexture::ConvertTextureDataToRGBA8(u32 width, u32 height, std::vector<u3
     }
 
     default:
-      Log_ErrorPrintf("Unknown pixel format %u", static_cast<u32>(format));
+      [[unlikely]] ERROR_LOG("Unknown pixel format {}", static_cast<u32>(format));
       return false;
   }
 }

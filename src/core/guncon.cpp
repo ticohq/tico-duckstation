@@ -207,8 +207,8 @@ bool GunCon::Transfer(const u8 data_in, u8* data_out)
 void GunCon::UpdatePosition()
 {
   float display_x, display_y;
-  const auto& [window_x, window_y] =
-    (m_has_relative_binds) ? GetAbsolutePositionFromRelativeAxes() : InputManager::GetPointerAbsolutePosition(0);
+  const auto& [window_x, window_y] = (m_has_relative_binds) ? GetAbsolutePositionFromRelativeAxes() :
+                                                              InputManager::GetPointerAbsolutePosition(m_cursor_index);
   g_gpu->ConvertScreenCoordinatesToDisplayCoordinates(window_x, window_y, &display_x, &display_y);
 
   // are we within the active display area?
@@ -217,7 +217,7 @@ void GunCon::UpdatePosition()
       !g_gpu->ConvertDisplayCoordinatesToBeamTicksAndLines(display_x, display_y, m_x_scale, &tick, &line) ||
       m_shoot_offscreen)
   {
-    Log_DebugPrintf("Lightgun out of range for window coordinates %.0f,%.0f", window_x, window_y);
+    DEBUG_LOG("Lightgun out of range for window coordinates {:.0f},{:.0f}", window_x, window_y);
     m_position_x = 0x01;
     m_position_y = 0x0A;
     return;
@@ -227,8 +227,8 @@ void GunCon::UpdatePosition()
   const double divider = static_cast<double>(g_gpu->GetCRTCFrequency()) / 8000000.0;
   m_position_x = static_cast<u16>(static_cast<float>(tick) / static_cast<float>(divider));
   m_position_y = static_cast<u16>(line);
-  Log_DebugPrintf("Lightgun window coordinates %.0f,%.0f -> tick %u line %u 8mhz ticks %u", display_x, display_y, tick,
-                  line, m_position_x);
+  DEBUG_LOG("Lightgun window coordinates {:.0f},{:.0f} -> tick {} line {} 8mhz ticks {}", display_x, display_y, tick,
+            line, m_position_x);
 }
 
 std::pair<float, float> GunCon::GetAbsolutePositionFromRelativeAxes() const
@@ -245,7 +245,7 @@ bool GunCon::CanUseSoftwareCursor() const
 
 u32 GunCon::GetSoftwarePointerIndex() const
 {
-  return m_has_relative_binds ? (InputManager::MAX_POINTER_DEVICES + m_index) : 0;
+  return m_has_relative_binds ? (InputManager::MAX_POINTER_DEVICES + m_index) : m_cursor_index;
 }
 
 void GunCon::UpdateSoftwarePointerPosition()
@@ -273,7 +273,8 @@ static const Controller::ControllerBindingInfo s_binding_info[] = {
   }
 
   // clang-format off
-  BUTTON("Trigger", TRANSLATE_NOOP("GunCon", "Trigger"), nullptr, GunCon::Binding::Trigger, GenericInputBinding::R2),
+  {"Pointer", TRANSLATE_NOOP("GunCon", "Pointer/Aiming"), ICON_PF_MOUSE, static_cast<u32>(GunCon::Binding::ButtonCount), InputBindingInfo::Type::Pointer, GenericInputBinding::Unknown},
+  BUTTON("Trigger", TRANSLATE_NOOP("GunCon", "Trigger"), ICON_PF_CROSS, GunCon::Binding::Trigger, GenericInputBinding::R2),
   BUTTON("ShootOffscreen", TRANSLATE_NOOP("GunCon", "Shoot Offscreen"), nullptr, GunCon::Binding::ShootOffscreen, GenericInputBinding::L2),
   BUTTON("A", TRANSLATE_NOOP("GunCon", "A"), ICON_PF_BUTTON_A, GunCon::Binding::A, GenericInputBinding::Cross),
   BUTTON("B", TRANSLATE_NOOP("GunCon", "B"), ICON_PF_BUTTON_B, GunCon::Binding::B, GenericInputBinding::Circle),
@@ -303,12 +304,12 @@ static const SettingInfo s_settings[] = {
    "%.0f%%", nullptr, 100.0f}};
 
 const Controller::ControllerInfo GunCon::INFO = {
-  ControllerType::GunCon, "GunCon",   TRANSLATE_NOOP("ControllerType", "GunCon"),    nullptr,
+  ControllerType::GunCon, "GunCon",   TRANSLATE_NOOP("ControllerType", "GunCon"),    ICON_PF_LIGHT_GUN,
   s_binding_info,         s_settings, Controller::VibrationCapabilities::NoVibration};
 
-void GunCon::LoadSettings(SettingsInterface& si, const char* section)
+void GunCon::LoadSettings(SettingsInterface& si, const char* section, bool initial)
 {
-  Controller::LoadSettings(si, section);
+  Controller::LoadSettings(si, section, initial);
 
   m_x_scale = si.GetFloatValue(section, "XScale", 1.0f);
 
@@ -334,13 +335,15 @@ void GunCon::LoadSettings(SettingsInterface& si, const char* section)
 
   m_has_relative_binds = (si.ContainsValue(section, "RelativeLeft") || si.ContainsValue(section, "RelativeRight") ||
                           si.ContainsValue(section, "RelativeUp") || si.ContainsValue(section, "RelativeDown"));
+  m_cursor_index =
+    static_cast<u8>(InputManager::GetIndexFromPointerBinding(si.GetStringValue(section, "Pointer")).value_or(0));
 
   const s32 new_pointer_index = GetSoftwarePointerIndex();
 
   if (prev_pointer_index != new_pointer_index || m_cursor_path != cursor_path || m_cursor_scale != cursor_scale ||
       m_cursor_color != cursor_color)
   {
-    if (prev_pointer_index != new_pointer_index &&
+    if (!initial && prev_pointer_index != new_pointer_index &&
         static_cast<u32>(prev_pointer_index) < InputManager::MAX_SOFTWARE_CURSORS)
     {
       ImGuiManager::ClearSoftwareCursor(prev_pointer_index);

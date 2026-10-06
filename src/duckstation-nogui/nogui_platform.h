@@ -20,8 +20,8 @@ class NoGUIPlatform
 public:
   virtual ~NoGUIPlatform() = default;
 
-  virtual void ReportError(const std::string_view& title, const std::string_view& message) = 0;
-  virtual bool ConfirmMessage(const std::string_view& title, const std::string_view& message) = 0;
+  virtual void ReportError(std::string_view title, std::string_view message) = 0;
+  virtual bool ConfirmMessage(std::string_view title, std::string_view message) = 0;
 
   virtual void SetDefaultConfig(SettingsInterface& si) = 0;
 
@@ -32,7 +32,7 @@ public:
   virtual std::optional<WindowInfo> GetPlatformWindowInfo() = 0;
   virtual void SetPlatformWindowTitle(std::string title) = 0;
 
-  virtual std::optional<u32> ConvertHostKeyboardStringToCode(const std::string_view& str) = 0;
+  virtual std::optional<u32> ConvertHostKeyboardStringToCode(std::string_view str) = 0;
   virtual std::optional<std::string> ConvertHostKeyboardCodeToString(u32 code) = 0;
 
   virtual void RunMessageLoop() = 0;
@@ -43,8 +43,8 @@ public:
 
   virtual bool RequestRenderWindowSize(s32 new_window_width, s32 new_window_height) = 0;
 
-  virtual bool OpenURL(const std::string_view& url) = 0;
-  virtual bool CopyTextToClipboard(const std::string_view& text) = 0;
+  virtual bool OpenURL(std::string_view url) = 0;
+  virtual bool CopyTextToClipboard(std::string_view text) = 0;
 
 #ifdef _WIN32
   static std::unique_ptr<NoGUIPlatform> CreateWin32Platform();

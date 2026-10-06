@@ -62,10 +62,10 @@ void AnalogController::Reset()
 
   if (m_force_analog_on_reset)
   {
-    if (g_settings.controller_disable_analog_mode_forcing || System::IsRunningUnknownGame())
+    if (!CanStartInAnalogMode(ControllerType::AnalogController))
     {
       Host::AddIconOSDMessage(
-        fmt::format("Controller{}AnalogMode", m_index), ICON_FA_GAMEPAD,
+        fmt::format("Controller{}AnalogMode", m_index), ICON_PF_GAMEPAD_ALT,
         TRANSLATE_STR("OSDMessage",
                       "Analog mode forcing is disabled by game settings. Controller will start in digital mode."),
         10.0f);
@@ -279,6 +279,11 @@ std::optional<u32> AnalogController::GetAnalogInputBytes() const
          m_axis_state[static_cast<size_t>(Axis::RightY)] << 8 | m_axis_state[static_cast<size_t>(Axis::RightX)];
 }
 
+u32 AnalogController::GetInputOverlayIconColor() const
+{
+  return m_analog_mode ? 0xFF2534F0u : 0xFFCCCCCCu;
+}
+
 void AnalogController::ResetTransferState()
 {
   if (m_analog_toggle_queued)
@@ -296,16 +301,15 @@ void AnalogController::SetAnalogMode(bool enabled, bool show_message)
   if (m_analog_mode == enabled)
     return;
 
-  Log_InfoPrintf("Controller %u switched to %s mode.", m_index + 1u, enabled ? "analog" : "digital");
+  INFO_LOG("Controller {} switched to {} mode.", m_index + 1u, m_analog_mode ? "analog" : "digital");
   if (show_message)
   {
-    Host::AddIconOSDMessage(fmt::format("Controller{}AnalogMode", m_index), ICON_FA_GAMEPAD,
-                            fmt::format(enabled ?
-                                          TRANSLATE_FS("AnalogController", "Controller {} switched to analog mode.") :
-                                          TRANSLATE_FS("AnalogController", "Controller {} switched to digital mode."),
-                                        m_index + 1u),
-                            5.0f);
+    Host::AddIconOSDMessage(
+      fmt::format("analog_mode_toggle_{}", m_index), ICON_PF_GAMEPAD_ALT,
+      enabled ? fmt::format(TRANSLATE_FS("Controller", "Controller {} switched to analog mode."), m_index + 1u) :
+                fmt::format(TRANSLATE_FS("Controller", "Controller {} switched to digital mode."), m_index + 1u));
   }
+
   m_analog_mode = enabled;
 }
 
@@ -314,7 +318,7 @@ void AnalogController::ProcessAnalogModeToggle()
   if (m_analog_locked)
   {
     Host::AddIconOSDMessage(
-      fmt::format("Controller{}AnalogMode", m_index), ICON_FA_GAMEPAD,
+      fmt::format("Controller{}AnalogMode", m_index), ICON_PF_GAMEPAD_ALT,
       fmt::format(m_analog_mode ?
                     TRANSLATE_FS("AnalogController", "Controller {} is locked to analog mode by the game.") :
                     TRANSLATE_FS("AnalogController", "Controller {} is locked to digital mode by the game."),
@@ -433,12 +437,12 @@ bool AnalogController::Transfer(const u8 data_in, u8* data_out)
 
       if (data_in == 0x01)
       {
-        Log_DebugPrintf("ACK controller access");
+        DEBUG_LOG("ACK controller access");
         m_command = Command::Ready;
         return true;
       }
 
-      Log_DevPrintf("Unknown data_in = 0x%02X", data_in);
+      DEV_LOG("Unknown data_in = 0x{:02X}", data_in);
       return false;
     }
     break;
@@ -509,7 +513,7 @@ bool AnalogController::Transfer(const u8 data_in, u8* data_out)
       else
       {
         if (m_configuration_mode)
-          Log_ErrorPrintf("Unimplemented config mode command 0x%02X", data_in);
+          ERROR_LOG("Unimplemented config mode command 0x{:02X}", data_in);
 
         *data_out = 0xFF;
         return false;
@@ -659,7 +663,7 @@ bool AnalogController::Transfer(const u8 data_in, u8* data_out)
           m_status_byte = 0x5A;
         }
 
-        Log_DevPrintf("0x%02x(%s) config mode", m_rx_buffer[2], m_configuration_mode ? "enter" : "leave");
+        DEV_LOG("0x{:02x}({}) config mode", m_rx_buffer[2], m_configuration_mode ? "enter" : "leave");
       }
     }
     break;
@@ -668,14 +672,14 @@ bool AnalogController::Transfer(const u8 data_in, u8* data_out)
     {
       if (m_command_step == 2)
       {
-        Log_DevPrintf("analog mode val 0x%02x", data_in);
+        DEV_LOG("analog mode val 0x{:02x}", data_in);
 
         if (data_in == 0x00 || data_in == 0x01)
           SetAnalogMode((data_in == 0x01), true);
       }
       else if (m_command_step == 3)
       {
-        Log_DevPrintf("analog mode lock 0x%02x", data_in);
+        DEV_LOG("analog mode lock 0x{:02x}", data_in);
 
         if (data_in == 0x02 || data_in == 0x03)
           m_analog_locked = (data_in == 0x03);
@@ -772,10 +776,10 @@ bool AnalogController::Transfer(const u8 data_in, u8* data_out)
   {
     m_command = Command::Idle;
 
-    Log_DebugPrintf("Rx: %02x %02x %02x %02x %02x %02x %02x %02x", m_rx_buffer[0], m_rx_buffer[1], m_rx_buffer[2],
-                    m_rx_buffer[3], m_rx_buffer[4], m_rx_buffer[5], m_rx_buffer[6], m_rx_buffer[7]);
-    Log_DebugPrintf("Tx: %02x %02x %02x %02x %02x %02x %02x %02x", m_tx_buffer[0], m_tx_buffer[1], m_tx_buffer[2],
-                    m_tx_buffer[3], m_tx_buffer[4], m_tx_buffer[5], m_tx_buffer[6], m_tx_buffer[7]);
+    DEBUG_LOG("Rx: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}", m_rx_buffer[0], m_rx_buffer[1],
+              m_rx_buffer[2], m_rx_buffer[3], m_rx_buffer[4], m_rx_buffer[5], m_rx_buffer[6], m_rx_buffer[7]);
+    DEBUG_LOG("Tx: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}", m_tx_buffer[0], m_tx_buffer[1],
+              m_tx_buffer[2], m_tx_buffer[3], m_tx_buffer[4], m_tx_buffer[5], m_tx_buffer[6], m_tx_buffer[7]);
 
     m_rx_buffer.fill(0x00);
     m_tx_buffer.fill(0x00);
@@ -876,14 +880,14 @@ static const SettingInfo s_settings[] = {
 const Controller::ControllerInfo AnalogController::INFO = {ControllerType::AnalogController,
                                                            "AnalogController",
                                                            TRANSLATE_NOOP("ControllerType", "Analog Controller"),
-                                                           ICON_PF_GAMEPAD,
+                                                           ICON_PF_GAMEPAD_ALT,
                                                            s_binding_info,
                                                            s_settings,
                                                            Controller::VibrationCapabilities::LargeSmallMotors};
 
-void AnalogController::LoadSettings(SettingsInterface& si, const char* section)
+void AnalogController::LoadSettings(SettingsInterface& si, const char* section, bool initial)
 {
-  Controller::LoadSettings(si, section);
+  Controller::LoadSettings(si, section, initial);
   m_force_analog_on_reset = si.GetBoolValue(section, "ForceAnalogOnReset", true);
   m_analog_dpad_in_digital_mode = si.GetBoolValue(section, "AnalogDPadInDigitalMode", true);
   m_analog_deadzone = std::clamp(si.GetFloatValue(section, "AnalogDeadzone", DEFAULT_STICK_DEADZONE), 0.0f, 1.0f);

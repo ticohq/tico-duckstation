@@ -55,6 +55,13 @@ BINARY=duckstation-qt
 APPDIRNAME=DuckStation.AppDir
 STRIP=strip
 
+declare -a MANUAL_LIBS=(
+	"libdiscord-rpc.so"
+	"libfreetype.so.6"
+	"libshaderc_shared.so"
+	"libspirv-cross-c-shared.so.0"
+)
+
 declare -a MANUAL_QT_LIBS=(
 	"libQt6WaylandEglClientHwIntegration.so.6"
 )
@@ -65,20 +72,27 @@ declare -a MANUAL_QT_PLUGINS=(
 	"wayland-shell-integration"
 )
 
+declare -a REMOVE_LIBS=(
+	'libwayland-client.so*'
+	'libwayland-cursor.so*'
+	'libwayland-egl.so*'
+)
+
 set -e
 
-LINUXDEPLOY=./linuxdeploy-x86_64.AppImage
-LINUXDEPLOY_PLUGIN_QT=./linuxdeploy-plugin-qt-x86_64.AppImage
-APPIMAGETOOL=./appimagetool-x86_64.AppImage
+LINUXDEPLOY=./linuxdeploy-x86_64
+LINUXDEPLOY_PLUGIN_QT=./linuxdeploy-plugin-qt-x86_64
+APPIMAGETOOL=./appimagetool-x86_64
+APPIMAGERUNTIME=./runtime-x86_64
 PATCHELF=patchelf
 
 if [ ! -f "$LINUXDEPLOY" ]; then
-	retry_command wget -O "$LINUXDEPLOY" https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+	retry_command wget -O "$LINUXDEPLOY" https://github.com/stenzek/duckstation-ext-qt-minimal/releases/download/linux/linuxdeploy-x86_64.AppImage
 	chmod +x "$LINUXDEPLOY"
 fi
 
 if [ ! -f "$LINUXDEPLOY_PLUGIN_QT" ]; then
-	retry_command wget -O "$LINUXDEPLOY_PLUGIN_QT" https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+	retry_command wget -O "$LINUXDEPLOY_PLUGIN_QT" https://github.com/stenzek/duckstation-ext-qt-minimal/releases/download/linux/linuxdeploy-plugin-qt-x86_64.AppImage
 	chmod +x "$LINUXDEPLOY_PLUGIN_QT"
 fi
 
@@ -87,8 +101,25 @@ if [ ! -f "$APPIMAGETOOL" ]; then
 	chmod +x "$APPIMAGETOOL"
 fi
 
+if [ ! -f "$APPIMAGERUNTIME" ]; then
+	retry_command wget -O "$APPIMAGERUNTIME" https://github.com/stenzek/type2-runtime/releases/download/continuous/runtime-x86_64
+fi
+
 OUTDIR=$(realpath "./$APPDIRNAME")
 rm -fr "$OUTDIR"
+
+echo "Locating extra libraries..."
+EXTRA_LIBS_ARGS=()
+for lib in "${MANUAL_LIBS[@]}"; do
+	srcpath=$(find "$DEPSDIR" -name "$lib")
+	if [ ! -f "$srcpath" ]; then
+		echo "Missinge extra library $lib. Exiting."
+		exit 1
+	fi
+
+	echo "Found $lib at $srcpath."
+	EXTRA_LIBS_ARGS+=("--library=$srcpath")
+done
 
 # Why the nastyness? linuxdeploy strips our main binary, and there's no option to turn it off.
 # It also doesn't strip the Qt libs. We can't strip them after running linuxdeploy, because
@@ -107,13 +138,14 @@ for i in $(find "$DEPSDIR" -iname '*.so'); do
 done
 
 echo "Running linuxdeploy to create AppDir..."
-EXTRA_QT_PLUGINS="core;gui;network;svg;waylandclient;widgets;xcbqpa" \
+EXTRA_QT_PLUGINS="core;gui;svg;waylandclient;widgets;xcbqpa" \
 EXTRA_PLATFORM_PLUGINS="libqwayland-egl.so;libqwayland-generic.so" \
+DEPLOY_PLATFORM_THEMES="1" \
 QMAKE="$DEPSDIR/bin/qmake" \
 NO_STRIP="1" \
-$LINUXDEPLOY --plugin qt --appdir="$OUTDIR" --executable="$BUILDDIR/bin/duckstation-qt" \
+$LINUXDEPLOY --plugin qt --appdir="$OUTDIR" --executable="$BUILDDIR/bin/duckstation-qt" ${EXTRA_LIBS_ARGS[@]} \
 --desktop-file="$ROOTDIR/scripts/org.duckstation.DuckStation.desktop" \
---icon-file="$ROOTDIR/scripts/org.duckstation.DuckStation.png"
+--icon-file="$ROOTDIR/scripts/org.duckstation.DuckStation.png" \
 
 echo "Copying resources into AppDir..."
 cp -a "$BUILDDIR/bin/resources" "$OUTDIR/usr/bin"
@@ -146,6 +178,16 @@ for GROUP in "${MANUAL_QT_PLUGINS[@]}"; do
 	done
 done
 
+# Why do we have to manually remove these libs? Because the linuxdeploy Qt plugin
+# copies them, not the "main" linuxdeploy binary, and plugins don't inherit the
+# include list...
+for lib in "${REMOVE_LIBS[@]}"; do
+	for libpath in $(find "$OUTDIR/usr/lib" -name "$lib"); do
+		echo "    Removing problematic library ${libpath}."
+		rm -f "$libpath"
+	done
+done
+
 # Restore unstripped deps (for cache).
 rm -fr "$DEPSDIR"
 mv "$DEPSDIR.bak" "$DEPSDIR"
@@ -171,5 +213,4 @@ done
 
 echo "Generating AppImage..."
 rm -f "$NAME.AppImage"
-$APPIMAGETOOL -v "$OUTDIR" "$NAME.AppImage"
-
+"$APPIMAGETOOL" -v --runtime-file "$APPIMAGERUNTIME" "$OUTDIR" "$NAME.AppImage"

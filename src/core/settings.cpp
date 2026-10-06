@@ -10,6 +10,7 @@
 #include "util/gpu_device.h"
 #include "util/imgui_manager.h"
 #include "util/input_manager.h"
+#include "util/media_capture.h"
 
 #include "common/assert.h"
 #include "common/file_system.h"
@@ -121,6 +122,12 @@ float SettingInfo::FloatStepValue() const
   return step_value ? StringUtil::FromChars<float>(step_value).value_or(fallback_value) : fallback_value;
 }
 
+#if defined(_WIN32)
+const MediaCaptureBackend Settings::DEFAULT_MEDIA_CAPTURE_BACKEND = MediaCaptureBackend::MediaFoundation;
+#elif !defined(__ANDROID__)
+const MediaCaptureBackend Settings::DEFAULT_MEDIA_CAPTURE_BACKEND = MediaCaptureBackend::FFmpeg;
+#endif
+
 Settings::Settings()
 {
   controller_types[0] = DEFAULT_CONTROLLER_1_TYPE;
@@ -166,7 +173,7 @@ void Settings::UpdateOverclockActive()
   cpu_overclock_active = (cpu_overclock_enable && (cpu_overclock_numerator != 1 || cpu_overclock_denominator != 1));
 }
 
-void Settings::Load(SettingsInterface& si)
+void Settings::Load(SettingsInterface& si, SettingsInterface& controller_si)
 {
   region =
     ParseConsoleRegionName(
@@ -183,9 +190,9 @@ void Settings::Load(SettingsInterface& si)
   start_paused = si.GetBoolValue("Main", "StartPaused", false);
   start_fullscreen = si.GetBoolValue("Main", "StartFullscreen", false);
   pause_on_focus_loss = si.GetBoolValue("Main", "PauseOnFocusLoss", false);
+  pause_on_controller_disconnection = si.GetBoolValue("Main", "PauseOnControllerDisconnection", false);
   save_state_on_exit = si.GetBoolValue("Main", "SaveStateOnExit", true);
   create_save_state_backups = si.GetBoolValue("Main", "CreateSaveStateBackups", DEFAULT_SAVE_STATE_BACKUPS);
-  compress_save_states = si.GetBoolValue("Main", "CompressSaveStates", DEFAULT_SAVE_STATE_COMPRESSION);
   confim_power_off = si.GetBoolValue("Main", "ConfirmPowerOff", true);
   load_devices_from_save_states = si.GetBoolValue("Main", "LoadDevicesFromSaveStates", false);
   apply_compatibility_settings = si.GetBoolValue("Main", "ApplyCompatibilitySettings", true);
@@ -197,6 +204,10 @@ void Settings::Load(SettingsInterface& si)
   rewind_save_frequency = si.GetFloatValue("Main", "RewindFrequency", 10.0f);
   rewind_save_slots = static_cast<u32>(si.GetIntValue("Main", "RewindSaveSlots", 10));
   runahead_frames = static_cast<u32>(si.GetIntValue("Main", "RunaheadFrameCount", 0));
+
+  pine_enable = si.GetBoolValue("PINE", "Enabled", false);
+  pine_slot = static_cast<u16>(
+    std::min<u32>(si.GetUIntValue("PINE", "Slot", DEFAULT_PINE_SLOT), std::numeric_limits<u16>::max()));
 
   cpu_execution_mode =
     ParseCPUExecutionMode(
@@ -224,17 +235,25 @@ void Settings::Load(SettingsInterface& si)
   gpu_disable_framebuffer_fetch = si.GetBoolValue("GPU", "DisableFramebufferFetch", false);
   gpu_disable_texture_buffers = si.GetBoolValue("GPU", "DisableTextureBuffers", false);
   gpu_disable_texture_copy_to_self = si.GetBoolValue("GPU", "DisableTextureCopyToSelf", false);
+  gpu_disable_memory_import = si.GetBoolValue("GPU", "DisableMemoryImport", false);
+  gpu_disable_raster_order_views = si.GetBoolValue("GPU", "DisableRasterOrderViews", false);
   gpu_per_sample_shading = si.GetBoolValue("GPU", "PerSampleShading", false);
   gpu_use_thread = si.GetBoolValue("GPU", "UseThread", true);
   gpu_use_software_renderer_for_readbacks = si.GetBoolValue("GPU", "UseSoftwareRendererForReadbacks", false);
-  gpu_threaded_presentation = si.GetBoolValue("GPU", "ThreadedPresentation", true);
+  gpu_threaded_presentation = si.GetBoolValue("GPU", "ThreadedPresentation", DEFAULT_THREADED_PRESENTATION);
   gpu_true_color = si.GetBoolValue("GPU", "TrueColor", true);
   gpu_debanding = si.GetBoolValue("GPU", "Debanding", false);
   gpu_scaled_dithering = si.GetBoolValue("GPU", "ScaledDithering", true);
+  gpu_force_round_texcoords = si.GetBoolValue("GPU", "ForceRoundTextureCoordinates", false);
+  gpu_accurate_blending = si.GetBoolValue("GPU", "AccurateBlending", false);
   gpu_texture_filter =
     ParseTextureFilterName(
       si.GetStringValue("GPU", "TextureFilter", GetTextureFilterName(DEFAULT_GPU_TEXTURE_FILTER)).c_str())
       .value_or(DEFAULT_GPU_TEXTURE_FILTER);
+  gpu_sprite_texture_filter =
+    ParseTextureFilterName(
+      si.GetStringValue("GPU", "SpriteTextureFilter", GetTextureFilterName(gpu_texture_filter)).c_str())
+      .value_or(gpu_texture_filter);
   gpu_line_detect_mode =
     ParseLineDetectModeName(
       si.GetStringValue("GPU", "LineDetectMode", GetLineDetectModeName(DEFAULT_GPU_LINE_DETECT_MODE)).c_str())
@@ -251,7 +270,7 @@ void Settings::Load(SettingsInterface& si)
   gpu_disable_interlacing = si.GetBoolValue("GPU", "DisableInterlacing", true);
   gpu_force_ntsc_timings = si.GetBoolValue("GPU", "ForceNTSCTimings", false);
   gpu_widescreen_hack = si.GetBoolValue("GPU", "WidescreenHack", false);
-  gpu_24bit_chroma_smoothing = si.GetBoolValue("GPU", "ChromaSmoothing24Bit", false);
+  display_24bit_chroma_smoothing = si.GetBoolValue("GPU", "ChromaSmoothing24Bit", false);
   gpu_pgxp_enable = si.GetBoolValue("GPU", "PGXPEnable", false);
   gpu_pgxp_culling = si.GetBoolValue("GPU", "PGXPCulling", true);
   gpu_pgxp_texture_correction = si.GetBoolValue("GPU", "PGXPTextureCorrection", true);
@@ -261,6 +280,7 @@ void Settings::Load(SettingsInterface& si)
   gpu_pgxp_preserve_proj_fp = si.GetBoolValue("GPU", "PGXPPreserveProjFP", false);
   gpu_pgxp_tolerance = si.GetFloatValue("GPU", "PGXPTolerance", -1.0f);
   gpu_pgxp_depth_buffer = si.GetBoolValue("GPU", "PGXPDepthBuffer", false);
+  gpu_pgxp_disable_2d = si.GetBoolValue("GPU", "PGXPDisableOn2DPolygons", false);
   SetPGXPDepthClearThreshold(si.GetFloatValue("GPU", "PGXPDepthClearThreshold", DEFAULT_GPU_PGXP_DEPTH_THRESHOLD));
 
   display_deinterlacing_mode =
@@ -284,6 +304,10 @@ void Settings::Load(SettingsInterface& si)
     ParseDisplayAlignment(
       si.GetStringValue("Display", "Alignment", GetDisplayAlignmentName(DEFAULT_DISPLAY_ALIGNMENT)).c_str())
       .value_or(DEFAULT_DISPLAY_ALIGNMENT);
+  display_rotation =
+    ParseDisplayRotation(
+      si.GetStringValue("Display", "Rotation", GetDisplayRotationName(DEFAULT_DISPLAY_ROTATION)).c_str())
+      .value_or(DEFAULT_DISPLAY_ROTATION);
   display_scaling =
     ParseDisplayScaling(si.GetStringValue("Display", "Scaling", GetDisplayScalingName(DEFAULT_DISPLAY_SCALING)).c_str())
       .value_or(DEFAULT_DISPLAY_SCALING);
@@ -309,7 +333,9 @@ void Settings::Load(SettingsInterface& si)
   display_pre_frame_sleep = si.GetBoolValue("Display", "PreFrameSleep", false);
   display_pre_frame_sleep_buffer =
     si.GetFloatValue("Display", "PreFrameSleepBuffer", DEFAULT_DISPLAY_PRE_FRAME_SLEEP_BUFFER);
+  display_skip_presenting_duplicate_frames = si.GetBoolValue("Display", "SkipPresentingDuplicateFrames", false);
   display_vsync = si.GetBoolValue("Display", "VSync", false);
+  display_disable_mailbox_presentation = si.GetBoolValue("Display", "DisableMailboxPresentation", false);
   display_force_4_3_for_24bit = si.GetBoolValue("Display", "Force4_3For24Bit", false);
   display_active_start_offset = static_cast<s16>(si.GetIntValue("Display", "ActiveStartOffset", 0));
   display_active_end_offset = static_cast<s16>(si.GetIntValue("Display", "ActiveEndOffset", 0));
@@ -328,8 +354,13 @@ void Settings::Load(SettingsInterface& si)
   display_show_inputs = si.GetBoolValue("Display", "ShowInputs", false);
   display_show_enhancements = si.GetBoolValue("Display", "ShowEnhancements", false);
   display_stretch_vertically = si.GetBoolValue("Display", "StretchVertically", false);
-  display_max_fps = si.GetFloatValue("Display", "MaxFPS", DEFAULT_DISPLAY_MAX_FPS);
   display_osd_scale = si.GetFloatValue("Display", "OSDScale", DEFAULT_OSD_SCALE);
+
+  save_state_compression = ParseSaveStateCompressionModeName(
+                             si.GetStringValue("Main", "SaveStateCompression",
+                                               GetSaveStateCompressionModeName(DEFAULT_SAVE_STATE_COMPRESSION_MODE))
+                               .c_str())
+                             .value_or(DEFAULT_SAVE_STATE_COMPRESSION_MODE);
 
   cdrom_readahead_sectors =
     static_cast<u8>(si.GetIntValue("CDROM", "ReadaheadSectors", DEFAULT_CDROM_READAHEAD_SECTORS));
@@ -345,23 +376,19 @@ void Settings::Load(SettingsInterface& si)
   cdrom_seek_speedup = si.GetIntValue("CDROM", "SeekSpeedup", 1);
 
   audio_backend =
-    ParseAudioBackend(si.GetStringValue("Audio", "Backend", GetAudioBackendName(DEFAULT_AUDIO_BACKEND)).c_str())
-      .value_or(DEFAULT_AUDIO_BACKEND);
+    AudioStream::ParseBackendName(
+      si.GetStringValue("Audio", "Backend", AudioStream::GetBackendName(AudioStream::DEFAULT_BACKEND)).c_str())
+      .value_or(AudioStream::DEFAULT_BACKEND);
   audio_driver = si.GetStringValue("Audio", "Driver");
   audio_output_device = si.GetStringValue("Audio", "OutputDevice");
-  audio_stretch_mode =
-    AudioStream::ParseStretchMode(
-      si.GetStringValue("Audio", "StretchMode", AudioStream::GetStretchModeName(DEFAULT_AUDIO_STRETCH_MODE)).c_str())
-      .value_or(DEFAULT_AUDIO_STRETCH_MODE);
-  audio_output_latency_ms = si.GetUIntValue("Audio", "OutputLatencyMS", DEFAULT_AUDIO_OUTPUT_LATENCY_MS);
-  audio_buffer_ms = si.GetUIntValue("Audio", "BufferMS", DEFAULT_AUDIO_BUFFER_MS);
+  audio_stream_parameters.Load(si, "Audio");
   audio_output_volume = si.GetUIntValue("Audio", "OutputVolume", 100);
   audio_fast_forward_volume = si.GetUIntValue("Audio", "FastForwardVolume", 100);
 
   audio_output_muted = si.GetBoolValue("Audio", "OutputMuted", false);
-  audio_dump_on_boot = si.GetBoolValue("Audio", "DumpOnBoot", false);
 
   use_old_mdec_routines = si.GetBoolValue("Hacks", "UseOldMDECRoutines", false);
+  export_shared_memory = si.GetBoolValue("Hacks", "ExportSharedMemory", false);
   pcdrv_enable = si.GetBoolValue("PCDrv", "Enabled", false);
   pcdrv_enable_writes = si.GetBoolValue("PCDrv", "EnableWrites", false);
   pcdrv_root = si.GetStringValue("PCDrv", "Root");
@@ -376,16 +403,12 @@ void Settings::Load(SettingsInterface& si)
 
   multitap_mode =
     ParseMultitapModeName(
-      si.GetStringValue("ControllerPorts", "MultitapMode", GetMultitapModeName(DEFAULT_MULTITAP_MODE)).c_str())
+      controller_si.GetStringValue("ControllerPorts", "MultitapMode", GetMultitapModeName(DEFAULT_MULTITAP_MODE))
+        .c_str())
       .value_or(DEFAULT_MULTITAP_MODE);
 
-  controller_types[0] = ParseControllerTypeName(si.GetStringValue(Controller::GetSettingsSection(0).c_str(), "Type",
-                                                                  GetControllerTypeName(DEFAULT_CONTROLLER_1_TYPE))
-                                                  .c_str())
-                          .value_or(DEFAULT_CONTROLLER_1_TYPE);
-
   const std::array<bool, 2> mtap_enabled = {{IsPort1MultitapEnabled(), IsPort2MultitapEnabled()}};
-  for (u32 i = 1; i < NUM_CONTROLLER_AND_CARD_PORTS; i++)
+  for (u32 i = 0; i < NUM_CONTROLLER_AND_CARD_PORTS; i++)
   {
     // Ignore types when multitap not enabled
     const auto [port, slot] = Controller::ConvertPadToPortAndSlot(i);
@@ -395,10 +418,10 @@ void Settings::Load(SettingsInterface& si)
       continue;
     }
 
-    controller_types[i] = ParseControllerTypeName(si.GetStringValue(Controller::GetSettingsSection(i).c_str(), "Type",
-                                                                    GetControllerTypeName(DEFAULT_CONTROLLER_2_TYPE))
-                                                    .c_str())
-                            .value_or(DEFAULT_CONTROLLER_2_TYPE);
+    const ControllerType default_type = (i == 0) ? DEFAULT_CONTROLLER_1_TYPE : DEFAULT_CONTROLLER_2_TYPE;
+    const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(controller_si.GetTinyStringValue(
+      Controller::GetSettingsSection(i).c_str(), "Type", Controller::GetControllerInfo(default_type)->name));
+    controller_types[i] = cinfo ? cinfo->type : default_type;
   }
 
   memory_card_types[0] =
@@ -462,6 +485,9 @@ void Settings::Load(SettingsInterface& si)
     si.GetIntValue("TextureReplacements", "DumpVRAMWriteHeightThreshold", 128);
 
 #ifdef __ANDROID__
+  // No expansion due to license incompatibility.
+  audio_expansion_mode = AudioExpansionMode::Disabled;
+
   // Android users are incredibly silly and don't understand that stretch is in the aspect ratio list...
   if (si.GetBoolValue("Display", "Stretch", false))
     display_aspect_ratio = DisplayAspectRatio::MatchWindow;
@@ -485,12 +511,11 @@ void Settings::Save(SettingsInterface& si, bool ignore_base) const
     si.SetBoolValue("Main", "StartPaused", start_paused);
     si.SetBoolValue("Main", "StartFullscreen", start_fullscreen);
     si.SetBoolValue("Main", "PauseOnFocusLoss", pause_on_focus_loss);
+    si.SetBoolValue("Main", "PauseOnControllerDisconnection", pause_on_controller_disconnection);
     si.SetBoolValue("Main", "SaveStateOnExit", save_state_on_exit);
     si.SetBoolValue("Main", "CreateSaveStateBackups", create_save_state_backups);
-    si.SetBoolValue("Main", "CompressSaveStates", compress_save_states);
+    si.SetStringValue("Main", "SaveStateCompression", GetSaveStateCompressionModeName(save_state_compression));
     si.SetBoolValue("Main", "ConfirmPowerOff", confim_power_off);
-    si.SetBoolValue("Main", "ApplyCompatibilitySettings", apply_compatibility_settings);
-    si.SetBoolValue("Main", "ApplyGameSettings", apply_game_settings);
     si.SetBoolValue("Main", "EnableDiscordPresence", enable_discord_presence);
   }
 
@@ -501,6 +526,9 @@ void Settings::Save(SettingsInterface& si, bool ignore_base) const
   si.SetFloatValue("Main", "RewindFrequency", rewind_save_frequency);
   si.SetIntValue("Main", "RewindSaveSlots", rewind_save_slots);
   si.SetIntValue("Main", "RunaheadFrameCount", runahead_frames);
+
+  si.SetBoolValue("PINE", "Enabled", pine_enable);
+  si.SetUIntValue("PINE", "Slot", pine_slot);
 
   si.SetStringValue("CPU", "ExecutionMode", GetCPUExecutionModeName(cpu_execution_mode));
   si.SetBoolValue("CPU", "OverclockEnable", cpu_overclock_enable);
@@ -524,6 +552,8 @@ void Settings::Save(SettingsInterface& si, bool ignore_base) const
     si.SetBoolValue("GPU", "DisableFramebufferFetch", gpu_disable_framebuffer_fetch);
     si.SetBoolValue("GPU", "DisableTextureBuffers", gpu_disable_texture_buffers);
     si.SetBoolValue("GPU", "DisableTextureCopyToSelf", gpu_disable_texture_copy_to_self);
+    si.SetBoolValue("GPU", "DisableMemoryImport", gpu_disable_memory_import);
+    si.SetBoolValue("GPU", "DisableRasterOrderViews", gpu_disable_raster_order_views);
   }
 
   si.SetBoolValue("GPU", "PerSampleShading", gpu_per_sample_shading);
@@ -533,7 +563,12 @@ void Settings::Save(SettingsInterface& si, bool ignore_base) const
   si.SetBoolValue("GPU", "TrueColor", gpu_true_color);
   si.SetBoolValue("GPU", "Debanding", gpu_debanding);
   si.SetBoolValue("GPU", "ScaledDithering", gpu_scaled_dithering);
+  si.SetBoolValue("GPU", "ForceRoundTextureCoordinates", gpu_force_round_texcoords);
+  si.SetBoolValue("GPU", "AccurateBlending", gpu_accurate_blending);
   si.SetStringValue("GPU", "TextureFilter", GetTextureFilterName(gpu_texture_filter));
+  si.SetStringValue(
+    "GPU", "SpriteTextureFilter",
+    (gpu_sprite_texture_filter != gpu_texture_filter) ? GetTextureFilterName(gpu_sprite_texture_filter) : "");
   si.SetStringValue("GPU", "LineDetectMode", GetLineDetectModeName(gpu_line_detect_mode));
   si.SetStringValue("GPU", "DownsampleMode", GetDownsampleModeName(gpu_downsample_mode));
   si.SetUIntValue("GPU", "DownsampleScale", gpu_downsample_scale);
@@ -541,7 +576,7 @@ void Settings::Save(SettingsInterface& si, bool ignore_base) const
   si.SetBoolValue("GPU", "DisableInterlacing", gpu_disable_interlacing);
   si.SetBoolValue("GPU", "ForceNTSCTimings", gpu_force_ntsc_timings);
   si.SetBoolValue("GPU", "WidescreenHack", gpu_widescreen_hack);
-  si.SetBoolValue("GPU", "ChromaSmoothing24Bit", gpu_24bit_chroma_smoothing);
+  si.SetBoolValue("GPU", "ChromaSmoothing24Bit", display_24bit_chroma_smoothing);
   si.SetBoolValue("GPU", "PGXPEnable", gpu_pgxp_enable);
   si.SetBoolValue("GPU", "PGXPCulling", gpu_pgxp_culling);
   si.SetBoolValue("GPU", "PGXPTextureCorrection", gpu_pgxp_texture_correction);
@@ -551,6 +586,7 @@ void Settings::Save(SettingsInterface& si, bool ignore_base) const
   si.SetBoolValue("GPU", "PGXPPreserveProjFP", gpu_pgxp_preserve_proj_fp);
   si.SetFloatValue("GPU", "PGXPTolerance", gpu_pgxp_tolerance);
   si.SetBoolValue("GPU", "PGXPDepthBuffer", gpu_pgxp_depth_buffer);
+  si.SetBoolValue("GPU", "PGXPDisableOn2DPolygons", gpu_pgxp_disable_2d);
   si.SetFloatValue("GPU", "PGXPDepthClearThreshold", GetPGXPDepthClearThreshold());
 
   si.SetStringValue("Display", "DeinterlacingMode", GetDisplayDeinterlacingModeName(display_deinterlacing_mode));
@@ -562,11 +598,14 @@ void Settings::Save(SettingsInterface& si, bool ignore_base) const
   si.SetBoolValue("Display", "Force4_3For24Bit", display_force_4_3_for_24bit);
   si.SetStringValue("Display", "AspectRatio", GetDisplayAspectRatioName(display_aspect_ratio));
   si.SetStringValue("Display", "Alignment", GetDisplayAlignmentName(display_alignment));
+  si.SetStringValue("Display", "Rotation", GetDisplayRotationName(display_rotation));
   si.SetStringValue("Display", "Scaling", GetDisplayScalingName(display_scaling));
   si.SetBoolValue("Display", "OptimalFramePacing", display_optimal_frame_pacing);
   si.SetBoolValue("Display", "PreFrameSleep", display_pre_frame_sleep);
+  si.SetBoolValue("Display", "SkipPresentingDuplicateFrames", display_skip_presenting_duplicate_frames);
   si.SetFloatValue("Display", "PreFrameSleepBuffer", display_pre_frame_sleep_buffer);
   si.SetBoolValue("Display", "VSync", display_vsync);
+  si.SetBoolValue("Display", "DisableMailboxPresentation", display_disable_mailbox_presentation);
   si.SetStringValue("Display", "ExclusiveFullscreenControl",
                     GetDisplayExclusiveFullscreenControlName(display_exclusive_fullscreen_control));
   si.SetStringValue("Display", "ScreenshotMode", GetDisplayScreenshotModeName(display_screenshot_mode));
@@ -592,7 +631,6 @@ void Settings::Save(SettingsInterface& si, bool ignore_base) const
   }
 
   si.SetBoolValue("Display", "StretchVertically", display_stretch_vertically);
-  si.SetFloatValue("Display", "MaxFPS", display_max_fps);
 
   si.SetIntValue("CDROM", "ReadaheadSectors", cdrom_readahead_sectors);
   si.SetStringValue("CDROM", "MechaconVersion", GetCDROMMechVersionName(cdrom_mechacon_version));
@@ -603,18 +641,16 @@ void Settings::Save(SettingsInterface& si, bool ignore_base) const
   si.SetIntValue("CDROM", "ReadSpeedup", cdrom_read_speedup);
   si.SetIntValue("CDROM", "SeekSpeedup", cdrom_seek_speedup);
 
-  si.SetStringValue("Audio", "Backend", GetAudioBackendName(audio_backend));
+  si.SetStringValue("Audio", "Backend", AudioStream::GetBackendName(audio_backend));
   si.SetStringValue("Audio", "Driver", audio_driver.c_str());
   si.SetStringValue("Audio", "OutputDevice", audio_output_device.c_str());
-  si.SetStringValue("Audio", "StretchMode", AudioStream::GetStretchModeName(audio_stretch_mode));
-  si.SetUIntValue("Audio", "BufferMS", audio_buffer_ms);
-  si.SetUIntValue("Audio", "OutputLatencyMS", audio_output_latency_ms);
+  audio_stream_parameters.Save(si, "Audio");
   si.SetUIntValue("Audio", "OutputVolume", audio_output_volume);
   si.SetUIntValue("Audio", "FastForwardVolume", audio_fast_forward_volume);
   si.SetBoolValue("Audio", "OutputMuted", audio_output_muted);
-  si.SetBoolValue("Audio", "DumpOnBoot", audio_dump_on_boot);
 
   si.SetBoolValue("Hacks", "UseOldMDECRoutines", use_old_mdec_routines);
+  si.SetBoolValue("Hacks", "ExportSharedMemory", export_shared_memory);
 
   if (!ignore_base)
   {
@@ -632,7 +668,11 @@ void Settings::Save(SettingsInterface& si, bool ignore_base) const
   si.SetBoolValue("BIOS", "PatchFastBoot", bios_patch_fast_boot);
 
   for (u32 i = 0; i < NUM_CONTROLLER_AND_CARD_PORTS; i++)
-    si.SetStringValue(Controller::GetSettingsSection(i).c_str(), "Type", GetControllerTypeName(controller_types[i]));
+  {
+    const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(controller_types[i]);
+    DebugAssert(cinfo);
+    si.SetStringValue(Controller::GetSettingsSection(i).c_str(), "Type", cinfo->name);
+  }
 
   si.SetStringValue("MemoryCards", "Card1Type", GetMemoryCardTypeName(memory_card_types[0]));
   si.SetStringValue("MemoryCards", "Card2Type", GetMemoryCardTypeName(memory_card_types[1]));
@@ -728,23 +768,25 @@ void Settings::FixIncompatibleSettings(bool display_osd_messages)
 {
   if (g_settings.disable_all_enhancements)
   {
-    Log_WarningPrintf("All enhancements disabled by config setting.");
     g_settings.cpu_overclock_enable = false;
     g_settings.cpu_overclock_active = false;
     g_settings.enable_8mb_ram = false;
+    g_settings.enable_cheats = false;
     g_settings.gpu_resolution_scale = 1;
     g_settings.gpu_multisamples = 1;
     g_settings.gpu_per_sample_shading = false;
     g_settings.gpu_true_color = false;
     g_settings.gpu_debanding = false;
     g_settings.gpu_scaled_dithering = false;
+    g_settings.gpu_force_round_texcoords = false;
     g_settings.gpu_texture_filter = GPUTextureFilter::Nearest;
+    g_settings.gpu_sprite_texture_filter = GPUTextureFilter::Nearest;
     g_settings.gpu_line_detect_mode = GPULineDetectMode::Disabled;
     g_settings.gpu_disable_interlacing = false;
     g_settings.gpu_force_ntsc_timings = false;
     g_settings.gpu_widescreen_hack = false;
     g_settings.gpu_pgxp_enable = false;
-    g_settings.gpu_24bit_chroma_smoothing = false;
+    g_settings.display_24bit_chroma_smoothing = false;
     g_settings.cdrom_read_speedup = 1;
     g_settings.cdrom_seek_speedup = 1;
     g_settings.cdrom_mute_cd_audio = false;
@@ -756,7 +798,9 @@ void Settings::FixIncompatibleSettings(bool display_osd_messages)
 
   if (g_settings.pcdrv_enable && g_settings.pcdrv_root.empty())
   {
-    Log_WarningPrintf("Disabling PCDrv because no root directory is specified.");
+    Host::AddKeyedOSDMessage("pcdrv_disabled_no_root",
+                             TRANSLATE_STR("OSDMessage", "Disabling PCDrv because no root directory is specified."),
+                             Host::OSD_WARNING_DURATION);
     g_settings.pcdrv_enable = false;
   }
 
@@ -773,11 +817,22 @@ void Settings::FixIncompatibleSettings(bool display_osd_messages)
       g_settings.gpu_pgxp_enable = false;
     }
   }
+  else
+  {
+    g_settings.gpu_pgxp_culling = false;
+    g_settings.gpu_pgxp_texture_correction = false;
+    g_settings.gpu_pgxp_color_correction = false;
+    g_settings.gpu_pgxp_vertex_cache = false;
+    g_settings.gpu_pgxp_cpu = false;
+    g_settings.gpu_pgxp_preserve_proj_fp = false;
+    g_settings.gpu_pgxp_depth_buffer = false;
+    g_settings.gpu_pgxp_disable_2d = false;
+  }
 
 #ifndef ENABLE_MMAP_FASTMEM
   if (g_settings.cpu_fastmem_mode == CPUFastmemMode::MMap)
   {
-    Log_WarningPrintf("mmap fastmem is not available on this platform, using LUT instead.");
+    WARNING_LOG("mmap fastmem is not available on this platform, using LUT instead.");
     g_settings.cpu_fastmem_mode = CPUFastmemMode::LUT;
   }
 #endif
@@ -800,8 +855,9 @@ void Settings::FixIncompatibleSettings(bool display_osd_messages)
 
   if (g_settings.IsRunaheadEnabled() && g_settings.rewind_enable)
   {
-    Host::AddKeyedOSDMessage("rewind_disabled_android",
-                             TRANSLATE_STR("OSDMessage", "Rewind is disabled because runahead is enabled."), 10.0f);
+    Host::AddKeyedOSDMessage("rewind_disabled",
+                             TRANSLATE_STR("OSDMessage", "Rewind is disabled because runahead is enabled."),
+                             Host::OSD_WARNING_DURATION);
     g_settings.rewind_enable = false;
   }
 
@@ -811,7 +867,7 @@ void Settings::FixIncompatibleSettings(bool display_osd_messages)
     // be unlinked. Which would be thousands of blocks.
     if (g_settings.cpu_recompiler_block_linking)
     {
-      Log_WarningPrintf("Disabling block linking due to runahead.");
+      WARNING_LOG("Disabling block linking due to runahead.");
       g_settings.cpu_recompiler_block_linking = false;
     }
   }
@@ -914,14 +970,15 @@ void Settings::SetDefaultControllerConfig(SettingsInterface& si)
 #endif
 }
 
-static constexpr const std::array s_log_level_names = {"None",    "Error", "Warning", "Perf",  "Info",
-                                                       "Verbose", "Dev",   "Profile", "Debug", "Trace"};
+static constexpr const std::array s_log_level_names = {
+  "None", "Error", "Warning", "Info", "Verbose", "Dev", "Debug", "Trace",
+};
 static constexpr const std::array s_log_level_display_names = {
-  TRANSLATE_NOOP("LogLevel", "None"),        TRANSLATE_NOOP("LogLevel", "Error"),
-  TRANSLATE_NOOP("LogLevel", "Warning"),     TRANSLATE_NOOP("LogLevel", "Performance"),
-  TRANSLATE_NOOP("LogLevel", "Information"), TRANSLATE_NOOP("LogLevel", "Verbose"),
-  TRANSLATE_NOOP("LogLevel", "Developer"),   TRANSLATE_NOOP("LogLevel", "Profile"),
-  TRANSLATE_NOOP("LogLevel", "Debug"),       TRANSLATE_NOOP("LogLevel", "Trace")};
+  TRANSLATE_NOOP("LogLevel", "None"),    TRANSLATE_NOOP("LogLevel", "Error"),
+  TRANSLATE_NOOP("LogLevel", "Warning"), TRANSLATE_NOOP("LogLevel", "Information"),
+  TRANSLATE_NOOP("LogLevel", "Verbose"), TRANSLATE_NOOP("LogLevel", "Developer"),
+  TRANSLATE_NOOP("LogLevel", "Debug"),   TRANSLATE_NOOP("LogLevel", "Trace"),
+};
 
 std::optional<LOGLEVEL> Settings::ParseLogLevelName(const char* str)
 {
@@ -1493,17 +1550,47 @@ const char* Settings::GetDisplayAlignmentDisplayName(DisplayAlignment alignment)
   return Host::TranslateToCString("DisplayAlignment", s_display_alignment_display_names[static_cast<int>(alignment)]);
 }
 
+static constexpr const std::array s_display_rotation_names = {"Normal", "Rotate90", "Rotate180", "Rotate270"};
+static constexpr const std::array s_display_rotation_display_names = {
+  TRANSLATE_NOOP("Settings", "No Rotation"),
+  TRANSLATE_NOOP("Settings", "Rotate 90° (Clockwise)"),
+  TRANSLATE_NOOP("Settings", "Rotate 180° (Vertical Flip)"),
+  TRANSLATE_NOOP("Settings", "Rotate 270° (Clockwise)"),
+};
+
+std::optional<DisplayRotation> Settings::ParseDisplayRotation(const char* str)
+{
+  int index = 0;
+  for (const char* name : s_display_rotation_names)
+  {
+    if (StringUtil::Strcasecmp(name, str) == 0)
+      return static_cast<DisplayRotation>(index);
+
+    index++;
+  }
+
+  return std::nullopt;
+}
+
+const char* Settings::GetDisplayRotationName(DisplayRotation rotation)
+{
+  return s_display_rotation_names[static_cast<int>(rotation)];
+}
+
+const char* Settings::GetDisplayRotationDisplayName(DisplayRotation rotation)
+{
+  return Host::TranslateToCString("Settings", s_display_rotation_display_names[static_cast<size_t>(rotation)]);
+}
+
 static constexpr const std::array s_display_scaling_names = {
-  "Nearest",
-  "BilinearSmooth",
-  "NearestInteger",
-  "BilinearSharp",
+  "Nearest", "NearestInteger", "BilinearSmooth", "BilinearSharp", "BilinearInteger",
 };
 static constexpr const std::array s_display_scaling_display_names = {
   TRANSLATE_NOOP("DisplayScalingMode", "Nearest-Neighbor"),
-  TRANSLATE_NOOP("DisplayScalingMode", "Bilinear (Smooth)"),
   TRANSLATE_NOOP("DisplayScalingMode", "Nearest-Neighbor (Integer)"),
+  TRANSLATE_NOOP("DisplayScalingMode", "Bilinear (Smooth)"),
   TRANSLATE_NOOP("DisplayScalingMode", "Bilinear (Sharp)"),
+  TRANSLATE_NOOP("DisplayScalingMode", "Bilinear (Integer)"),
 };
 
 std::optional<DisplayScalingMode> Settings::ParseDisplayScaling(const char* str)
@@ -1646,104 +1733,6 @@ const char* Settings::GetDisplayScreenshotFormatExtension(DisplayScreenshotForma
   return s_display_screenshot_format_extensions[static_cast<size_t>(format)];
 }
 
-static constexpr const std::array s_audio_backend_names = {
-  "Null",
-#ifdef __SWITCH__
-  "Switch",
-#endif
-#ifdef ENABLE_CUBEB
-  "Cubeb",
-#endif
-#ifdef ENABLE_SDL2
-  "SDL",
-#endif
-#ifdef _WIN32
-  "XAudio2",
-#endif
-#ifdef __ANDROID__
-  "AAudio",  "OpenSLES",
-#endif
-};
-static constexpr const std::array s_audio_backend_display_names = {
-  TRANSLATE_NOOP("AudioBackend", "Null (No Output)"),
-#ifdef __SWITCH__
-  TRANSLATE_NOOP("AudioBackend", "Nintendo Switch"),
-#endif
-#ifdef ENABLE_CUBEB
-  TRANSLATE_NOOP("AudioBackend", "Cubeb"),
-#endif
-#ifdef ENABLE_SDL2
-  TRANSLATE_NOOP("AudioBackend", "SDL"),
-#endif
-#ifdef _WIN32
-  TRANSLATE_NOOP("AudioBackend", "XAudio2"),
-#endif
-#ifdef __ANDROID__
-  "AAudio",
-  "OpenSL ES",
-#endif
-};
-
-std::optional<AudioBackend> Settings::ParseAudioBackend(const char* str)
-{
-  int index = 0;
-  for (const char* name : s_audio_backend_names)
-  {
-    if (StringUtil::Strcasecmp(name, str) == 0)
-      return static_cast<AudioBackend>(index);
-
-    index++;
-  }
-
-  return std::nullopt;
-}
-
-const char* Settings::GetAudioBackendName(AudioBackend backend)
-{
-  return s_audio_backend_names[static_cast<int>(backend)];
-}
-
-const char* Settings::GetAudioBackendDisplayName(AudioBackend backend)
-{
-  return Host::TranslateToCString("AudioBackend", s_audio_backend_display_names[static_cast<int>(backend)]);
-}
-
-static constexpr const std::array s_controller_type_names = {
-  "None", "DigitalController", "AnalogController", "AnalogJoystick", "GunCon", "PlayStationMouse", "NeGcon", "NeGconRumble"};
-static constexpr const std::array s_controller_display_names = {
-  TRANSLATE_NOOP("ControllerType", "None"),
-  TRANSLATE_NOOP("ControllerType", "Digital Controller"),
-  TRANSLATE_NOOP("ControllerType", "Analog Controller (DualShock)"),
-  TRANSLATE_NOOP("ControllerType", "Analog Joystick"),
-  TRANSLATE_NOOP("ControllerType", "GunCon"),
-  TRANSLATE_NOOP("ControllerType", "PlayStation Mouse"),
-  TRANSLATE_NOOP("ControllerType", "NeGcon"),
-  TRANSLATE_NOOP("ControllerType", "NeGcon Rumble")};
-
-std::optional<ControllerType> Settings::ParseControllerTypeName(std::string_view str)
-{
-  int index = 0;
-  for (const char* name : s_controller_type_names)
-  {
-    if (StringUtil::EqualNoCase(str, name))
-      return static_cast<ControllerType>(index);
-
-    index++;
-  }
-
-  return std::nullopt;
-}
-
-const char* Settings::GetControllerTypeName(ControllerType type)
-{
-  return s_controller_type_names[static_cast<int>(type)];
-}
-
-const char* Settings::GetControllerTypeDisplayName(ControllerType type)
-{
-  return Host::TranslateToCString("ControllerType", s_controller_display_names[static_cast<int>(type)]);
-}
-
 static constexpr const std::array s_memory_card_type_names = {"None",         "Shared",           "PerGame",
                                                               "PerGameTitle", "PerGameFileTitle", "NonPersistent"};
 static constexpr const std::array s_memory_card_type_display_names = {
@@ -1797,7 +1786,7 @@ std::string Settings::GetSharedMemoryCardPath(u32 slot) const
   return ret;
 }
 
-std::string Settings::GetGameMemoryCardPath(const std::string_view& serial, u32 slot)
+std::string Settings::GetGameMemoryCardPath(std::string_view serial, u32 slot)
 {
   return Path::Combine(EmuFolders::MemoryCards, fmt::format("{}_{}.mcd", serial, slot + 1));
 }
@@ -1862,6 +1851,43 @@ const char* Settings::GetCDROMMechVersionDisplayName(CDROMMechaconVersion mode)
   return s_mechacon_version_display_names[static_cast<size_t>(mode)];
 }
 
+static constexpr const std::array s_save_state_compression_mode_names = {
+  "Uncompressed", "DeflateLow", "DeflateDefault", "DeflateHigh", "ZstLow", "ZstDefault", "ZstHigh",
+};
+static constexpr const std::array s_save_state_compression_mode_display_names = {
+  TRANSLATE_NOOP("Settings", "Uncompressed"),      TRANSLATE_NOOP("Settings", "Deflate (Low)"),
+  TRANSLATE_NOOP("Settings", "Deflate (Default)"), TRANSLATE_NOOP("Settings", "Deflate (High)"),
+  TRANSLATE_NOOP("Settings", "Zstandard (Low)"),   TRANSLATE_NOOP("Settings", "Zstandard (Default)"),
+  TRANSLATE_NOOP("Settings", "Zstandard (High)"),
+};
+static_assert(s_save_state_compression_mode_names.size() == static_cast<size_t>(SaveStateCompressionMode::Count));
+static_assert(s_save_state_compression_mode_display_names.size() ==
+              static_cast<size_t>(SaveStateCompressionMode::Count));
+
+std::optional<SaveStateCompressionMode> Settings::ParseSaveStateCompressionModeName(const char* str)
+{
+  u32 index = 0;
+  for (const char* name : s_save_state_compression_mode_names)
+  {
+    if (StringUtil::Strcasecmp(name, str) == 0)
+      return static_cast<SaveStateCompressionMode>(index);
+
+    index++;
+  }
+
+  return std::nullopt;
+}
+
+const char* Settings::GetSaveStateCompressionModeName(SaveStateCompressionMode mode)
+{
+  return s_save_state_compression_mode_names[static_cast<size_t>(mode)];
+}
+
+const char* Settings::GetSaveStateCompressionModeDisplayName(SaveStateCompressionMode mode)
+{
+  return Host::TranslateToCString("Settings", s_save_state_compression_mode_display_names[static_cast<size_t>(mode)]);
+}
+
 std::string EmuFolders::AppRoot;
 std::string EmuFolders::DataRoot;
 std::string EmuFolders::Bios;
@@ -1869,6 +1895,7 @@ std::string EmuFolders::Cache;
 std::string EmuFolders::Cheats;
 std::string EmuFolders::Covers;
 std::string EmuFolders::Dumps;
+std::string EmuFolders::GameIcons;
 std::string EmuFolders::GameSettings;
 std::string EmuFolders::InputProfiles;
 std::string EmuFolders::MemoryCards;
@@ -1878,6 +1905,7 @@ std::string EmuFolders::Screenshots;
 std::string EmuFolders::Shaders;
 std::string EmuFolders::Textures;
 std::string EmuFolders::UserResources;
+std::string EmuFolders::Videos;
 
 void EmuFolders::SetDefaults()
 {
@@ -1898,12 +1926,15 @@ void EmuFolders::SetDefaults()
   Shaders = "sdmc:/tico/system/duckstation/shaders";
   Textures = "sdmc:/tico/textures/psx";
   UserResources = "sdmc:/tico/system/duckstation/resources";
+  GameIcons = "sdmc:/tico/cache/duckstation/gameicons";
+  Videos = "sdmc:/tico/screenshots/psx";
 #else
   Bios = Path::Combine(DataRoot, "bios");
   Cache = Path::Combine(DataRoot, "cache");
   Cheats = Path::Combine(DataRoot, "cheats");
   Covers = Path::Combine(DataRoot, "covers");
   Dumps = Path::Combine(DataRoot, "dump");
+  GameIcons = Path::Combine(DataRoot, "gameicons");
   GameSettings = Path::Combine(DataRoot, "gamesettings");
   InputProfiles = Path::Combine(DataRoot, "inputprofiles");
   MemoryCards = Path::Combine(DataRoot, "memcards");
@@ -1912,6 +1943,7 @@ void EmuFolders::SetDefaults()
   Shaders = Path::Combine(DataRoot, "shaders");
   Textures = Path::Combine(DataRoot, "textures");
   UserResources = Path::Combine(DataRoot, "resources");
+  Videos = Path::Combine(DataRoot, "videos");
 #endif
 }
 
@@ -1937,6 +1969,7 @@ void EmuFolders::LoadConfig(SettingsInterface& si)
   Cheats = LoadPathFromSettings(si, DataRoot, "Folders", "Cheats", "cheats");
   Covers = LoadPathFromSettings(si, DataRoot, "Folders", "Covers", "covers");
   Dumps = LoadPathFromSettings(si, DataRoot, "Folders", "Dumps", "dump");
+  GameIcons = LoadPathFromSettings(si, DataRoot, "Folders", "GameIcons", "gameicons");
   GameSettings = LoadPathFromSettings(si, DataRoot, "Folders", "GameSettings", "gamesettings");
   InputProfiles = LoadPathFromSettings(si, DataRoot, "Folders", "InputProfiles", "inputprofiles");
   MemoryCards = LoadPathFromSettings(si, DataRoot, "MemoryCards", "Directory", "memcards");
@@ -1945,22 +1978,25 @@ void EmuFolders::LoadConfig(SettingsInterface& si)
   Shaders = LoadPathFromSettings(si, DataRoot, "Folders", "Shaders", "shaders");
   Textures = LoadPathFromSettings(si, DataRoot, "Folders", "Textures", "textures");
   UserResources = LoadPathFromSettings(si, DataRoot, "Folders", "UserResources", "resources");
+  Videos = LoadPathFromSettings(si, DataRoot, "Folders", "Videos", "videos");
 #endif
 
-  Log_DevFmt("BIOS Directory: {}", Bios);
-  Log_DevFmt("Cache Directory: {}", Cache);
-  Log_DevFmt("Cheats Directory: {}", Cheats);
-  Log_DevFmt("Covers Directory: {}", Covers);
-  Log_DevFmt("Dumps Directory: {}", Dumps);
-  Log_DevFmt("Game Settings Directory: {}", GameSettings);
-  Log_DevFmt("Input Profile Directory: {}", InputProfiles);
-  Log_DevFmt("MemoryCards Directory: {}", MemoryCards);
-  Log_DevFmt("Resources Directory: {}", Resources);
-  Log_DevFmt("SaveStates Directory: {}", SaveStates);
-  Log_DevFmt("Screenshots Directory: {}", Screenshots);
-  Log_DevFmt("Shaders Directory: {}", Shaders);
-  Log_DevFmt("Textures Directory: {}", Textures);
-  Log_DevFmt("User Resources Directory: {}", UserResources);
+  DEV_LOG("BIOS Directory: {}", Bios);
+  DEV_LOG("Cache Directory: {}", Cache);
+  DEV_LOG("Cheats Directory: {}", Cheats);
+  DEV_LOG("Covers Directory: {}", Covers);
+  DEV_LOG("Dumps Directory: {}", Dumps);
+  DEV_LOG("Game Icons Directory: {}", GameIcons);
+  DEV_LOG("Game Settings Directory: {}", GameSettings);
+  DEV_LOG("Input Profile Directory: {}", InputProfiles);
+  DEV_LOG("MemoryCards Directory: {}", MemoryCards);
+  DEV_LOG("Resources Directory: {}", Resources);
+  DEV_LOG("SaveStates Directory: {}", SaveStates);
+  DEV_LOG("Screenshots Directory: {}", Screenshots);
+  DEV_LOG("Shaders Directory: {}", Shaders);
+  DEV_LOG("Textures Directory: {}", Textures);
+  DEV_LOG("User Resources Directory: {}", UserResources);
+  DEV_LOG("Videos Directory: {}", Videos);
 }
 
 void EmuFolders::Save(SettingsInterface& si)
@@ -1971,6 +2007,7 @@ void EmuFolders::Save(SettingsInterface& si)
   si.SetStringValue("Folders", "Cheats", Path::MakeRelative(Cheats, DataRoot).c_str());
   si.SetStringValue("Folders", "Covers", Path::MakeRelative(Covers, DataRoot).c_str());
   si.SetStringValue("Folders", "Dumps", Path::MakeRelative(Dumps, DataRoot).c_str());
+  si.SetStringValue("Folders", "GameIcons", Path::MakeRelative(GameIcons, DataRoot).c_str());
   si.SetStringValue("Folders", "GameSettings", Path::MakeRelative(GameSettings, DataRoot).c_str());
   si.SetStringValue("Folders", "InputProfiles", Path::MakeRelative(InputProfiles, DataRoot).c_str());
   si.SetStringValue("MemoryCards", "Directory", Path::MakeRelative(MemoryCards, DataRoot).c_str());
@@ -1979,6 +2016,7 @@ void EmuFolders::Save(SettingsInterface& si)
   si.SetStringValue("Folders", "Shaders", Path::MakeRelative(Shaders, DataRoot).c_str());
   si.SetStringValue("Folders", "Textures", Path::MakeRelative(Textures, DataRoot).c_str());
   si.SetStringValue("Folders", "UserResources", Path::MakeRelative(UserResources, DataRoot).c_str());
+  si.SetStringValue("Folders", "Videos", Path::MakeRelative(Videos, DataRoot).c_str());
 }
 
 void EmuFolders::Update()
@@ -2005,13 +2043,13 @@ bool EmuFolders::EnsureFoldersExist()
 {
   bool result = FileSystem::EnsureDirectoryExists(Bios.c_str(), false);
   result = FileSystem::EnsureDirectoryExists(Cache.c_str(), false) && result;
-  result = FileSystem::EnsureDirectoryExists(Path::Combine(Cache, "achievement_badge").c_str(), false) && result;
-  result = FileSystem::EnsureDirectoryExists(Path::Combine(Cache, "achievement_gameicon").c_str(), false) && result;
+  result = FileSystem::EnsureDirectoryExists(Path::Combine(Cache, "achievement_images").c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Cheats.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Covers.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Dumps.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Path::Combine(Dumps, "audio").c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Path::Combine(Dumps, "textures").c_str(), false) && result;
+  result = FileSystem::EnsureDirectoryExists(GameIcons.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(GameSettings.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(InputProfiles.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(MemoryCards.c_str(), false) && result;
@@ -2027,6 +2065,7 @@ bool EmuFolders::EnsureFoldersExist()
            result;
   result = FileSystem::EnsureDirectoryExists(Textures.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(UserResources.c_str(), false) && result;
+  result = FileSystem::EnsureDirectoryExists(Videos.c_str(), false) && result;
   return result;
 }
 
@@ -2036,7 +2075,7 @@ std::string EmuFolders::GetOverridableResourcePath(std::string_view name)
   if (FileSystem::FileExists(upath.c_str()))
   {
     if (UserResources != Resources)
-      Log_WarningFmt("Using user-provided resource file {}", name);
+      WARNING_LOG("Using user-provided resource file {}", name);
   }
   else
   {
@@ -2136,8 +2175,9 @@ static const char* s_log_filters[] = {
   "WAVWriter",
   "WindowInfo",
 
-#ifdef ENABLE_CUBEB
+#ifndef __ANDROID__
   "CubebAudioStream",
+  "SDLAudioStream",
 #endif
 
 #ifdef ENABLE_OPENGL

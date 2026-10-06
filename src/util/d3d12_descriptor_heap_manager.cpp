@@ -1,27 +1,25 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "d3d12_descriptor_heap_manager.h"
 
 #include "common/assert.h"
-#include "common/log.h"
-
-Log_SetChannel(D3D12Device);
+#include "common/error.h"
 
 D3D12DescriptorHeapManager::D3D12DescriptorHeapManager() = default;
 D3D12DescriptorHeapManager::~D3D12DescriptorHeapManager() = default;
 
 bool D3D12DescriptorHeapManager::Create(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE type, u32 num_descriptors,
-                                        bool shader_visible)
+                                        bool shader_visible, Error* error)
 {
-  D3D12_DESCRIPTOR_HEAP_DESC desc = {type, static_cast<UINT>(num_descriptors),
-                                     shader_visible ? D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE :
-                                                      D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0u};
+  D3D12_DESCRIPTOR_HEAP_DESC desc = {
+    type, static_cast<UINT>(num_descriptors),
+    shader_visible ? D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE : D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0u};
 
   HRESULT hr = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(m_descriptor_heap.ReleaseAndGetAddressOf()));
-  if (FAILED(hr))
+  if (FAILED(hr)) [[unlikely]]
   {
-    Log_ErrorPrintf("CreateDescriptorHeap() failed: %08X", hr);
+    Error::SetHResult(error, "CreateDescriptorHeap() failed: ", hr);
     return false;
   }
 
@@ -110,14 +108,14 @@ void D3D12DescriptorHeapManager::Free(D3D12DescriptorHandle* handle)
 D3D12DescriptorAllocator::D3D12DescriptorAllocator() = default;
 D3D12DescriptorAllocator::~D3D12DescriptorAllocator() = default;
 
-bool D3D12DescriptorAllocator::Create(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE type, u32 num_descriptors)
+bool D3D12DescriptorAllocator::Create(ID3D12Device* device, D3D12_DESCRIPTOR_HEAP_TYPE type, u32 num_descriptors, Error* error)
 {
   const D3D12_DESCRIPTOR_HEAP_DESC desc = {type, static_cast<UINT>(num_descriptors),
                                            D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0u};
   const HRESULT hr = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(m_descriptor_heap.ReleaseAndGetAddressOf()));
   if (FAILED(hr))
   {
-    Log_ErrorPrintf("CreateDescriptorHeap() failed: %08X", hr);
+    Error::SetHResult(error, "CreateDescriptorHeap() failed: ", hr);
     return false;
   }
 

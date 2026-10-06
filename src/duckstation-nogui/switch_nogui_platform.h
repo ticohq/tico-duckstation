@@ -19,8 +19,8 @@ public:
 
   bool Initialize();
 
-  void ReportError(const std::string_view& title, const std::string_view& message) override;
-  bool ConfirmMessage(const std::string_view& title, const std::string_view& message) override;
+  void ReportError(std::string_view title, std::string_view message) override;
+  bool ConfirmMessage(std::string_view title, std::string_view message) override;
 
   void SetDefaultConfig(SettingsInterface& si) override;
 
@@ -30,7 +30,7 @@ public:
   std::optional<WindowInfo> GetPlatformWindowInfo() override;
   void SetPlatformWindowTitle(std::string title) override;
 
-  std::optional<u32> ConvertHostKeyboardStringToCode(const std::string_view& str) override;
+  std::optional<u32> ConvertHostKeyboardStringToCode(std::string_view str) override;
   std::optional<std::string> ConvertHostKeyboardCodeToString(u32 code) override;
 
   void RunMessageLoop() override;
@@ -42,8 +42,8 @@ public:
 
   bool RequestRenderWindowSize(s32 new_window_width, s32 new_window_height) override;
 
-  bool OpenURL(const std::string_view& url) override;
-  bool CopyTextToClipboard(const std::string_view& text) override;
+  bool OpenURL(std::string_view url) override;
+  bool CopyTextToClipboard(std::string_view text) override;
 
   void AppletModeChange(AppletHookType type);
 

@@ -1,28 +1,32 @@
+// SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
+
 #pragma once
+
 #include "util/audio_stream.h"
-#include <cstdint>
+
 #include <atomic>
 #include <switch.h>
 
+/// Audio through the Switch's audio renderer service: a thread refills two wave buffers from the stream.
 class SwitchAudioStream final : public AudioStream
 {
 public:
-  SwitchAudioStream(u32 sample_rate, u32 channels, u32 buffer_ms, AudioStretchMode stretch);
+  SwitchAudioStream(u32 sample_rate, const AudioStreamParameters& parameters);
   ~SwitchAudioStream();
 
   void SetPaused(bool paused) override;
-  void SetOutputVolume(u32 volume) override;
 
-  bool Initialize(u32 latency_ms);
+  bool Initialize(Error* error);
 
 private:
   void DestroyContextAndStream();
 
   static void AudioThread(void* userdata);
+
   AudioDriver m_audio_driver;
   u8* m_mem_pool = nullptr;
   Thread m_audio_thread;
-  u32 m_audio_thread_buffer_size, m_audio_thread_num_channels;
+  u32 m_audio_thread_buffer_size = 0;
 
   enum class State
   {
@@ -32,5 +36,4 @@ private:
   };
 
   std::atomic<State> m_state = State::Playing;
-  std::atomic<float> m_thread_volume = 1.f;
 };

@@ -33,10 +33,10 @@ public:
   /// Returns the specified library name in platform-specific format.
   /// Major/minor versions will not be included if set to -1.
   /// If libname already contains the "lib" prefix, it will not be added again.
-  /// Windows: LIBNAME-MAJOR-MINOR.dll
-  /// Linux: libLIBNAME.so.MAJOR.MINOR
-  /// Mac: libLIBNAME.MAJOR.MINOR.dylib
-  static std::string GetVersionedFilename(const char* libname, int major = -1, int minor = -1);
+  /// Windows: LIBNAME-MAJOR-MINOR-PATCH.dll
+  /// Linux: libLIBNAME.so.MAJOR.MINOR.PATCH
+  /// Mac: libLIBNAME.MAJOR.MINOR.PATCH.dylib
+  static std::string GetVersionedFilename(const char* libname, int major = -1, int minor = -1, int patch = -1);
 
   /// Returns true if a module is loaded, otherwise false.
   bool IsOpen() const { return m_handle != nullptr; }
@@ -44,6 +44,9 @@ public:
   /// Loads (or replaces) the handle with the specified library file name.
   /// Returns true if the library was loaded and can be used.
   bool Open(const char* filename, Error* error);
+
+  /// Adopts, or takes ownership of an existing opened library.
+  void Adopt(void* handle);
 
   /// Unloads the library, any function pointers from this library are no longer valid.
   void Close();
@@ -60,6 +63,9 @@ public:
     *ptr = reinterpret_cast<T>(GetSymbolAddress(name));
     return *ptr != nullptr;
   }
+
+  /// Returns the opaque OS-specific handle.
+  void* GetHandle() const { return m_handle; }
 
   /// Move assignment, transfer ownership.
   DynamicLibrary& operator=(DynamicLibrary&& move);

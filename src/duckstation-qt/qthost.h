@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include "gdbserver.h"
 #include "qtutils.h"
 
 #include "core/game_list.h"
@@ -28,6 +27,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -122,11 +122,12 @@ public:
 Q_SIGNALS:
   void errorReported(const QString& title, const QString& message);
   bool messageConfirmed(const QString& title, const QString& message);
+  void statusMessage(const QString& message);
   void debuggerMessageReported(const QString& message);
   void settingsResetToDefault(bool system, bool controller);
-  void onInputDevicesEnumerated(const QList<QPair<QString, QString>>& devices);
-  void onInputDeviceConnected(const QString& identifier, const QString& device_name);
-  void onInputDeviceDisconnected(const QString& identifier);
+  void onInputDevicesEnumerated(const std::vector<std::pair<std::string, std::string>>& devices);
+  void onInputDeviceConnected(const std::string& identifier, const std::string& device_name);
+  void onInputDeviceDisconnected(const std::string& identifier);
   void onVibrationMotorsEnumerated(const QList<InputBindingKey>& motors);
   void systemStarting();
   void systemStarted();
@@ -144,11 +145,11 @@ Q_SIGNALS:
   void mouseModeRequested(bool relative, bool hide_cursor);
   void fullscreenUIStateChange(bool running);
   void achievementsLoginRequested(Achievements::LoginRequestReason reason);
-  void achievementsLoginSucceeded(const QString& display_name, quint32 points, quint32 sc_points,
-                                  quint32 unread_messages);
   void achievementsRefreshed(quint32 id, const QString& game_info_string);
   void achievementsChallengeModeChanged(bool enabled);
   void cheatEnabled(quint32 index, bool enabled);
+  void mediaCaptureStarted();
+  void mediaCaptureStopped();
 
   /// Big Picture UI requests.
   void onCoverDownloaderOpenRequested();
@@ -158,6 +159,7 @@ public Q_SLOTS:
   void applySettings(bool display_osd_messages = false);
   void reloadGameSettings(bool display_osd_messages = false);
   void updateEmuFolders();
+  void updateControllerSettings();
   void reloadInputSources();
   void reloadInputBindings();
   void reloadInputDevices();
@@ -168,10 +170,10 @@ public Q_SLOTS:
   void stopFullscreenUI();
   void bootSystem(std::shared_ptr<SystemBootParameters> params);
   void resumeSystemFromMostRecentState();
-  void shutdownSystem(bool save_state = true);
-  void resetSystem();
+  void shutdownSystem(bool save_state, bool check_memcard_busy);
+  void resetSystem(bool check_memcard_busy);
   void setSystemPaused(bool paused, bool wait_until_paused = false);
-  void changeDisc(const QString& new_disc_filename);
+  void changeDisc(const QString& new_disc_filename, bool reset_system, bool check_memcard_busy);
   void changeDiscFromPlaylist(quint32 index);
   void loadState(const QString& filename);
   void loadState(bool global, qint32 slot);
@@ -218,6 +220,8 @@ private:
   void createBackgroundControllerPollTimer();
   void destroyBackgroundControllerPollTimer();
   void setInitialState(std::optional<bool> override_fullscreen);
+  void confirmActionIfMemoryCardBusy(const QString& action, bool cancel_resume_on_accept,
+                                     std::function<void(bool)> callback) const;
 
   QThread* m_ui_thread;
   QSemaphore m_started_semaphore;
@@ -245,9 +249,23 @@ private:
 };
 
 extern EmuThread* g_emu_thread;
-extern GDBServer* g_gdb_server;
 
 namespace QtHost {
+/// Default theme name for the platform.
+const char* GetDefaultThemeName();
+
+/// Default language for the platform.
+const char* GetDefaultLanguage();
+
+/// Sets application theme according to settings.
+void UpdateApplicationTheme();
+
+/// Returns true if the application theme is using dark colours.
+bool IsDarkApplicationTheme();
+
+/// Sets the icon theme, based on the current style (light/dark).
+void SetIconThemeFromStyle();
+
 /// Sets batch mode (exit after game shutdown).
 bool InBatchMode();
 
@@ -261,7 +279,7 @@ void RunOnUIThread(const std::function<void()>& func, bool block = false);
 const char* GetDefaultLanguage();
 
 /// Call when the language changes.
-void InstallTranslator(QWidget* dialog_parent);
+void UpdateApplicationLanguage(QWidget* dialog_parent);
 
 /// Returns the application name and version, optionally including debug/devel config indicator.
 QString GetAppNameAndVersion();
@@ -270,10 +288,16 @@ QString GetAppNameAndVersion();
 QString GetAppConfigSuffix();
 
 /// Returns the main application icon.
-QIcon GetAppIcon();
+const QIcon& GetAppIcon();
 
 /// Returns the base path for resources. This may be : prefixed, if we're using embedded resources.
 QString GetResourcesBasePath();
+
+/// Returns the base settings interface. Should lock before manipulating.
+INISettingsInterface* GetBaseSettingsInterface();
+
+/// Saves a game settings interface.
+bool SaveGameSettings(SettingsInterface* sif, bool delete_if_empty);
 
 /// Downloads the specified URL to the provided path.
 bool DownloadFile(QWidget* parent, const QString& title, std::string url, const char* path);

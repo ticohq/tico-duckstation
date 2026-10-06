@@ -28,7 +28,7 @@ void Tick(const char* name)
   if (s_window_start != 0)
   {
     const double window = static_cast<double>(now - s_window_start);
-    Log_InfoFmt("thread {}: core0 {:.1f}% core1 {:.1f}% core2 {:.1f}% core3 {:.1f}% (now on core {})", name,
+    INFO_LOG("thread {}: core0 {:.1f}% core1 {:.1f}% core2 {:.1f}% core3 {:.1f}% (now on core {})", name,
                 100.0 * (ticks[0] - s_core_ticks[0]) / window, 100.0 * (ticks[1] - s_core_ticks[1]) / window,
                 100.0 * (ticks[2] - s_core_ticks[2]) / window, 100.0 * (ticks[3] - s_core_ticks[3]) / window,
                 svcGetCurrentProcessorNumber());
@@ -37,7 +37,7 @@ void Tick(const char* name)
   {
     u64 core_mask = 0;
     svcGetInfo(&core_mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0);
-    Log_InfoFmt("thread {}: started on core {} (process core mask 0x{:X})", name, svcGetCurrentProcessorNumber(),
+    INFO_LOG("thread {}: started on core {} (process core mask 0x{:X})", name, svcGetCurrentProcessorNumber(),
                 core_mask);
   }
 

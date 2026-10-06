@@ -5,6 +5,8 @@
 
 #include "common/bitutils.h"
 
+#include "fmt/format.h"
+
 #include <algorithm>
 
 static const char* s_switch_button_names[] = {
@@ -124,16 +126,17 @@ void SwitchInputSource::PollEvents()
     bool is_connected = padIsConnected(&m_controllers[i].pad_state);
     if (is_connected)
     {
-      std::string ident(StringUtil::StdStringFromFormat("P%u", i));
+      std::string ident(fmt::format("P{}", i));
       if (!m_controllers[i].connected)
-        Host::OnInputDeviceConnected(ident, ident);
+        InputManager::OnInputDeviceConnected(ident, ident);
 
       UpdateState(i);
     }
     else if (m_controllers[i].connected)
     {
-      std::string ident(StringUtil::StdStringFromFormat("P%u", i));
-      Host::OnInputDeviceDisconnected(ident);
+      std::string ident(fmt::format("P{}", i));
+      InputManager::OnInputDeviceDisconnected(
+        InputBindingKey{{.source_type = InputSourceType::Switch, .source_index = i}}, ident);
     }
 
     m_controllers[i].connected = is_connected;
@@ -196,7 +199,7 @@ std::vector<std::pair<std::string, std::string>> SwitchInputSource::EnumerateDev
   {
     if (padIsConnected(&m_controllers[i].pad_state))
     {
-      std::string ident(StringUtil::StdStringFromFormat("P%u", i));
+      std::string ident(fmt::format("P{}", i));
       result.emplace_back(ident, ident);
     }
   }
@@ -223,24 +226,24 @@ std::vector<InputBindingKey> SwitchInputSource::EnumerateMotors()
   return ret;
 }
 
-bool SwitchInputSource::GetGenericBindingMapping(const std::string_view& device, GenericInputBindingMapping* mapping)
+bool SwitchInputSource::GetGenericBindingMapping(std::string_view device, GenericInputBindingMapping* mapping)
 {
   for (u32 i = 0; i < NUM_AXIS; i++)
   {
     mapping->emplace_back(s_switch_generic_axis[i][0],
-                          StringUtil::StdStringFromFormat("P%c/-%s", device[1], s_switch_axis_names[i]));
+                          fmt::format("P{}/-{}", device[1], s_switch_axis_names[i]));
     mapping->emplace_back(s_switch_generic_axis[i][1],
-                          StringUtil::StdStringFromFormat("P%c/+%s", device[1], s_switch_axis_names[i]));
+                          fmt::format("P{}/+{}", device[1], s_switch_axis_names[i]));
   }
   for (u32 i = 0; i < NUM_BUTTONS; i++)
   {
     if (s_switch_generic_binding_button_mapping[i] != GenericInputBinding::Unknown)
       mapping->emplace_back(s_switch_generic_binding_button_mapping[i],
-                            StringUtil::StdStringFromFormat("P%c/%s", device[1], s_switch_button_names[i]));
+                            fmt::format("P{}/{}", device[1], s_switch_button_names[i]));
   }
 
-  mapping->emplace_back(GenericInputBinding::SmallMotor, StringUtil::StdStringFromFormat("P%c/SmallMotor", device[1]));
-  mapping->emplace_back(GenericInputBinding::LargeMotor, StringUtil::StdStringFromFormat("P%c/LargeMotor", device[1]));
+  mapping->emplace_back(GenericInputBinding::SmallMotor, fmt::format("P{}/SmallMotor", device[1]));
+  mapping->emplace_back(GenericInputBinding::LargeMotor, fmt::format("P{}/LargeMotor", device[1]));
   return true;
 }
 
@@ -276,8 +279,8 @@ void SwitchInputSource::UpdateMotorState(InputBindingKey large_key, InputBinding
   }
 }
 
-std::optional<InputBindingKey> SwitchInputSource::ParseKeyString(const std::string_view& device,
-                                                                 const std::string_view& binding)
+std::optional<InputBindingKey> SwitchInputSource::ParseKeyString(std::string_view device,
+                                                                 std::string_view binding)
 {
   if (device.size() != 2 || device[0] != 'P' || !isdigit(device[1]))
     return std::nullopt;

@@ -17,8 +17,8 @@ add_library(util
   cd_image_ppf.cpp
   cd_subchannel_replacement.cpp
   cd_subchannel_replacement.h
-  cd_xa.cpp
-  cd_xa.h
+  compress_helpers.cpp
+  compress_helpers.h
   cue_parser.cpp
   cue_parser.h
   gpu_device.cpp
@@ -46,8 +46,8 @@ add_library(util
   input_source.h
   iso_reader.cpp
   iso_reader.h
-  jit_code_buffer.cpp
-  jit_code_buffer.h
+  media_capture.cpp
+  media_capture.h
   page_fault_handler.cpp
   page_fault_handler.h
   platform_misc.h
@@ -63,20 +63,21 @@ add_library(util
   shadergen.h
   shiftjis.cpp
   shiftjis.h
+  sockets.cpp
+  sockets.h
   state_wrapper.cpp
   state_wrapper.h
   wav_writer.cpp
   wav_writer.h
   window_info.cpp
   window_info.h
-  zstd_byte_stream.cpp
 )
 
 target_precompile_headers(util PRIVATE "pch.h")
 target_include_directories(util PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_include_directories(util PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(util PUBLIC common simpleini imgui)
-target_link_libraries(util PRIVATE libchdr JPEG::JPEG PNG::PNG WebP::libwebp ZLIB::ZLIB soundtouch xxhash Zstd::Zstd reshadefx)
+target_link_libraries(util PRIVATE libchdr JPEG::JPEG PNG::PNG WebP::libwebp ZLIB::ZLIB SoundTouch::SoundTouchDLL xxhash Zstd::Zstd reshadefx)
 
 if(ENABLE_X11)
   target_compile_definitions(util PRIVATE "-DENABLE_X11=1")
@@ -112,7 +113,7 @@ if(ENABLE_OPENGL)
     target_link_libraries(util PRIVATE "opengl32.lib")
   endif()
 
-  if(LINUX OR FREEBSD OR ANDROID OR NINTENDO_SWITCH)
+  if(LINUX OR BSD OR ANDROID OR NINTENDO_SWITCH)
     target_sources(util PRIVATE
       opengl_context_egl.cpp
       opengl_context_egl.h
@@ -168,12 +169,15 @@ if(ENABLE_VULKAN)
   target_link_libraries(util PUBLIC vulkan-headers)
 endif()
 
-if(NINTENDO_SWITCH AND ENABLE_VULKAN)
-  # GLSL to SPIR-V through glslang (shaderc pulls in SPIRV-Tools); the tico
-  # build links its libraries into the NRO
+if(NINTENDO_SWITCH)
+  # GLSL to SPIR-V through glslang (shaderc pulls in SPIRV-Tools), and SPIRV-Cross
+  # linked statically: the tico build (build_duckstation_nro.sh) links them into the NRO
   target_include_directories(util PRIVATE "${TICO_GLSLANG_SOURCE}" "${TICO_GLSLANG_BUILD}/include")
+  target_link_libraries(util PRIVATE freesurround)
 elseif(ENABLE_VULKAN OR APPLE)
-  target_link_libraries(util PUBLIC Shaderc::shaderc_shared)
+  # shaderc is loaded dynamically to reduce module loads on startup.
+  get_target_property(SHADERC_INCLUDE_DIR Shaderc::shaderc_shared INTERFACE_INCLUDE_DIRECTORIES)
+  target_include_directories(util PUBLIC ${SHADERC_INCLUDE_DIR})
 endif()
 
 if(NOT ANDROID AND NOT NINTENDO_SWITCH)
@@ -183,14 +187,13 @@ if(NOT ANDROID AND NOT NINTENDO_SWITCH)
     sdl_input_source.cpp
     sdl_input_source.h
   )
-  target_compile_definitions(util PUBLIC
-    "ENABLE_CUBEB=1"
-    "ENABLE_SDL2=1"
-  )
   target_link_libraries(util PUBLIC
     cubeb
+    freesurround
     SDL2::SDL2
   )
+  # FFmpeg loaded dynamically on demand.
+  target_include_directories(util PUBLIC ${FFMPEG_INCLUDE_DIRS})
 endif()
 
 if(WIN32)
@@ -224,7 +227,6 @@ if(WIN32)
     platform_misc_win32.cpp
     win32_raw_input_source.cpp
     win32_raw_input_source.h
-    xaudio2_audio_stream.cpp
     xinput_source.cpp
     xinput_source.h
   )
@@ -253,7 +255,7 @@ elseif(APPLE)
   find_library(IOK_LIBRARY IOKit REQUIRED)
   find_library(METAL_LIBRARY Metal)
   find_library(QUARTZCORE_LIBRARY QuartzCore)
-  target_link_libraries(util PRIVATE ${METAL_LIBRARY} ${QUARTZCORE_LIBRARY} ${IOK_LIBRARY} spirv-cross-c-shared)
+  target_link_libraries(util PRIVATE ${METAL_LIBRARY} ${QUARTZCORE_LIBRARY} ${IOK_LIBRARY})
   set_source_files_properties(${MAC_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE)
 elseif(NOT ANDROID AND NOT NINTENDO_SWITCH)
   target_sources(util PRIVATE
@@ -318,5 +320,27 @@ function(add_util_resources target)
     else()
       message(WARNING "MoltenVK not found in path, it will depend on the target system having it.")
     endif()
+
+    # Copy shaderc/spirv-cross into the bundle
+    get_target_property(SPIRV_CROSS_LIBRARY spirv-cross-c-shared IMPORTED_SONAME_RELEASE)
+    get_target_property(SHADERC_LIBRARY Shaderc::shaderc_shared IMPORTED_LOCATION_RELEASE)
+    target_sources(${target} PRIVATE "${SHADERC_LIBRARY}" "${SPIRV_CROSS_LIBRARY}")
+    set_source_files_properties("${SHADERC_LIBRARY}" "${SPIRV_CROSS_LIBRARY}" PROPERTIES MACOSX_PACKAGE_LOCATION Frameworks)
+
+    # Copy FFmpeg libraries into the bundle
+    foreach(component avcodec avformat avutil swresample swscale)
+      string(REGEX REPLACE "\([0-9]+\)\.[0-9]+\.[0-9]+" "\\1" major "${FFMPEG_${component}_VERSION}")
+      string(REPLACE "lib${component}.dylib" "lib${component}.${major}.dylib" version_lib "${FFMPEG_${component}_LIBRARIES}")
+      target_sources(${target} PRIVATE ${version_lib})
+      set_source_files_properties(${target} PRIVATE ${version_lib} PROPERTIES MACOSX_PACKAGE_LOCATION Frameworks)
+    endforeach()
+  elseif(ALLOW_INSTALL)
+    # Ensure we look for dependency libraries in the installation directory.
+    set_target_properties(${target} PROPERTIES INSTALL_RPATH "$ORIGIN")
+
+    # Copy dependency libraries to installation directory.
+    install_imported_dep_library(Shaderc::shaderc_shared)
+    install_imported_dep_library(spirv-cross-c-shared)
+    install_imported_dep_library(SoundTouch::SoundTouchDLL)
   endif()
 endfunction()

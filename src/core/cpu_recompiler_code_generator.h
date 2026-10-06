@@ -2,18 +2,15 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include <array>
-#include <initializer_list>
-#include <utility>
-#include <vector>
-
-#include "util/jit_code_buffer.h"
 
 #include "cpu_code_cache_private.h"
 #include "cpu_recompiler_register_cache.h"
 #include "cpu_recompiler_thunks.h"
 #include "cpu_recompiler_types.h"
 #include "cpu_types.h"
+
+#include <array>
+#include <utility>
 
 namespace CPU::Recompiler {
 
@@ -49,13 +46,12 @@ public:
     const CodeCache::InstructionInfo* info;
   };
 
-  CodeGenerator(JitCodeBuffer* code_buffer);
+  CodeGenerator();
   ~CodeGenerator();
 
   static const char* GetHostRegName(HostReg reg, RegSize size = HostPointerSize);
-  static void AlignCodeBuffer(JitCodeBuffer* code_buffer);
 
-  static void BackpatchLoadStore(void* host_pc, JitCodeBuffer* code_buffer, const CodeCache::LoadstoreBackpatchInfo& lbi);
+  static void BackpatchLoadStore(void* host_pc, const CodeCache::LoadstoreBackpatchInfo& lbi);
 
   const void* CompileBlock(CodeCache::Block* block, u32* out_host_code_size, u32* out_host_far_code_size);
 
@@ -201,6 +197,8 @@ public:
   Value XorValues(const Value& lhs, const Value& rhs);
   Value NotValue(const Value& val);
 
+  const TickCount* GetFetchMemoryAccessTimePtr() const;
+
   // Raising exception if condition is true.
   void GenerateExceptionExit(Instruction instruction, const CodeCache::InstructionInfo& info, Exception excode,
                              Condition condition = Condition::Always);
@@ -266,8 +264,6 @@ private:
   bool Compile_lui(Instruction instruction, const CodeCache::InstructionInfo& info);
   bool Compile_cop0(Instruction instruction, const CodeCache::InstructionInfo& info);
   bool Compile_cop2(Instruction instruction, const CodeCache::InstructionInfo& info);
-
-  JitCodeBuffer* m_code_buffer;
 
   CodeCache::Block* m_block = nullptr;
   CodeBlockInstruction m_block_start = {};

@@ -124,7 +124,8 @@ std::unique_ptr<VulkanTexture> VulkanTexture::Create(u32 width, u32 height, u32 
     {
       DebugAssert(levels == 1);
       ici.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-                  VK_IMAGE_USAGE_SAMPLED_BIT;
+                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                  VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
     }
     break;
 
@@ -147,7 +148,7 @@ std::unique_ptr<VulkanTexture> VulkanTexture::Create(u32 width, u32 height, u32 
   }
   if (res == VK_ERROR_OUT_OF_DEVICE_MEMORY)
   {
-    Log_ErrorPrintf("Failed to allocate device memory for %ux%u texture", width, height);
+    ERROR_LOG("Failed to allocate device memory for {}x{} texture", width, height);
     return {};
   }
   else if (res != VK_SUCCESS)
@@ -329,12 +330,12 @@ bool VulkanTexture::Update(u32 x, u32 y, u32 width, u32 height, const void* data
   }
   else
   {
-    if (!sbuffer.ReserveMemory(required_size, dev.GetBufferCopyOffsetAlignment()))
+    if (!sbuffer.ReserveMemory(required_size, dev.GetBufferCopyOffsetAlignment())) [[unlikely]]
     {
-      dev.SubmitCommandBuffer(false, "While waiting for %u bytes in texture upload buffer", required_size);
-      if (!sbuffer.ReserveMemory(required_size, dev.GetBufferCopyOffsetAlignment()))
+      dev.SubmitCommandBuffer(false, TinyString::from_format("Needs {} bytes in texture upload buffer", required_size));
+      if (!sbuffer.ReserveMemory(required_size, dev.GetBufferCopyOffsetAlignment())) [[unlikely]]
       {
-        Log_ErrorPrintf("Failed to reserve texture upload memory (%u bytes).", required_size);
+        ERROR_LOG("Failed to reserve texture upload memory ({} bytes).", required_size);
         return false;
       }
     }
@@ -387,10 +388,10 @@ bool VulkanTexture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u3
   if (req_size >= (buffer.GetCurrentSize() / 2))
     return false;
 
-  if (!buffer.ReserveMemory(req_size, dev.GetBufferCopyOffsetAlignment()))
+  if (!buffer.ReserveMemory(req_size, dev.GetBufferCopyOffsetAlignment())) [[unlikely]]
   {
-    dev.SubmitCommandBuffer(false, "While waiting for %u bytes in texture upload buffer", req_size);
-    if (!buffer.ReserveMemory(req_size, dev.GetBufferCopyOffsetAlignment()))
+    dev.SubmitCommandBuffer(false, TinyString::from_format("Needs {} bytes in texture upload buffer", req_size));
+    if (!buffer.ReserveMemory(req_size, dev.GetBufferCopyOffsetAlignment())) [[unlikely]]
       Panic("Failed to reserve texture upload memory");
   }
 
@@ -474,7 +475,7 @@ void VulkanTexture::OverrideImageLayout(Layout new_layout)
   m_layout = new_layout;
 }
 
-void VulkanTexture::SetDebugName(const std::string_view& name)
+void VulkanTexture::SetDebugName(std::string_view name)
 {
   VulkanDevice& dev = VulkanDevice::GetInstance();
   Vulkan::SetObjectName(dev.GetVulkanDevice(), m_image, name);
@@ -751,7 +752,7 @@ VulkanSampler::~VulkanSampler()
   // Cleaned up by main class.
 }
 
-void VulkanSampler::SetDebugName(const std::string_view& name)
+void VulkanSampler::SetDebugName(std::string_view name)
 {
   Vulkan::SetObjectName(VulkanDevice::GetInstance().GetVulkanDevice(), m_sampler, name);
 }
@@ -822,7 +823,7 @@ VkSampler VulkanDevice::GetSampler(const GPUSampler::Config& config)
     }
     if (i == std::size(border_color_mapping))
     {
-      Log_ErrorPrintf("Unsupported border color: %08X", config.border_color.GetValue());
+      ERROR_LOG("Unsupported border color: {:08X}", config.border_color.GetValue());
       return {};
     }
 
@@ -915,7 +916,7 @@ void VulkanTextureBuffer::Unmap(u32 used_elements)
   m_buffer.CommitMemory(size);
 }
 
-void VulkanTextureBuffer::SetDebugName(const std::string_view& name)
+void VulkanTextureBuffer::SetDebugName(std::string_view name)
 {
   VulkanDevice& dev = VulkanDevice::GetInstance();
   Vulkan::SetObjectName(dev.GetVulkanDevice(), m_buffer.GetBuffer(), name);
@@ -938,7 +939,7 @@ std::unique_ptr<GPUTextureBuffer> VulkanDevice::CreateTextureBuffer(GPUTextureBu
   tb->m_descriptor_set = AllocatePersistentDescriptorSet(m_single_texture_buffer_ds_layout);
   if (tb->m_descriptor_set == VK_NULL_HANDLE)
   {
-    Log_ErrorPrintf("Failed to allocate persistent descriptor set for texture buffer.");
+    ERROR_LOG("Failed to allocate persistent descriptor set for texture buffer.");
     tb->Destroy(false);
     return {};
   }
@@ -955,7 +956,7 @@ std::unique_ptr<GPUTextureBuffer> VulkanDevice::CreateTextureBuffer(GPUTextureBu
     bvb.Set(tb->GetBuffer(), format_mapping[static_cast<u8>(format)], 0, tb->GetSizeInBytes());
     if ((tb->m_buffer_view = bvb.Create(m_device, false)) == VK_NULL_HANDLE)
     {
-      Log_ErrorPrintf("Failed to create buffer view for texture buffer.");
+      ERROR_LOG("Failed to create buffer view for texture buffer.");
       tb->Destroy(false);
       return {};
     }
@@ -1157,9 +1158,15 @@ void VulkanDownloadTexture::Flush()
 
   // Need to execute command buffer.
   if (dev.GetCurrentFenceCounter() == m_copy_fence_counter)
+  {
+    if (dev.InRenderPass())
+      dev.EndRenderPass();
     dev.SubmitCommandBuffer(true);
+  }
   else
+  {
     dev.WaitForFenceCounter(m_copy_fence_counter);
+  }
 }
 
 void VulkanDownloadTexture::SetDebugName(std::string_view name)

@@ -24,8 +24,8 @@ void CodeGenerator::EmitStoreGuestRegister(Reg guest_reg, const Value& value)
 void CodeGenerator::EmitStoreInterpreterLoadDelay(Reg reg, const Value& value)
 {
   DebugAssert(value.size == RegSize_32 && value.IsInHostRegister());
-  EmitStoreCPUStructField(offsetof(State, load_delay_reg), Value::FromConstantU8(static_cast<u8>(reg)));
-  EmitStoreCPUStructField(offsetof(State, load_delay_value), value);
+  EmitStoreCPUStructField(OFFSETOF(State, load_delay_reg), Value::FromConstantU8(static_cast<u8>(reg)));
+  EmitStoreCPUStructField(OFFSETOF(State, load_delay_value), value);
   m_load_delay_dirty = true;
 }
 
@@ -68,19 +68,20 @@ Value CodeGenerator::EmitLoadGuestMemory(Instruction instruction, const CodeCach
   Value result = m_register_cache.AllocateScratch(HostPointerSize);
 
   const bool use_fastmem = !g_settings.cpu_recompiler_memory_exceptions &&
-    (address_spec ? Bus::CanUseFastmemForAddress(*address_spec) : true) && !SpeculativeIsCacheIsolated();
+                           (address_spec ? Bus::CanUseFastmemForAddress(*address_spec) : true) &&
+                           !SpeculativeIsCacheIsolated();
   if (address_spec)
   {
     if (!use_fastmem)
     {
-      Log_ProfilePrintf("Non-constant load at 0x%08X, speculative address 0x%08X, using fastmem = %s", info.pc,
-                        *address_spec, use_fastmem ? "yes" : "no");
+      DEBUG_LOG("Non-constant load at 0x{:08X}, speculative address 0x{:08X}, using fastmem = {}", info.pc,
+                *address_spec, use_fastmem ? "yes" : "no");
     }
   }
   else
   {
-    Log_ProfilePrintf("Non-constant load at 0x%08X, speculative address UNKNOWN, using fastmem = %s", info.pc,
-                      use_fastmem ? "yes" : "no");
+    DEBUG_LOG("Non-constant load at 0x{:08X}, speculative address UNKNOWN, using fastmem = {}", info.pc,
+              use_fastmem ? "yes" : "no");
   }
 
   if (CodeCache::IsUsingFastmem() && use_fastmem)
@@ -142,19 +143,20 @@ void CodeGenerator::EmitStoreGuestMemory(Instruction instruction, const CodeCach
   }
 
   const bool use_fastmem = !g_settings.cpu_recompiler_memory_exceptions &&
-    (address_spec ? Bus::CanUseFastmemForAddress(*address_spec) : true) && !SpeculativeIsCacheIsolated();
+                           (address_spec ? Bus::CanUseFastmemForAddress(*address_spec) : true) &&
+                           !SpeculativeIsCacheIsolated();
   if (address_spec)
   {
     if (!use_fastmem)
     {
-      Log_ProfilePrintf("Non-constant store at 0x%08X, speculative address 0x%08X, using fastmem = %s", info.pc,
-                        *address_spec, use_fastmem ? "yes" : "no");
+      DEBUG_LOG("Non-constant store at 0x{:08X}, speculative address 0x{:08X}, using fastmem = {}", info.pc,
+                *address_spec, use_fastmem ? "yes" : "no");
     }
   }
   else
   {
-    Log_ProfilePrintf("Non-constant store at 0x%08X, speculative address UNKNOWN, using fastmem = %s", info.pc,
-                      use_fastmem ? "yes" : "no");
+    DEBUG_LOG("Non-constant store at 0x{:08X}, speculative address UNKNOWN, using fastmem = {}", info.pc,
+              use_fastmem ? "yes" : "no");
   }
 
   if (CodeCache::IsUsingFastmem() && use_fastmem)
@@ -177,10 +179,10 @@ void CodeGenerator::EmitICacheCheckAndUpdate()
 
   if (GetSegmentForAddress(m_pc) >= Segment::KSEG1)
   {
-    EmitLoadCPUStructField(temp.GetHostRegister(), RegSize_32, offsetof(State, pending_ticks));
+    EmitLoadCPUStructField(temp.GetHostRegister(), RegSize_32, OFFSETOF(State, pending_ticks));
     EmitAdd(temp.GetHostRegister(), temp.GetHostRegister(),
             Value::FromConstantU32(static_cast<u32>(m_block->uncached_fetch_ticks)), false);
-    EmitStoreCPUStructField(offsetof(State, pending_ticks), temp);
+    EmitStoreCPUStructField(OFFSETOF(State, pending_ticks), temp);
   }
   else
   {
@@ -198,7 +200,7 @@ void CodeGenerator::EmitICacheCheckAndUpdate()
         continue;
 
       const u32 line = GetICacheLine(current_pc);
-      const u32 offset = offsetof(State, icache_tags) + (line * sizeof(u32));
+      const u32 offset = OFFSETOF(State, icache_tags) + (line * sizeof(u32));
       LabelType cache_hit;
 
       EmitLoadCPUStructField(temp.GetHostRegister(), RegSize_32, offset);
@@ -206,11 +208,11 @@ void CodeGenerator::EmitICacheCheckAndUpdate()
       EmitCmp(temp2.GetHostRegister(), temp);
       EmitConditionalBranch(Condition::Equal, false, temp.GetHostRegister(), temp2, &cache_hit);
 
-      EmitLoadCPUStructField(temp.GetHostRegister(), RegSize_32, offsetof(State, pending_ticks));
+      EmitLoadCPUStructField(temp.GetHostRegister(), RegSize_32, OFFSETOF(State, pending_ticks));
       EmitStoreCPUStructField(offset, temp2);
       EmitAdd(temp.GetHostRegister(), temp.GetHostRegister(), Value::FromConstantU32(static_cast<u32>(fill_ticks)),
               false);
-      EmitStoreCPUStructField(offsetof(State, pending_ticks), temp);
+      EmitStoreCPUStructField(OFFSETOF(State, pending_ticks), temp);
       EmitBindLabel(&cache_hit);
     }
 
@@ -226,8 +228,8 @@ void CodeGenerator::EmitStallUntilGTEComplete()
 {
   Value pending_ticks = m_register_cache.AllocateScratch(RegSize_32);
   Value gte_completion_tick = m_register_cache.AllocateScratch(RegSize_32);
-  EmitLoadCPUStructField(pending_ticks.GetHostRegister(), RegSize_32, offsetof(State, pending_ticks));
-  EmitLoadCPUStructField(gte_completion_tick.GetHostRegister(), RegSize_32, offsetof(State, gte_completion_tick));
+  EmitLoadCPUStructField(pending_ticks.GetHostRegister(), RegSize_32, OFFSETOF(State, pending_ticks));
+  EmitLoadCPUStructField(gte_completion_tick.GetHostRegister(), RegSize_32, OFFSETOF(State, gte_completion_tick));
 
   // commit cycles here, should always be nonzero
   if (m_delayed_cycles_add > 0)
@@ -246,7 +248,7 @@ void CodeGenerator::EmitStallUntilGTEComplete()
 
   // store new ticks
   EmitBindLabel(&gte_done);
-  EmitStoreCPUStructField(offsetof(State, pending_ticks), pending_ticks);
+  EmitStoreCPUStructField(OFFSETOF(State, pending_ticks), pending_ticks);
 }
 
 #endif

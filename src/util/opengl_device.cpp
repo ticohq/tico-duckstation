@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "opengl_device.h"
@@ -10,6 +10,7 @@
 
 #include "common/align.h"
 #include "common/assert.h"
+#include "common/error.h"
 #include "common/log.h"
 #include "common/string_util.h"
 
@@ -20,7 +21,6 @@
 
 Log_SetChannel(OpenGLDevice);
 
-static constexpr const std::array<float, 4> s_clear_color = {{0.0f, 0.0f, 0.0f, 1.0f}};
 static constexpr const std::array<GLenum, GPUDevice::MAX_RENDER_TARGETS> s_draw_buffers = {
   {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3}};
 
@@ -48,6 +48,11 @@ void OpenGLDevice::BindUpdateTextureUnit()
 bool OpenGLDevice::ShouldUsePBOsForDownloads()
 {
   return !GetInstance().m_disable_pbo && !GetInstance().m_disable_async_download;
+}
+
+void OpenGLDevice::SetErrorObject(Error* errptr, std::string_view prefix, GLenum glerr)
+{
+  Error::SetStringFmt(errptr, "{}GL Error 0x{:04X}", prefix, static_cast<unsigned>(glerr));
 }
 
 RenderAPI OpenGLDevice::GetRenderAPI() const
@@ -238,12 +243,16 @@ void OpenGLDevice::InsertDebugMessage(const char* msg)
 #endif
 }
 
-void OpenGLDevice::SetVSyncEnabled(bool enabled)
+void OpenGLDevice::SetVSyncMode(GPUVSyncMode mode, bool allow_present_throttle)
 {
-  if (m_vsync_enabled == enabled)
+  // OpenGL does not support Mailbox.
+  mode = (mode == GPUVSyncMode::Mailbox) ? GPUVSyncMode::FIFO : mode;
+  m_allow_present_throttle = allow_present_throttle;
+
+  if (m_vsync_mode == mode)
     return;
 
-  m_vsync_enabled = enabled;
+  m_vsync_mode = mode;
   SetSwapInterval();
 }
 
@@ -253,16 +262,16 @@ static void GLAD_API_PTR GLDebugCallback(GLenum source, GLenum type, GLuint id, 
   switch (severity)
   {
     case GL_DEBUG_SEVERITY_HIGH_KHR:
-      Log_ErrorPrint(message);
+      ERROR_LOG(message);
       break;
     case GL_DEBUG_SEVERITY_MEDIUM_KHR:
-      Log_WarningPrint(message);
+      WARNING_LOG(message);
       break;
     case GL_DEBUG_SEVERITY_LOW_KHR:
-      Log_InfoPrint(message);
+      INFO_LOG(message);
       break;
     case GL_DEBUG_SEVERITY_NOTIFICATION:
-      // Log_DebugPrint(message);
+      // DEBUG_LOG("{}", message);
       break;
   }
 }
@@ -272,20 +281,21 @@ bool OpenGLDevice::HasSurface() const
   return m_window_info.type != WindowInfo::Type::Surfaceless;
 }
 
-bool OpenGLDevice::CreateDevice(const std::string_view& adapter, bool threaded_presentation,
+bool OpenGLDevice::CreateDevice(std::string_view adapter, bool threaded_presentation,
                                 std::optional<bool> exclusive_fullscreen_control, FeatureMask disabled_features,
                                 Error* error)
 {
   m_gl_context = OpenGLContext::Create(m_window_info, error);
   if (!m_gl_context)
   {
-    Log_ErrorPrintf("Failed to create any GL context");
+    ERROR_LOG("Failed to create any GL context");
     m_gl_context.reset();
     return false;
   }
 
   // Is this needed?
   m_window_info = m_gl_context->GetWindowInfo();
+  m_vsync_mode = (m_vsync_mode == GPUVSyncMode::Mailbox) ? GPUVSyncMode::FIFO : m_vsync_mode;
 
   const bool opengl_is_available =
     ((!m_gl_context->IsGLES() && (GLAD_GL_VERSION_3_0 || GLAD_GL_ARB_uniform_buffer_object)) ||
@@ -350,32 +360,32 @@ bool OpenGLDevice::CheckFeatures(FeatureMask disabled_features)
   if (std::strstr(vendor, "Advanced Micro Devices") || std::strstr(vendor, "ATI Technologies Inc.") ||
       std::strstr(vendor, "ATI"))
   {
-    Log_InfoPrint("AMD GPU detected.");
+    INFO_LOG("AMD GPU detected.");
     vendor_id_amd = true;
   }
   else if (std::strstr(vendor, "NVIDIA Corporation"))
   {
-    Log_InfoPrint("NVIDIA GPU detected.");
+    INFO_LOG("NVIDIA GPU detected.");
     // vendor_id_nvidia = true;
   }
   else if (std::strstr(vendor, "Intel"))
   {
-    Log_InfoPrint("Intel GPU detected.");
+    INFO_LOG("Intel GPU detected.");
     vendor_id_intel = true;
   }
   else if (std::strstr(vendor, "ARM"))
   {
-    Log_InfoPrint("ARM GPU detected.");
+    INFO_LOG("ARM GPU detected.");
     vendor_id_arm = true;
   }
   else if (std::strstr(vendor, "Qualcomm"))
   {
-    Log_InfoPrint("Qualcomm GPU detected.");
+    INFO_LOG("Qualcomm GPU detected.");
     vendor_id_qualcomm = true;
   }
   else if (std::strstr(vendor, "Imagination Technologies") || std::strstr(renderer, "PowerVR"))
   {
-    Log_InfoPrint("PowerVR GPU detected.");
+    INFO_LOG("PowerVR GPU detected.");
     vendor_id_powervr = true;
   }
 
@@ -386,14 +396,14 @@ bool OpenGLDevice::CheckFeatures(FeatureMask disabled_features)
   m_disable_pbo =
     (!GLAD_GL_VERSION_4_4 && !GLAD_GL_ARB_buffer_storage && !GLAD_GL_EXT_buffer_storage) || is_shitty_mobile_driver;
   if (m_disable_pbo && !is_shitty_mobile_driver)
-    Log_WarningPrint("Not using PBOs for texture uploads because buffer_storage is unavailable.");
+    WARNING_LOG("Not using PBOs for texture uploads because buffer_storage is unavailable.");
 
   GLint max_texture_size = 1024;
   GLint max_samples = 1;
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
-  Log_DevFmt("GL_MAX_TEXTURE_SIZE: {}", max_texture_size);
+  DEV_LOG("GL_MAX_TEXTURE_SIZE: {}", max_texture_size);
   glGetIntegerv(GL_MAX_SAMPLES, &max_samples);
-  Log_DevFmt("GL_MAX_SAMPLES: {}", max_samples);
+  DEV_LOG("GL_MAX_SAMPLES: {}", max_samples);
   m_max_texture_size = std::max(1024u, static_cast<u32>(max_texture_size));
   m_max_multisamples = std::max(1u, static_cast<u32>(max_samples));
 
@@ -422,11 +432,11 @@ bool OpenGLDevice::CheckFeatures(FeatureMask disabled_features)
   {
     GLint max_texel_buffer_size = 0;
     glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, reinterpret_cast<GLint*>(&max_texel_buffer_size));
-    Log_DevFmt("GL_MAX_TEXTURE_BUFFER_SIZE: {}", max_texel_buffer_size);
+    DEV_LOG("GL_MAX_TEXTURE_BUFFER_SIZE: {}", max_texel_buffer_size);
     if (max_texel_buffer_size < static_cast<GLint>(MIN_TEXEL_BUFFER_ELEMENTS))
     {
-      Log_WarningFmt("GL_MAX_TEXTURE_BUFFER_SIZE ({}) is below required minimum ({}), not using texture buffers.",
-                     max_texel_buffer_size, MIN_TEXEL_BUFFER_ELEMENTS);
+      WARNING_LOG("GL_MAX_TEXTURE_BUFFER_SIZE ({}) is below required minimum ({}), not using texture buffers.",
+                  max_texel_buffer_size, MIN_TEXEL_BUFFER_ELEMENTS);
       m_features.supports_texture_buffers = false;
     }
   }
@@ -443,18 +453,18 @@ bool OpenGLDevice::CheckFeatures(FeatureMask disabled_features)
       glGetInteger64v(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &max_ssbo_size);
     }
 
-    Log_DevFmt("GL_MAX_FRAGMENT_SHADER_STORAGE_BLOCKS: {}", max_fragment_storage_blocks);
-    Log_DevFmt("GL_MAX_SHADER_STORAGE_BLOCK_SIZE: {}", max_ssbo_size);
+    DEV_LOG("GL_MAX_FRAGMENT_SHADER_STORAGE_BLOCKS: {}", max_fragment_storage_blocks);
+    DEV_LOG("GL_MAX_SHADER_STORAGE_BLOCK_SIZE: {}", max_ssbo_size);
     m_features.texture_buffers_emulated_with_ssbo =
       (max_fragment_storage_blocks > 0 && max_ssbo_size >= static_cast<GLint64>(1024 * 512 * sizeof(u16)));
     if (m_features.texture_buffers_emulated_with_ssbo)
     {
-      Log_InfoPrint("Using shader storage buffers for VRAM writes.");
+      INFO_LOG("Using shader storage buffers for VRAM writes.");
       m_features.supports_texture_buffers = true;
     }
     else
     {
-      Log_WarningPrint("Both texture buffers and SSBOs are not supported. Performance will suffer.");
+      WARNING_LOG("Both texture buffers and SSBOs are not supported. Performance will suffer.");
     }
   }
 
@@ -470,7 +480,7 @@ bool OpenGLDevice::CheckFeatures(FeatureMask disabled_features)
   // So, blit from the shadow texture, like in the other renderers.
   m_features.texture_copy_to_self = !vendor_id_arm && !(disabled_features & FEATURE_MASK_TEXTURE_COPY_TO_SELF);
 
-  m_features.feedback_loops = m_features.framebuffer_fetch;
+  m_features.feedback_loops = false;
 
   m_features.geometry_shaders =
     !(disabled_features & FEATURE_MASK_GEOMETRY_SHADERS) && (GLAD_GL_VERSION_3_2 || GLAD_GL_ES_VERSION_3_2);
@@ -489,14 +499,14 @@ bool OpenGLDevice::CheckFeatures(FeatureMask disabled_features)
     // check that there's at least one format and the extension isn't being "faked"
     GLint num_formats = 0;
     glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &num_formats);
-    Log_DevFmt("{} program binary formats supported by driver", num_formats);
+    DEV_LOG("{} program binary formats supported by driver", num_formats);
     m_features.pipeline_cache = (num_formats > 0);
   }
 
   if (!m_features.pipeline_cache)
   {
-    Log_WarningPrintf("Your GL driver does not support program binaries. Hopefully it has a built-in cache, otherwise "
-                      "startup will be slow due to compiling shaders.");
+    WARNING_LOG("Your GL driver does not support program binaries. Hopefully it has a built-in cache, otherwise "
+                "startup will be slow due to compiling shaders.");
   }
 
   // Mobile drivers prefer textures to not be updated mid-frame.
@@ -505,7 +515,7 @@ bool OpenGLDevice::CheckFeatures(FeatureMask disabled_features)
   if (vendor_id_intel)
   {
     // Intel drivers corrupt image on readback when syncs are used for downloads.
-    Log_WarningPrint("Disabling async downloads with PBOs due to it being broken on Intel drivers.");
+    WARNING_LOG("Disabling async downloads with PBOs due to it being broken on Intel drivers.");
     m_disable_async_download = true;
   }
 
@@ -535,7 +545,7 @@ bool OpenGLDevice::UpdateWindow()
 
   if (!m_gl_context->ChangeSurface(m_window_info))
   {
-    Log_ErrorPrintf("Failed to change surface");
+    ERROR_LOG("Failed to change surface");
     return false;
   }
 
@@ -577,19 +587,25 @@ std::string OpenGLDevice::GetDriverInfo() const
                      gl_shading_language_version);
 }
 
+void OpenGLDevice::ExecuteAndWaitForGPUIdle()
+{
+  // Could be glFinish(), but I'm afraid for mobile drivers...
+  glFlush();
+}
+
 void OpenGLDevice::SetSwapInterval()
 {
   if (m_window_info.type == WindowInfo::Type::Surfaceless)
     return;
 
   // Window framebuffer has to be bound to call SetSwapInterval.
-  const s32 interval = m_vsync_enabled ? (m_gl_context->SupportsNegativeSwapInterval() ? -1 : 1) : 0;
+  const s32 interval = static_cast<s32>(m_vsync_mode == GPUVSyncMode::FIFO);
   GLint current_fbo = 0;
   glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &current_fbo);
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
   if (!m_gl_context->SetSwapInterval(interval))
-    Log_WarningFmt("Failed to set swap interval to {}", interval);
+    WARNING_LOG("Failed to set swap interval to {}", interval);
 
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, current_fbo);
 }
@@ -599,7 +615,7 @@ void OpenGLDevice::RenderBlankFrame()
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
   glDisable(GL_SCISSOR_TEST);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  glClearBufferfv(GL_COLOR, 0, s_clear_color.data());
+  glClearBufferfv(GL_COLOR, 0, GSVector4::cxpr(0.0f, 0.0f, 0.0f, 1.0f).F32);
   glColorMask(m_last_blend_state.write_r, m_last_blend_state.write_g, m_last_blend_state.write_b,
               m_last_blend_state.write_a);
   glEnable(GL_SCISSOR_TEST);
@@ -642,7 +658,7 @@ GLuint OpenGLDevice::CreateFramebuffer(GPUTexture* const* rts, u32 num_rts, GPUT
 
   if (glGetError() != GL_NO_ERROR || glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
   {
-    Log_ErrorFmt("Failed to create GL framebuffer: {}", static_cast<s32>(glGetError()));
+    ERROR_LOG("Failed to create GL framebuffer: {}", static_cast<s32>(glGetError()));
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, OpenGLDevice::GetInstance().m_current_fbo);
     glDeleteFramebuffers(1, &fbo_id);
     return {};
@@ -658,21 +674,6 @@ void OpenGLDevice::DestroyFramebuffer(GLuint fbo)
     glDeleteFramebuffers(1, &fbo);
 }
 
-GPUDevice::AdapterAndModeList OpenGLDevice::GetAdapterAndModeList()
-{
-  AdapterAndModeList aml;
-
-  if (m_gl_context)
-  {
-    for (const OpenGLContext::FullscreenModeInfo& fmi : m_gl_context->EnumerateFullscreenModes())
-    {
-      aml.fullscreen_modes.push_back(GetFullscreenModeString(fmi.width, fmi.height, fmi.refresh_rate));
-    }
-  }
-
-  return aml;
-}
-
 void OpenGLDevice::DestroySurface()
 {
   if (!m_gl_context)
@@ -680,16 +681,16 @@ void OpenGLDevice::DestroySurface()
 
   m_window_info.SetSurfaceless();
   if (!m_gl_context->ChangeSurface(m_window_info))
-    Log_ErrorPrintf("Failed to switch to surfaceless");
+    ERROR_LOG("Failed to switch to surfaceless");
 }
 
 bool OpenGLDevice::CreateBuffers()
 {
   if (!(m_vertex_buffer = OpenGLStreamBuffer::Create(GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE)) ||
       !(m_index_buffer = OpenGLStreamBuffer::Create(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE)) ||
-      !(m_uniform_buffer = OpenGLStreamBuffer::Create(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE)))
+      !(m_uniform_buffer = OpenGLStreamBuffer::Create(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE))) [[unlikely]]
   {
-    Log_ErrorPrintf("Failed to create one or more device buffers.");
+    ERROR_LOG("Failed to create one or more device buffers.");
     return false;
   }
 
@@ -702,8 +703,9 @@ bool OpenGLDevice::CreateBuffers()
   if (!m_disable_pbo)
   {
     if (!(m_texture_stream_buffer = OpenGLStreamBuffer::Create(GL_PIXEL_UNPACK_BUFFER, TEXTURE_STREAM_BUFFER_SIZE)))
+      [[unlikely]]
     {
-      Log_ErrorPrintf("Failed to create texture stream buffer");
+      ERROR_LOG("Failed to create texture stream buffer");
       return false;
     }
 
@@ -716,9 +718,9 @@ bool OpenGLDevice::CreateBuffers()
   GLuint fbos[2];
   glGetError();
   glGenFramebuffers(static_cast<GLsizei>(std::size(fbos)), fbos);
-  if (const GLenum err = glGetError(); err != GL_NO_ERROR)
+  if (const GLenum err = glGetError(); err != GL_NO_ERROR) [[unlikely]]
   {
-    Log_ErrorPrintf("Failed to create framebuffers: %u", err);
+    ERROR_LOG("Failed to create framebuffers: {}", err);
     return false;
   }
   m_read_fbo = fbos[0];
@@ -739,7 +741,7 @@ void OpenGLDevice::DestroyBuffers()
   m_vertex_buffer.reset();
 }
 
-bool OpenGLDevice::BeginPresent(bool skip_present)
+bool OpenGLDevice::BeginPresent(bool skip_present, u32 clear_color)
 {
   if (skip_present || m_window_info.type == WindowInfo::Type::Surfaceless)
   {
@@ -755,19 +757,17 @@ bool OpenGLDevice::BeginPresent(bool skip_present)
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glDisable(GL_SCISSOR_TEST);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  glClearBufferfv(GL_COLOR, 0, s_clear_color.data());
+  glClearBufferfv(GL_COLOR, 0, GSVector4::rgba32(clear_color).F32);
   glColorMask(m_last_blend_state.write_r, m_last_blend_state.write_g, m_last_blend_state.write_b,
               m_last_blend_state.write_a);
   glEnable(GL_SCISSOR_TEST);
-
-  const Common::Rectangle<s32> window_rc =
-    Common::Rectangle<s32>::FromExtents(0, 0, m_window_info.surface_width, m_window_info.surface_height);
 
   m_current_fbo = 0;
   m_num_current_render_targets = 0;
   std::memset(m_current_render_targets.data(), 0, sizeof(m_current_render_targets));
   m_current_depth_target = nullptr;
 
+  const GSVector4i window_rc = GSVector4i(0, 0, m_window_info.surface_width, m_window_info.surface_height);
   m_last_viewport = window_rc;
   m_last_scissor = window_rc;
   UpdateViewport();
@@ -837,7 +837,7 @@ void OpenGLDevice::PopTimestampQuery()
     glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjoint);
     if (disjoint)
     {
-      Log_VerbosePrintf("GPU timing disjoint, resetting.");
+      VERBOSE_LOG("GPU timing disjoint, resetting.");
       if (m_timestamp_query_started)
         glEndQueryEXT(GL_TIME_ELAPSED);
 
@@ -951,7 +951,7 @@ void OpenGLDevice::UnbindTexture(OpenGLTexture* tex)
     {
       if (m_current_render_targets[i] == tex)
       {
-        Log_WarningPrint("Unbinding current RT");
+        WARNING_LOG("Unbinding current RT");
         SetRenderTargets(nullptr, 0, m_current_depth_target);
         break;
       }
@@ -963,7 +963,7 @@ void OpenGLDevice::UnbindTexture(OpenGLTexture* tex)
   {
     if (m_current_depth_target == tex)
     {
-      Log_WarningPrint("Unbinding current DS");
+      WARNING_LOG("Unbinding current DS");
       SetRenderTargets(nullptr, 0, nullptr);
     }
 
@@ -1086,7 +1086,7 @@ void OpenGLDevice::PushUniformBuffer(const void* data, u32 data_size)
   std::memcpy(res.pointer, data, data_size);
   m_uniform_buffer->Unmap(data_size);
   s_stats.buffer_streamed += data_size;
-  glBindBufferRange(GL_UNIFORM_BUFFER, 1, m_uniform_buffer->GetGLBufferId(), res.buffer_offset, data_size);
+  glBindBufferRange(GL_UNIFORM_BUFFER, 0, m_uniform_buffer->GetGLBufferId(), res.buffer_offset, data_size);
 }
 
 void* OpenGLDevice::MapUniformBuffer(u32 size)
@@ -1099,7 +1099,7 @@ void OpenGLDevice::UnmapUniformBuffer(u32 size)
 {
   const u32 pos = m_uniform_buffer->Unmap(size);
   s_stats.buffer_streamed += size;
-  glBindBufferRange(GL_UNIFORM_BUFFER, 1, m_uniform_buffer->GetGLBufferId(), pos, size);
+  glBindBufferRange(GL_UNIFORM_BUFFER, 0, m_uniform_buffer->GetGLBufferId(), pos, size);
 }
 
 void OpenGLDevice::SetRenderTargets(GPUTexture* const* rts, u32 num_rts, GPUTexture* ds,
@@ -1128,7 +1128,7 @@ void OpenGLDevice::SetRenderTargets(GPUTexture* const* rts, u32 num_rts, GPUText
     {
       if ((fbo = m_framebuffer_manager.Lookup(rts, num_rts, ds, 0)) == 0)
       {
-        Log_ErrorFmt("Failed to get FBO for {} render targets", num_rts);
+        ERROR_LOG("Failed to get FBO for {} render targets", num_rts);
         m_current_fbo = 0;
         std::memset(m_current_render_targets.data(), 0, sizeof(m_current_render_targets));
         m_num_current_render_targets = 0;
@@ -1214,20 +1214,18 @@ void OpenGLDevice::SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer)
   }
 }
 
-void OpenGLDevice::SetViewport(s32 x, s32 y, s32 width, s32 height)
+void OpenGLDevice::SetViewport(const GSVector4i rc)
 {
-  const Common::Rectangle<s32> rc = Common::Rectangle<s32>::FromExtents(x, y, width, height);
-  if (m_last_viewport == rc)
+  if (m_last_viewport.eq(rc))
     return;
 
   m_last_viewport = rc;
   UpdateViewport();
 }
 
-void OpenGLDevice::SetScissor(s32 x, s32 y, s32 width, s32 height)
+void OpenGLDevice::SetScissor(const GSVector4i rc)
 {
-  const Common::Rectangle<s32> rc = Common::Rectangle<s32>::FromExtents(x, y, width, height);
-  if (m_last_scissor == rc)
+  if (m_last_scissor.eq(rc))
     return;
 
   m_last_scissor = rc;
@@ -1236,10 +1234,10 @@ void OpenGLDevice::SetScissor(s32 x, s32 y, s32 width, s32 height)
 
 void OpenGLDevice::UpdateViewport()
 {
-  glViewport(m_last_viewport.left, m_last_viewport.top, m_last_viewport.GetWidth(), m_last_viewport.GetHeight());
+  glViewport(m_last_viewport.left, m_last_viewport.top, m_last_viewport.width(), m_last_viewport.height());
 }
 
 void OpenGLDevice::UpdateScissor()
 {
-  glScissor(m_last_scissor.left, m_last_scissor.top, m_last_scissor.GetWidth(), m_last_scissor.GetHeight());
+  glScissor(m_last_scissor.left, m_last_scissor.top, m_last_scissor.width(), m_last_scissor.height());
 }

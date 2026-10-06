@@ -29,7 +29,7 @@ class Deko3DShader final : public GPUShader
 public:
   ALWAYS_INLINE std::shared_ptr<Deko3DInternalShader> GetInternalShader() { return m_internal_shader; }
 
-  void SetDebugName(const std::string_view& name)
+  void SetDebugName(std::string_view name)
   { /* not really implementable */
   }
 
@@ -46,7 +46,7 @@ class Deko3DPipeline final : public GPUPipeline
 public:
   ~Deko3DPipeline() override;
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
   ALWAYS_INLINE const RasterizationState& GetRasterizationState() const { return m_rasterization_state; }
   ALWAYS_INLINE const DepthState& GetDepthState() const { return m_depth_state; }

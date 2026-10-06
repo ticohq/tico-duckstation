@@ -110,6 +110,7 @@ RC_EXPORT int RC_CCONV rc_runtime_format_lboard_value(char* buffer, int size, in
 
 RC_EXPORT int RC_CCONV rc_runtime_activate_richpresence(rc_runtime_t* runtime, const char* script, lua_State* L, int funcs_idx);
 RC_EXPORT int RC_CCONV rc_runtime_get_richpresence(const rc_runtime_t* runtime, char* buffer, size_t buffersize, rc_runtime_peek_t peek, void* peek_ud, lua_State* L);
+RC_EXPORT int RC_CCONV rc_runtime_get_richpresence_strings(const rc_runtime_t* runtime, const char** buffer, size_t buffersize, size_t* count);
 
 enum {
   RC_RUNTIME_EVENT_ACHIEVEMENT_ACTIVATED, /* from WAITING, PAUSED, or PRIMED to ACTIVE */
@@ -143,9 +144,15 @@ typedef int (RC_CCONV *rc_runtime_validate_address_t)(uint32_t address);
 RC_EXPORT void RC_CCONV rc_runtime_validate_addresses(rc_runtime_t* runtime, rc_runtime_event_handler_t event_handler, rc_runtime_validate_address_t validate_handler);
 RC_EXPORT void RC_CCONV rc_runtime_invalidate_address(rc_runtime_t* runtime, uint32_t address);
 
-RC_EXPORT int RC_CCONV rc_runtime_progress_size(const rc_runtime_t* runtime, lua_State* L);
+RC_EXPORT uint32_t RC_CCONV rc_runtime_progress_size(const rc_runtime_t* runtime, lua_State* L);
+
+/* [deprecated] use rc_runtime_serialize_progress_sized instead */
 RC_EXPORT int RC_CCONV rc_runtime_serialize_progress(void* buffer, const rc_runtime_t* runtime, lua_State* L);
+RC_EXPORT int RC_CCONV rc_runtime_serialize_progress_sized(uint8_t* buffer, uint32_t buffer_size, const rc_runtime_t* runtime, lua_State* L);
+
+/* [deprecated] use rc_runtime_deserialize_progress_sized instead */
 RC_EXPORT int RC_CCONV rc_runtime_deserialize_progress(rc_runtime_t* runtime, const uint8_t* serialized, lua_State* L);
+RC_EXPORT int RC_CCONV rc_runtime_deserialize_progress_sized(rc_runtime_t* runtime, const uint8_t* serialized, uint32_t serialized_size, lua_State* L);
 
 RC_END_C_DECLS
 

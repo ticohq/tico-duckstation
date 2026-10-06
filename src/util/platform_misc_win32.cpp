@@ -3,30 +3,55 @@
 
 #include "platform_misc.h"
 
+#include "common/error.h"
 #include "common/file_system.h"
 #include "common/log.h"
 #include "common/small_string.h"
 #include "common/string_util.h"
 
+#include <algorithm>
 #include <cinttypes>
+#include <memory>
 
 #include "common/windows_headers.h"
+#include <Psapi.h>
+#include <WinSock2.h>
 #include <mmsystem.h>
 
 Log_SetChannel(PlatformMisc);
+
+static bool s_screensaver_suspended = false;
+static bool s_winsock_initialized = false;
+static std::once_flag s_winsock_initializer;
+
+bool PlatformMisc::InitializeSocketSupport(Error* error)
+{
+  std::call_once(s_winsock_initializer, [](Error* error) {
+    WSADATA wsa = {};
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+    {
+      Error::SetSocket(error, "WSAStartup() failed: ", WSAGetLastError());
+      return false;
+    }
+
+    s_winsock_initialized = true;
+    std::atexit([]() { WSACleanup(); });
+    return true;
+  }, error);
+
+  return s_winsock_initialized;
+}
 
 static bool SetScreensaverInhibitWin32(bool inhibit)
 {
   if (SetThreadExecutionState(ES_CONTINUOUS | (inhibit ? (ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED) : 0)) == NULL)
   {
-    Log_ErrorPrintf("SetThreadExecutionState() failed: %d", GetLastError());
+    ERROR_LOG("SetThreadExecutionState() failed: {}", GetLastError());
     return false;
   }
 
   return true;
 }
-
-static bool s_screensaver_suspended;
 
 void PlatformMisc::SuspendScreensaver()
 {
@@ -35,7 +60,7 @@ void PlatformMisc::SuspendScreensaver()
 
   if (!SetScreensaverInhibitWin32(true))
   {
-    Log_ErrorPrintf("Failed to suspend screensaver.");
+    ERROR_LOG("Failed to suspend screensaver.");
     return;
   }
 
@@ -48,9 +73,16 @@ void PlatformMisc::ResumeScreensaver()
     return;
 
   if (!SetScreensaverInhibitWin32(false))
-    Log_ErrorPrint("Failed to resume screensaver.");
+    ERROR_LOG("Failed to resume screensaver.");
 
   s_screensaver_suspended = false;
+}
+
+size_t PlatformMisc::GetRuntimePageSize()
+{
+  SYSTEM_INFO si = {};
+  GetSystemInfo(&si);
+  return si.dwPageSize;
 }
 
 bool PlatformMisc::PlaySoundAsync(const char* path)

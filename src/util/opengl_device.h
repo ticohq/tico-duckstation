@@ -11,10 +11,9 @@
 #include "opengl_pipeline.h"
 #include "opengl_texture.h"
 
-#include "common/rectangle.h"
-
 #include <cstdio>
 #include <memory>
+#include <string_view>
 #include <tuple>
 
 class OpenGLPipeline;
@@ -39,6 +38,7 @@ public:
   ALWAYS_INLINE static bool IsGLES() { return GetInstance().m_gl_context->IsGLES(); }
   static void BindUpdateTextureUnit();
   static bool ShouldUsePBOsForDownloads();
+  static void SetErrorObject(Error* errptr, std::string_view prefix, GLenum glerr);
 
   RenderAPI GetRenderAPI() const override;
 
@@ -50,7 +50,7 @@ public:
 
   std::string GetDriverInfo() const override;
 
-  AdapterAndModeList GetAdapterAndModeList() override;
+  void ExecuteAndWaitForGPUIdle() override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                             GPUTexture::Type type, GPUTexture::Format format,
@@ -72,10 +72,12 @@ public:
   void ClearDepth(GPUTexture* t, float d) override;
   void InvalidateRenderTarget(GPUTexture* t) override;
 
-  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data) override;
-  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                    const char* entry_point, DynamicHeapArray<u8>* out_binary) override;
-  std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config) override;
+  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data,
+                                                    Error* error) override;
+  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, GPUShaderLanguage language,
+                                                    std::string_view source, const char* entry_point,
+                                                    DynamicHeapArray<u8>* out_binary, Error* error) override;
+  std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config, Error* error) override;
 
   void PushDebugGroup(const char* name) override;
   void PopDebugGroup() override;
@@ -94,15 +96,15 @@ public:
   void SetPipeline(GPUPipeline* pipeline) override;
   void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler) override;
   void SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer) override;
-  void SetViewport(s32 x, s32 y, s32 width, s32 height) override;
-  void SetScissor(s32 x, s32 y, s32 width, s32 height) override;
+  void SetViewport(const GSVector4i rc) override;
+  void SetScissor(const GSVector4i rc) override;
   void Draw(u32 vertex_count, u32 base_vertex) override;
   void DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex) override;
   void DrawIndexedWithBarrier(u32 index_count, u32 base_index, u32 base_vertex, DrawBarrier type) override;
 
-  void SetVSyncEnabled(bool enabled) override;
+  void SetVSyncMode(GPUVSyncMode mode, bool allow_present_throttle) override;
 
-  bool BeginPresent(bool skip_present) override;
+  bool BeginPresent(bool skip_present, u32 clear_color) override;
   void EndPresent(bool explicit_present) override;
   void SubmitPresent() override;
 
@@ -113,13 +115,13 @@ public:
   void CommitRTClearInFB(OpenGLTexture* tex, u32 idx);
   void CommitDSClearInFB(OpenGLTexture* tex);
 
-  GLuint LookupProgramCache(const OpenGLPipeline::ProgramCacheKey& key, const GPUPipeline::GraphicsConfig& plconfig);
-  GLuint CompileProgram(const GPUPipeline::GraphicsConfig& plconfig);
+  GLuint LookupProgramCache(const OpenGLPipeline::ProgramCacheKey& key, const GPUPipeline::GraphicsConfig& plconfig, Error* error);
+  GLuint CompileProgram(const GPUPipeline::GraphicsConfig& plconfig, Error* error);
   void PostLinkProgram(const GPUPipeline::GraphicsConfig& plconfig, GLuint program_id);
   void UnrefProgram(const OpenGLPipeline::ProgramCacheKey& key);
 
-  OpenGLPipeline::VertexArrayCache::const_iterator LookupVAOCache(const OpenGLPipeline::VertexArrayCacheKey& key);
-  GLuint CreateVAO(std::span<const GPUPipeline::VertexAttribute> attributes, u32 stride);
+  OpenGLPipeline::VertexArrayCache::const_iterator LookupVAOCache(const OpenGLPipeline::VertexArrayCacheKey& key, Error* error);
+  GLuint CreateVAO(std::span<const GPUPipeline::VertexAttribute> attributes, u32 stride, Error* error);
   void UnrefVAO(const OpenGLPipeline::VertexArrayCacheKey& key);
 
   void SetActiveTexture(u32 slot);
@@ -130,12 +132,12 @@ public:
   void UnbindPipeline(const OpenGLPipeline* pl);
 
 protected:
-  bool CreateDevice(const std::string_view& adapter, bool threaded_presentation,
+  bool CreateDevice(std::string_view adapter, bool threaded_presentation,
                     std::optional<bool> exclusive_fullscreen_control, FeatureMask disabled_features,
                     Error* error) override;
   void DestroyDevice() override;
 
-  bool ReadPipelineCache(const std::string& filename) override;
+  bool OpenPipelineCache(const std::string& filename) override;
   bool GetPipelineCacheData(DynamicHeapArray<u8>* data) override;
 
 private:
@@ -201,8 +203,8 @@ private:
   u32 m_last_texture_unit = 0;
   std::array<std::pair<GLuint, GLuint>, MAX_TEXTURE_SAMPLERS> m_last_samplers = {};
   GLuint m_last_ssbo = 0;
-  Common::Rectangle<s32> m_last_viewport{0, 0, 1, 1};
-  Common::Rectangle<s32> m_last_scissor{0, 0, 1, 1};
+  GSVector4i m_last_viewport = {};
+  GSVector4i m_last_scissor = GSVector4i::cxpr(0, 0, 1, 1);
 
   // Misc framebuffers
   GLuint m_read_fbo = 0;

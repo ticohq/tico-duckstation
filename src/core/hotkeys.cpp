@@ -20,8 +20,10 @@
 
 #include "common/error.h"
 #include "common/file_system.h"
+#include "common/timer.h"
 
 #include "IconsFontAwesome5.h"
+#include "IconsEmoji.h"
 
 #include <cmath>
 
@@ -84,7 +86,7 @@ static void HotkeyLoadStateSlot(bool global, s32 slot)
   }
 
   Error error;
-  if (!System::LoadState(path.c_str(), &error))
+  if (!System::LoadState(path.c_str(), &error, true))
   {
     Host::AddKeyedOSDMessage(
       "LoadState",
@@ -110,11 +112,26 @@ static void HotkeySaveStateSlot(bool global, s32 slot)
   Error error;
   if (!System::SaveState(path.c_str(), &error, g_settings.create_save_state_backups))
   {
-    Host::AddKeyedOSDMessage(
-      "SaveState",
+    Host::AddIconOSDMessage(
+      "SaveState", ICON_FA_EXCLAMATION_TRIANGLE,
       fmt::format(TRANSLATE_FS("OSDMessage", "Failed to save state to slot {0}:\n{1}"), slot, error.GetDescription()),
       Host::OSD_ERROR_DURATION);
   }
+}
+
+static void HotkeyToggleOSD()
+{
+  g_settings.display_show_fps ^= Host::GetBoolSettingValue("Display", "ShowFPS", false);
+  g_settings.display_show_speed ^= Host::GetBoolSettingValue("Display", "ShowSpeed", false);
+  g_settings.display_show_gpu_stats ^= Host::GetBoolSettingValue("Display", "ShowGPUStatistics", false);
+  g_settings.display_show_resolution ^= Host::GetBoolSettingValue("Display", "ShowResolution", false);
+  g_settings.display_show_latency_stats ^= Host::GetBoolSettingValue("Display", "ShowLatencyStatistics", false);
+  g_settings.display_show_cpu_usage ^= Host::GetBoolSettingValue("Display", "ShowCPU", false);
+  g_settings.display_show_gpu_usage ^= Host::GetBoolSettingValue("Display", "ShowGPU", false);
+  g_settings.display_show_frame_times ^= Host::GetBoolSettingValue("Display", "ShowFrameTimes", false);
+  g_settings.display_show_status_indicators ^= Host::GetBoolSettingValue("Display", "ShowStatusIndicators", true);
+  g_settings.display_show_inputs ^= Host::GetBoolSettingValue("Display", "ShowInputs", false);
+  g_settings.display_show_enhancements ^= Host::GetBoolSettingValue("Display", "ShowEnhancements", false);
 }
 
 #ifndef __ANDROID__
@@ -131,11 +148,10 @@ static bool CanPause()
   const float delta = static_cast<float>(Common::Timer::ConvertValueToSeconds(time - s_last_pause_time));
   if (delta < PAUSE_INTERVAL)
   {
-    Host::AddIconOSDMessage(
-      "PauseCooldown", ICON_FA_CLOCK,
-      fmt::format(TRANSLATE_FS("Hotkeys", "You cannot pause until another {:.1f} seconds have passed."),
-                  PAUSE_INTERVAL - delta),
-      Host::OSD_QUICK_DURATION);
+    Host::AddIconOSDMessage("PauseCooldown", ICON_FA_CLOCK,
+                            TRANSLATE_PLURAL_STR("Hotkeys", "You cannot pause until another %n second(s) have passed.",
+                                                 "", static_cast<int>(std::ceil(PAUSE_INTERVAL - delta))),
+                            Host::OSD_QUICK_DURATION);
     return false;
   }
 
@@ -208,6 +224,17 @@ DEFINE_HOTKEY("Screenshot", TRANSLATE_NOOP("Hotkeys", "General"), TRANSLATE_NOOP
               })
 
 #ifndef __ANDROID__
+DEFINE_HOTKEY("ToggleMediaCapture", TRANSLATE_NOOP("Hotkeys", "General"),
+              TRANSLATE_NOOP("Hotkeys", "Toggle Media Capture"), [](s32 pressed) {
+                if (!pressed)
+                {
+                  if (System::GetMediaCapture())
+                    System::StopMediaCapture();
+                  else
+                    System::StartMediaCapture();
+                }
+              })
+
 DEFINE_HOTKEY("OpenAchievements", TRANSLATE_NOOP("Hotkeys", "General"),
               TRANSLATE_NOOP("Hotkeys", "Open Achievement List"), [](s32 pressed) {
                 if (!pressed && CanPause())
@@ -284,17 +311,19 @@ DEFINE_HOTKEY("ToggleOverclocking", TRANSLATE_NOOP("Hotkeys", "System"),
                     const u32 percent = g_settings.GetCPUOverclockPercent();
                     const double clock_speed =
                       ((static_cast<double>(System::MASTER_CLOCK) * static_cast<double>(percent)) / 100.0) / 1000000.0;
-                    Host::AddKeyedFormattedOSDMessage(
-                      "ToggleOverclocking", 5.0f,
-                      TRANSLATE("OSDMessage", "CPU clock speed control enabled (%u%% / %.3f MHz)."), percent,
-                      clock_speed);
+                    Host::AddIconOSDMessage(
+                      "ToggleOverclocking", ICON_FA_TACHOMETER_ALT,
+                      fmt::format(TRANSLATE_FS("OSDMessage", "CPU clock speed control enabled ({:.3f} MHz)."),
+                                  clock_speed),
+                      Host::OSD_QUICK_DURATION);
                   }
                   else
                   {
-                    Host::AddKeyedFormattedOSDMessage(
-                      "ToggleOverclocking", 5.0f,
-                      TRANSLATE("OSDMessage", "CPU clock speed control disabled (%.3f MHz)."),
-                      static_cast<double>(System::MASTER_CLOCK) / 1000000.0);
+                    Host::AddIconOSDMessage(
+                      "ToggleOverclocking", ICON_FA_TACHOMETER_ALT,
+                      fmt::format(TRANSLATE_FS("OSDMessage", "CPU clock speed control disabled ({:.3f} MHz)."),
+                                  static_cast<double>(System::MASTER_CLOCK) / 1000000.0),
+                      Host::OSD_QUICK_DURATION);
                   }
                 }
               })
@@ -305,9 +334,11 @@ DEFINE_HOTKEY("IncreaseEmulationSpeed", TRANSLATE_NOOP("Hotkeys", "System"),
                 {
                   g_settings.emulation_speed += 0.1f;
                   System::UpdateSpeedLimiterState();
-                  Host::AddKeyedFormattedOSDMessage("EmulationSpeedChange", 5.0f,
-                                                    TRANSLATE("OSDMessage", "Emulation speed set to %u%%."),
-                                                    static_cast<u32>(std::lround(g_settings.emulation_speed * 100.0f)));
+                  Host::AddIconOSDMessage(
+                    "EmulationSpeedChange", ICON_FA_TACHOMETER_ALT,
+                    fmt::format(TRANSLATE_FS("OSDMessage", "Emulation speed set to {}%."),
+                                static_cast<u32>(std::lround(g_settings.emulation_speed * 100.0f))),
+                    Host::OSD_QUICK_DURATION);
                 }
               })
 
@@ -317,9 +348,11 @@ DEFINE_HOTKEY("DecreaseEmulationSpeed", TRANSLATE_NOOP("Hotkeys", "System"),
                 {
                   g_settings.emulation_speed = std::max(g_settings.emulation_speed - 0.1f, 0.1f);
                   System::UpdateSpeedLimiterState();
-                  Host::AddKeyedFormattedOSDMessage("EmulationSpeedChange", 5.0f,
-                                                    TRANSLATE("OSDMessage", "Emulation speed set to %u%%."),
-                                                    static_cast<u32>(std::lround(g_settings.emulation_speed * 100.0f)));
+                  Host::AddIconOSDMessage(
+                    "EmulationSpeedChange", ICON_FA_TACHOMETER_ALT,
+                    fmt::format(TRANSLATE_FS("OSDMessage", "Emulation speed set to {}%."),
+                                static_cast<u32>(std::lround(g_settings.emulation_speed * 100.0f))),
+                    Host::OSD_QUICK_DURATION);
                 }
               })
 
@@ -329,9 +362,11 @@ DEFINE_HOTKEY("ResetEmulationSpeed", TRANSLATE_NOOP("Hotkeys", "System"),
                 {
                   g_settings.emulation_speed = Host::GetFloatSettingValue("Main", "EmulationSpeed", 1.0f);
                   System::UpdateSpeedLimiterState();
-                  Host::AddKeyedFormattedOSDMessage("EmulationSpeedChange", 5.0f,
-                                                    TRANSLATE("OSDMessage", "Emulation speed set to %u%%."),
-                                                    static_cast<u32>(std::lround(g_settings.emulation_speed * 100.0f)));
+                  Host::AddIconOSDMessage(
+                    "EmulationSpeedChange", ICON_FA_TACHOMETER_ALT,
+                    fmt::format(TRANSLATE_FS("OSDMessage", "Emulation speed set to {}%."),
+                                static_cast<u32>(std::lround(g_settings.emulation_speed * 100.0f))),
+                    Host::OSD_QUICK_DURATION);
                 }
               })
 
@@ -384,7 +419,13 @@ DEFINE_HOTKEY("DecreaseResolutionScale", TRANSLATE_NOOP("Hotkeys", "Graphics"),
 DEFINE_HOTKEY("TogglePostProcessing", TRANSLATE_NOOP("Hotkeys", "Graphics"),
               TRANSLATE_NOOP("Hotkeys", "Toggle Post-Processing"), [](s32 pressed) {
                 if (!pressed && System::IsValid())
-                  PostProcessing::Toggle();
+                  PostProcessing::DisplayChain.Toggle();
+              })
+
+DEFINE_HOTKEY("ToggleInternalPostProcessing", TRANSLATE_NOOP("Hotkeys", "Graphics"),
+              TRANSLATE_NOOP("Hotkeys", "Toggle Internal Post-Processing"), [](s32 pressed) {
+                if (!pressed && System::IsValid())
+                  PostProcessing::InternalChain.Toggle();
               })
 
 DEFINE_HOTKEY("ReloadPostProcessingShaders", TRANSLATE_NOOP("Hotkeys", "Graphics"),
@@ -399,7 +440,7 @@ DEFINE_HOTKEY("ReloadTextureReplacements", TRANSLATE_NOOP("Hotkeys", "Graphics")
                 {
                   Host::AddKeyedOSDMessage("ReloadTextureReplacements",
                                            TRANSLATE_STR("OSDMessage", "Texture replacements reloaded."), 10.0f);
-                  g_texture_replacements.Reload();
+                  TextureReplacements::Reload();
                 }
               })
 
@@ -460,6 +501,33 @@ DEFINE_HOTKEY("TogglePGXPCPU", TRANSLATE_NOOP("Hotkeys", "Graphics"), TRANSLATE_
                 }
               })
 
+DEFINE_HOTKEY("ToggleOSD", TRANSLATE_NOOP("Hotkeys", "Graphics"), TRANSLATE_NOOP("Hotkeys", "Toggle On-Screen Display"),
+              [](s32 pressed) {
+                if (!pressed)
+                  HotkeyToggleOSD();
+              })
+
+DEFINE_HOTKEY("RotateClockwise", TRANSLATE_NOOP("Hotkeys", "Graphics"),
+              TRANSLATE_NOOP("Hotkeys", "Rotate Display Clockwise"), [](s32 pressed) {
+                if (!pressed)
+                {
+                  g_settings.display_rotation = static_cast<DisplayRotation>(
+                    (static_cast<u8>(g_settings.display_rotation) + 1) % static_cast<u8>(DisplayRotation::Count));
+                }
+              })
+
+DEFINE_HOTKEY("RotateCounterclockwise", TRANSLATE_NOOP("Hotkeys", "Graphics"),
+              TRANSLATE_NOOP("Hotkeys", "Rotate Display Counterclockwise"), [](s32 pressed) {
+                if (!pressed)
+                {
+                  g_settings.display_rotation =
+                    (g_settings.display_rotation > static_cast<DisplayRotation>(0)) ?
+                      static_cast<DisplayRotation>((static_cast<u8>(g_settings.display_rotation) - 1) %
+                                                   static_cast<u8>(DisplayRotation::Count)) :
+                      static_cast<DisplayRotation>(static_cast<u8>(DisplayRotation::Count) - 1);
+                }
+              })
+
 DEFINE_HOTKEY("AudioMute", TRANSLATE_NOOP("Hotkeys", "Audio"), TRANSLATE_NOOP("Hotkeys", "Toggle Mute"),
               [](s32 pressed) {
                 if (!pressed && System::IsValid())
@@ -469,12 +537,12 @@ DEFINE_HOTKEY("AudioMute", TRANSLATE_NOOP("Hotkeys", "Audio"), TRANSLATE_NOOP("H
                   SPU::GetOutputStream()->SetOutputVolume(volume);
                   if (g_settings.audio_output_muted)
                   {
-                    Host::AddIconOSDMessage("AudioControlHotkey", ICON_FA_VOLUME_MUTE,
+                    Host::AddIconOSDMessage("AudioControlHotkey", ICON_EMOJI_MUTED_SPEAKER,
                                             TRANSLATE_STR("OSDMessage", "Volume: Muted"), 5.0f);
                   }
                   else
                   {
-                    Host::AddIconOSDMessage("AudioControlHotkey", ICON_FA_VOLUME_UP,
+                    Host::AddIconOSDMessage("AudioControlHotkey", ICON_EMOJI_MEDIUM_VOLUME_SPEAKER,
                                             fmt::format(TRANSLATE_FS("OSDMessage", "Volume: {}%"), volume), 5.0f);
                   }
                 }
@@ -485,7 +553,7 @@ DEFINE_HOTKEY("AudioCDAudioMute", TRANSLATE_NOOP("Hotkeys", "Audio"), TRANSLATE_
                 {
                   g_settings.cdrom_mute_cd_audio = !g_settings.cdrom_mute_cd_audio;
                   Host::AddIconOSDMessage(
-                    "AudioControlHotkey", g_settings.cdrom_mute_cd_audio ? ICON_FA_VOLUME_MUTE : ICON_FA_VOLUME_UP,
+                    "AudioControlHotkey", g_settings.cdrom_mute_cd_audio ? ICON_EMOJI_MUTED_SPEAKER : ICON_EMOJI_MEDIUM_VOLUME_SPEAKER,
                     g_settings.cdrom_mute_cd_audio ? TRANSLATE_STR("OSDMessage", "CD Audio Muted.") :
                                                      TRANSLATE_STR("OSDMessage", "CD Audio Unmuted."),
                     2.0f);
@@ -497,11 +565,11 @@ DEFINE_HOTKEY("AudioVolumeUp", TRANSLATE_NOOP("Hotkeys", "Audio"), TRANSLATE_NOO
                 {
                   g_settings.audio_output_muted = false;
 
-                  const s32 volume = std::min<s32>(System::GetAudioOutputVolume() + 10, 100);
+                  const s32 volume = std::min<s32>(System::GetAudioOutputVolume() + 10, 200);
                   g_settings.audio_output_volume = volume;
                   g_settings.audio_fast_forward_volume = volume;
                   SPU::GetOutputStream()->SetOutputVolume(volume);
-                  Host::AddIconOSDMessage("AudioControlHotkey", ICON_FA_VOLUME_UP,
+                  Host::AddIconOSDMessage("AudioControlHotkey", ICON_EMOJI_HIGH_VOLUME_SPEAKER,
                                           fmt::format(TRANSLATE_FS("OSDMessage", "Volume: {}%"), volume), 5.0f);
                 }
               })
@@ -515,7 +583,7 @@ DEFINE_HOTKEY("AudioVolumeDown", TRANSLATE_NOOP("Hotkeys", "Audio"), TRANSLATE_N
                   g_settings.audio_output_volume = volume;
                   g_settings.audio_fast_forward_volume = volume;
                   SPU::GetOutputStream()->SetOutputVolume(volume);
-                  Host::AddIconOSDMessage("AudioControlHotkey", ICON_FA_VOLUME_DOWN,
+                  Host::AddIconOSDMessage("AudioControlHotkey", ICON_EMOJI_MEDIUM_VOLUME_SPEAKER,
                                           fmt::format(TRANSLATE_FS("OSDMessage", "Volume: {}%"), volume), 5.0f);
                 }
               })
@@ -569,6 +637,7 @@ DEFINE_HOTKEY("UndoLoadState", TRANSLATE_NOOP("Hotkeys", "Save States"), TRANSLA
                     Host::RunOnCPUThread([]() { HotkeySaveStateSlot(global, slot); });                                 \
                 })
 
+// clang-format off
 MAKE_LOAD_STATE_HOTKEY(false, 1, TRANSLATE_NOOP("Hotkeys", "Load Game State 1"))
 MAKE_SAVE_STATE_HOTKEY(false, 1, TRANSLATE_NOOP("Hotkeys", "Save Game State 1"))
 MAKE_LOAD_STATE_HOTKEY(false, 2, TRANSLATE_NOOP("Hotkeys", "Load Game State 2"))
@@ -610,6 +679,7 @@ MAKE_LOAD_STATE_HOTKEY(true, 9, TRANSLATE_NOOP("Hotkeys", "Load Global State 9")
 MAKE_SAVE_STATE_HOTKEY(true, 9, TRANSLATE_NOOP("Hotkeys", "Save Global State 9"))
 MAKE_LOAD_STATE_HOTKEY(true, 10, TRANSLATE_NOOP("Hotkeys", "Load Global State 10"))
 MAKE_SAVE_STATE_HOTKEY(true, 10, TRANSLATE_NOOP("Hotkeys", "Save Global State 10"))
+// clang-format on
 
 #undef MAKE_SAVE_STATE_HOTKEY
 #undef MAKE_LOAD_STATE_HOTKEY

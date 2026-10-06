@@ -25,12 +25,20 @@ public:
   ~GameSummaryWidget();
 
 private Q_SLOTS:
+  void onCompatibilityCommentsClicked();
   void onInputProfileChanged(int index);
+  void onEditInputProfileClicked();
   void onComputeHashClicked();
 
 private:
   void populateUi(const std::string& path, const std::string& serial, DiscRegion region,
                   const GameDatabase::Entry* entry);
+  void populateCustomAttributes();
+  void updateWindowTitle();
+  void setCustomTitle(const std::string& text);
+  void setCustomRegion(int region);
+  void setRevisionText(const QString& text);
+
   void populateTracksInfo();
 
   Ui::GameSummaryWidget m_ui;
@@ -38,4 +46,5 @@ private:
 
   std::string m_path;
   std::string m_redump_search_keyword;
+  QString m_compatibility_comments;
 };

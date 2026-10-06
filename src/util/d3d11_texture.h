@@ -26,7 +26,7 @@ public:
   ALWAYS_INLINE ID3D11SamplerState* GetSamplerState() const { return m_ss.Get(); }
   ALWAYS_INLINE ID3D11SamplerState* const* GetSamplerStateArray() const { return m_ss.GetAddressOf(); }
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
 private:
   D3D11Sampler(ComPtr<ID3D11SamplerState> ss);
@@ -60,6 +60,7 @@ public:
   {
     return reinterpret_cast<ID3D11RenderTargetView* const*>(m_rtv_dsv.GetAddressOf());
   }
+  ALWAYS_INLINE ID3D11UnorderedAccessView* GetD3DUAV() const { return m_uav.Get(); }
   DXGI_FORMAT GetDXGIFormat() const;
 
   ALWAYS_INLINE operator ID3D11Texture2D*() const { return m_texture.Get(); }
@@ -72,6 +73,7 @@ public:
   {
     return static_cast<ID3D11DepthStencilView*>(m_rtv_dsv.Get());
   }
+  ALWAYS_INLINE operator ID3D11UnorderedAccessView*() const { return m_uav.Get(); }
   ALWAYS_INLINE operator bool() const { return static_cast<bool>(m_texture); }
 
   static std::unique_ptr<D3D11Texture> Create(ID3D11Device* device, u32 width, u32 height, u32 layers, u32 levels,
@@ -85,15 +87,17 @@ public:
   bool Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer = 0, u32 level = 0) override;
   void Unmap() override;
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
 private:
   D3D11Texture(u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type, Format format,
-               ComPtr<ID3D11Texture2D> texture, ComPtr<ID3D11ShaderResourceView> srv, ComPtr<ID3D11View> rtv_dsv);
+               ComPtr<ID3D11Texture2D> texture, ComPtr<ID3D11ShaderResourceView> srv, ComPtr<ID3D11View> rtv_dsv,
+               ComPtr<ID3D11UnorderedAccessView> uav);
 
   ComPtr<ID3D11Texture2D> m_texture;
   ComPtr<ID3D11ShaderResourceView> m_srv;
   ComPtr<ID3D11View> m_rtv_dsv;
+  ComPtr<ID3D11UnorderedAccessView> m_uav;
   u32 m_mapped_subresource = 0;
 };
 
@@ -113,7 +117,7 @@ public:
   void* Map(u32 required_elements) override;
   void Unmap(u32 used_elements) override;
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
 private:
   D3D11StreamBuffer m_buffer;

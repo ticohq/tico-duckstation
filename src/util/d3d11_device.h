@@ -43,10 +43,11 @@ public:
   bool UpdateWindow() override;
   void ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale) override;
   bool SupportsExclusiveFullscreen() const override;
-  AdapterAndModeList GetAdapterAndModeList() override;
   void DestroySurface() override;
 
   std::string GetDriverInfo() const override;
+
+  void ExecuteAndWaitForGPUIdle() override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                             GPUTexture::Type type, GPUTexture::Format format,
@@ -68,10 +69,12 @@ public:
   void ClearDepth(GPUTexture* t, float d) override;
   void InvalidateRenderTarget(GPUTexture* t) override;
 
-  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data) override;
-  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                    const char* entry_point, DynamicHeapArray<u8>* binary) override;
-  std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config) override;
+  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data,
+                                                    Error* error) override;
+  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, GPUShaderLanguage language,
+                                                    std::string_view source, const char* entry_point,
+                                                    DynamicHeapArray<u8>* out_binary, Error* error) override;
+  std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config, Error* error) override;
 
   void PushDebugGroup(const char* name) override;
   void PopDebugGroup() override;
@@ -86,40 +89,43 @@ public:
   void* MapUniformBuffer(u32 size) override;
   void UnmapUniformBuffer(u32 size) override;
   void SetRenderTargets(GPUTexture* const* rts, u32 num_rts, GPUTexture* ds,
-                        GPUPipeline::RenderPassFlag feedback_loop = GPUPipeline::NoRenderPassFlags) override;
+                        GPUPipeline::RenderPassFlag flags = GPUPipeline::NoRenderPassFlags) override;
   void SetPipeline(GPUPipeline* pipeline) override;
   void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler) override;
   void SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer) override;
-  void SetViewport(s32 x, s32 y, s32 width, s32 height) override;
-  void SetScissor(s32 x, s32 y, s32 width, s32 height) override;
+  void SetViewport(const GSVector4i rc) override;
+  void SetScissor(const GSVector4i rc) override;
   void Draw(u32 vertex_count, u32 base_vertex) override;
   void DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex) override;
   void DrawIndexedWithBarrier(u32 index_count, u32 base_index, u32 base_vertex, DrawBarrier type) override;
 
-  bool GetHostRefreshRate(float* refresh_rate) override;
+  void SetVSyncMode(GPUVSyncMode mode, bool allow_present_throttle) override;
 
   bool SetGPUTimingEnabled(bool enabled) override;
   float GetAndResetAccumulatedGPUTime() override;
 
-  bool BeginPresent(bool skip_present) override;
+  bool BeginPresent(bool skip_present, u32 clear_color) override;
   void EndPresent(bool explicit_present) override;
   void SubmitPresent() override;
 
   void UnbindPipeline(D3D11Pipeline* pl);
   void UnbindTexture(D3D11Texture* tex);
 
-  static AdapterAndModeList StaticGetAdapterAndModeList();
-
 protected:
-  bool CreateDevice(const std::string_view& adapter, bool threaded_presentation,
+  bool CreateDevice(std::string_view adapter, bool threaded_presentation,
                     std::optional<bool> exclusive_fullscreen_control, FeatureMask disabled_features,
                     Error* error) override;
   void DestroyDevice() override;
 
 private:
+  using BlendStateMapKey = std::pair<u64, u32>;
+  struct BlendStateMapHash
+  {
+    size_t operator()(const BlendStateMapKey& key) const;
+  };
   using RasterizationStateMap = std::unordered_map<u8, ComPtr<ID3D11RasterizerState>>;
   using DepthStateMap = std::unordered_map<u8, ComPtr<ID3D11DepthStencilState>>;
-  using BlendStateMap = std::unordered_map<u64, ComPtr<ID3D11BlendState>>;
+  using BlendStateMap = std::unordered_map<BlendStateMapKey, ComPtr<ID3D11BlendState>, BlendStateMapHash>;
   using InputLayoutMap =
     std::unordered_map<GPUPipeline::InputLayout, ComPtr<ID3D11InputLayout>, GPUPipeline::InputLayoutHash>;
 
@@ -131,10 +137,9 @@ private:
   static constexpr u32 UNIFORM_BUFFER_ALIGNMENT_DISCARD = 16;
   static constexpr u8 NUM_TIMESTAMP_QUERIES = 3;
 
-  static void GetAdapterAndModeList(AdapterAndModeList* ret, IDXGIFactory5* factory);
-
   void SetFeatures(FeatureMask disabled_features);
 
+  u32 GetSwapChainBufferCount() const;
   bool CreateSwapChain();
   bool CreateSwapChainRTV();
   void DestroySwapChain();
@@ -142,12 +147,12 @@ private:
   bool CreateBuffers();
   void DestroyBuffers();
 
-  bool IsRenderTargetBound(const GPUTexture* tex) const;
+  bool IsRenderTargetBound(const D3D11Texture* tex) const;
 
-  ComPtr<ID3D11RasterizerState> GetRasterizationState(const GPUPipeline::RasterizationState& rs);
-  ComPtr<ID3D11DepthStencilState> GetDepthState(const GPUPipeline::DepthState& ds);
-  ComPtr<ID3D11BlendState> GetBlendState(const GPUPipeline::BlendState& bs);
-  ComPtr<ID3D11InputLayout> GetInputLayout(const GPUPipeline::InputLayout& il, const D3D11Shader* vs);
+  ComPtr<ID3D11RasterizerState> GetRasterizationState(const GPUPipeline::RasterizationState& rs, Error* error);
+  ComPtr<ID3D11DepthStencilState> GetDepthState(const GPUPipeline::DepthState& ds, Error* error);
+  ComPtr<ID3D11BlendState> GetBlendState(const GPUPipeline::BlendState& bs, u32 num_rts, Error* error);
+  ComPtr<ID3D11InputLayout> GetInputLayout(const GPUPipeline::InputLayout& il, const D3D11Shader* vs, Error* error);
 
   bool CreateTimestampQueries();
   void DestroyTimestampQueries();
@@ -180,6 +185,7 @@ private:
   D3D11Pipeline* m_current_pipeline = nullptr;
   std::array<D3D11Texture*, MAX_RENDER_TARGETS> m_current_render_targets = {};
   u32 m_num_current_render_targets = 0;
+  GPUPipeline::RenderPassFlag m_current_render_pass_flags = GPUPipeline::NoRenderPassFlags;
   D3D11Texture* m_current_depth_target = nullptr;
 
   ID3D11InputLayout* m_current_input_layout = nullptr;
@@ -204,4 +210,4 @@ private:
   float m_accumulated_gpu_time = 0.0f;
 };
 
-void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view& name);
+void SetD3DDebugObjectName(ID3D11DeviceChild* obj, std::string_view name);

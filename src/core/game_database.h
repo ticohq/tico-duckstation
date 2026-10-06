@@ -31,10 +31,14 @@ enum class Trait : u32
   ForceInterpreter,
   ForceSoftwareRenderer,
   ForceSoftwareRendererForReadbacks,
+  ForceRoundUpscaledTextureCoordinates,
+  ForceAccurateBlending,
   ForceInterlacing,
+  DisableAutoAnalogMode,
   DisableTrueColor,
   DisableUpscaling,
   DisableTextureFiltering,
+  DisableSpriteTextureFiltering,
   DisableScaledDithering,
   DisableForceNTSCTimings,
   DisableWidescreen,
@@ -44,6 +48,7 @@ enum class Trait : u32
   DisablePGXPColorCorrection,
   DisablePGXPDepthBuffer,
   DisablePGXPPreserveProjFP,
+  DisablePGXPOn2DPolygons,
   ForcePGXPVertexCache,
   ForcePGXPCPUMode,
   ForceRecompilerMemoryExceptions,
@@ -62,6 +67,8 @@ struct Entry
   std::string genre;
   std::string developer;
   std::string publisher;
+  std::string compatibility_version_tested;
+  std::string compatibility_comments;
   u64 release_date;
   u8 min_players;
   u8 max_players;
@@ -75,13 +82,15 @@ struct Entry
   std::optional<s16> display_active_end_offset;
   std::optional<s8> display_line_start_offset;
   std::optional<s8> display_line_end_offset;
+  std::optional<DisplayCropMode> display_crop_mode;
+  std::optional<DisplayDeinterlacingMode> display_deinterlacing_mode;
+  std::optional<GPULineDetectMode> gpu_line_detect_mode;
   std::optional<u32> dma_max_slice_ticks;
   std::optional<u32> dma_halt_ticks;
   std::optional<u32> gpu_fifo_size;
   std::optional<u32> gpu_max_run_ahead;
   std::optional<float> gpu_pgxp_tolerance;
   std::optional<float> gpu_pgxp_depth_threshold;
-  std::optional<GPULineDetectMode> gpu_line_detect_mode;
 
   std::string disc_set_name;
   std::vector<std::string> disc_set_serials;
@@ -89,6 +98,8 @@ struct Entry
   ALWAYS_INLINE bool HasTrait(Trait trait) const { return traits[static_cast<int>(trait)]; }
 
   void ApplySettings(Settings& settings, bool display_osd_messages) const;
+
+  std::string GenerateCompatibilityReport() const;
 };
 
 void EnsureLoaded();
@@ -96,9 +107,12 @@ void Unload();
 
 const Entry* GetEntryForDisc(CDImage* image);
 const Entry* GetEntryForGameDetails(const std::string& id, u64 hash);
-const Entry* GetEntryForSerial(const std::string_view& serial);
+const Entry* GetEntryForSerial(std::string_view serial);
 std::string GetSerialForDisc(CDImage* image);
 std::string GetSerialForPath(const char* path);
+
+const char* GetTraitName(Trait trait);
+const char* GetTraitDisplayName(Trait trait);
 
 const char* GetCompatibilityRatingName(CompatibilityRating rating);
 const char* GetCompatibilityRatingDisplayName(CompatibilityRating rating);

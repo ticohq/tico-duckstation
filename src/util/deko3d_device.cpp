@@ -10,6 +10,7 @@
 
 #include <switch.h>
 #include <uam.h>
+#include "fmt/printf.h"
 
 Log_SetChannel(Deko3D_Device);
 
@@ -43,9 +44,9 @@ enum : u32
 static void deko3D_DebugOut(void* userData, const char* context, DkResult result, const char* message)
 {
   if (result == DkResult_Success)
-    Log_DebugPrintf("deko3D debug message: %s\n", message);
+    DEBUG_LOG("{}", fmt::sprintf("deko3D debug message: %s\n", message));
   else
-    Log_ErrorPrintf("deko3D error message: %s -> %d\n", message, result);
+    ERROR_LOG("{}", fmt::sprintf("deko3D error message: %s -> %d\n", message, static_cast<int>(result)));
 }
 
 static void deko3D_CmdBufAddMem(void* userData, DkCmdBuf cmdbuf, size_t min_req_size)
@@ -112,9 +113,9 @@ std::string Deko3DDevice::GetDriverInfo() const
   return "There no driver, there is only Zuul";
 }
 
-GPUDevice::AdapterAndModeList Deko3DDevice::GetAdapterAndModeList()
+void Deko3DDevice::ExecuteAndWaitForGPUIdle()
 {
-  return AdapterAndModeList();
+  SubmitCommandBuffer(true);
 }
 
 s32 Deko3DDevice::IsRenderTargetBound(const GPUTexture* tex) const
@@ -158,7 +159,7 @@ void Deko3DDevice::InvalidateRenderTarget(GPUTexture* t)
   }
 }
 
-bool Deko3DDevice::CreateDevice(const std::string_view& adapter, bool threaded_presentation,
+bool Deko3DDevice::CreateDevice(std::string_view adapter, bool threaded_presentation,
                                 std::optional<bool> exclusive_fullscreen_control, FeatureMask disabled_features,
                                 Error* error)
 {
@@ -238,14 +239,14 @@ bool Deko3DDevice::CreateBuffers()
   if (!m_general_heap.Create(GENERAL_HEAP_SIZE, DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached,
                              GENERAL_HEAP_MAX_ALLOCS))
   {
-    Log_ErrorPrintf("Failed to allocate general heap");
+    ERROR_LOG("{}", fmt::sprintf("Failed to allocate general heap"));
     return false;
   }
 
   if (!m_texture_heap.Create(TEXTURE_HEAP_SIZE, DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image,
                              TEXTURE_HEAP_MAX_ALLOCS))
   {
-    Log_ErrorPrintf("Failed to allocate texture heap");
+    ERROR_LOG("{}", fmt::sprintf("Failed to allocate texture heap"));
     return false;
   }
 
@@ -253,7 +254,7 @@ bool Deko3DDevice::CreateBuffers()
                             DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached | DkMemBlockFlags_Code,
                             SHADER_HEAP_MAX_ALLOCS))
   {
-    Log_ErrorPrintf("Failed to allocate shader heap");
+    ERROR_LOG("{}", fmt::sprintf("Failed to allocate shader heap"));
     return false;
   }
 
@@ -277,7 +278,7 @@ bool Deko3DDevice::CreateCommandBuffers()
 
       if (!resources.command_buffers[i])
       {
-        Log_ErrorPrint("Failed to create command buffer");
+        ERROR_LOG("{}", "Failed to create command buffer");
         return false;
       }
     }
@@ -356,10 +357,11 @@ void Deko3DDevice::SubmitCommandBuffer(bool wait_for_completion, const char* rea
 {
   std::va_list ap;
   va_start(ap, reason);
-  const std::string reason_str(StringUtil::StdStringFromFormatV(reason, ap));
+  char reason_str[256];
+  std::vsnprintf(reason_str, sizeof(reason_str), reason, ap);
   va_end(ap);
 
-  Log_WarningPrintf("Executing command buffer due to '%s'", reason_str.c_str());
+  WARNING_LOG("{}", fmt::sprintf("Executing command buffer due to '%s'", reason_str));
   SubmitCommandBuffer(wait_for_completion);
 }
 
@@ -678,11 +680,9 @@ void Deko3DDevice::CreateNullTexture()
   m_null_texture->Update(0, 0, 1, 1, &data, 4);
 }
 
-void Deko3DDevice::SetViewport(s32 x, s32 y, s32 width, s32 height)
+void Deko3DDevice::SetViewport(const GSVector4i rc)
 {
-  const Common::Rectangle<s32> rc = Common::Rectangle<s32>::FromExtents(x, y, width, height);
-  // printf("set viewport %d %d %d %d\n", x, y, width, height);
-  if (m_last_viewport == rc)
+  if (m_last_viewport.eq(rc))
     return;
 
   m_last_viewport = rc;
@@ -690,11 +690,9 @@ void Deko3DDevice::SetViewport(s32 x, s32 y, s32 width, s32 height)
   UpdateViewport();
 }
 
-void Deko3DDevice::SetScissor(s32 x, s32 y, s32 width, s32 height)
+void Deko3DDevice::SetScissor(const GSVector4i rc)
 {
-  const Common::Rectangle<s32> rc = Common::Rectangle<s32>::FromExtents(x, y, width, height);
-  // printf("set scissor %d %d %d %d\n", x, y, width, height);
-  if (m_last_scissor == rc)
+  if (m_last_scissor.eq(rc))
     return;
 
   m_last_scissor = rc;
@@ -706,8 +704,8 @@ void Deko3DDevice::UpdateViewport()
   dk::CmdBuf cmdbuf = GetCurrentCommandBuffer();
   DkViewport viewport = {static_cast<float>(m_last_viewport.left),
                          static_cast<float>(m_last_viewport.top),
-                         static_cast<float>(m_last_viewport.GetWidth()),
-                         static_cast<float>(m_last_viewport.GetHeight()),
+                         static_cast<float>(m_last_viewport.width()),
+                         static_cast<float>(m_last_viewport.height()),
                          0.f,
                          1.f};
   cmdbuf.setViewports(0, {viewport});
@@ -719,8 +717,8 @@ void Deko3DDevice::UpdateScissor()
   DkScissor scissor;
   scissor.x = static_cast<u32>(m_last_scissor.left);
   scissor.y = static_cast<u32>(m_last_scissor.top);
-  scissor.width = static_cast<u32>(m_last_scissor.GetWidth());
-  scissor.height = static_cast<u32>(m_last_scissor.GetHeight());
+  scissor.width = static_cast<u32>(m_last_scissor.width());
+  scissor.height = static_cast<u32>(m_last_scissor.height());
   cmdbuf.setScissors(0, {scissor});
 }
 
@@ -741,7 +739,7 @@ void Deko3DDevice::UnbindTexture(Deko3DTexture* tex)
     {
       if (m_current_render_targets[i] == tex)
       {
-        Log_WarningPrint("Unbinding current RT");
+        WARNING_LOG("{}", "Unbinding current RT");
         SetRenderTargets(nullptr, 0, m_current_depth_target);
         break;
       }
@@ -751,7 +749,7 @@ void Deko3DDevice::UnbindTexture(Deko3DTexture* tex)
   {
     if (m_current_depth_target == tex)
     {
-      Log_WarningPrint("Unbinding current DS");
+      WARNING_LOG("{}", "Unbinding current DS");
       SetRenderTargets(nullptr, 0, nullptr);
     }
   }
@@ -902,7 +900,7 @@ void Deko3DDevice::DrawIndexedWithBarrier(u32 index_count, u32 base_index, u32 b
   Panic("miauz");
 }
 
-bool Deko3DDevice::BeginPresent(bool skip_present)
+bool Deko3DDevice::BeginPresent(bool skip_present, u32 clear_color)
 {
   if (skip_present)
     return false;
@@ -914,7 +912,7 @@ bool Deko3DDevice::BeginPresent(bool skip_present)
 
   Deko3DTexture* swapchain_image = m_swap_chain->GetCurrentImage();
 
-  ClearRenderTarget(swapchain_image, 0);
+  ClearRenderTarget(swapchain_image, clear_color);
   SetRenderTarget(swapchain_image);
 
   SetScissor(0, 0, swapchain_image->GetWidth(), swapchain_image->GetHeight());
@@ -932,6 +930,13 @@ void Deko3DDevice::EndPresent(bool explicit_submit)
 
 void Deko3DDevice::SubmitPresent()
 {
+}
+
+void Deko3DDevice::SetVSyncMode(GPUVSyncMode mode, bool allow_present_throttle)
+{
+  // the swap chain always waits for vblank
+  m_vsync_mode = mode;
+  m_allow_present_throttle = allow_present_throttle;
 }
 
 bool Deko3DDevice::SetGPUTimingEnabled(bool enabled)

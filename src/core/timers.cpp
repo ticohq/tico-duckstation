@@ -3,7 +3,6 @@
 
 #include "timers.h"
 #include "gpu.h"
-#include "host.h"
 #include "interrupt_controller.h"
 #include "system.h"
 
@@ -27,10 +26,10 @@ static constexpr u32 NUM_TIMERS = 3;
 
 enum class SyncMode : u8
 {
-  PauseOnGate = 0,
-  ResetOnGate = 1,
-  ResetAndRunOnGate = 2,
-  FreeRunOnGate = 3
+  PauseWhileGateActive = 0,
+  ResetOnGateEnd = 1,
+  ResetAndRunOnGateStart = 2,
+  FreeRunOnGateEnd = 3
 };
 
 union CounterMode
@@ -72,28 +71,33 @@ static void AddSysClkTicks(void*, TickCount sysclk_ticks, TickCount ticks_late);
 static TickCount GetTicksUntilNextInterrupt();
 static void UpdateSysClkEvent();
 
-static std::unique_ptr<TimingEvent> s_sysclk_event;
+namespace {
+struct TimersState
+{
+  TimingEvent sysclk_event{ "Timer SysClk Interrupt", 1, 1, &Timers::AddSysClkTicks, nullptr };
 
-static std::array<CounterState, NUM_TIMERS> s_states{};
-static TickCount s_syclk_ticks_carry = 0; // 0 unless overclocking is enabled
-static u32 s_sysclk_div_8_carry = 0;      // partial ticks for timer 3 with sysclk/8
-};                                        // namespace Timers
+  std::array<CounterState, NUM_TIMERS> counters{};
+  TickCount sysclk_ticks_carry = 0; // 0 unless overclocking is enabled
+  u32 sysclk_div_8_carry = 0;       // partial ticks for timer 3 with sysclk/8
+};
+} // namespace
+
+ALIGN_TO_CACHE_LINE static TimersState s_state;
+}; // namespace Timers
 
 void Timers::Initialize()
 {
-  s_sysclk_event =
-    TimingEvents::CreateTimingEvent("Timer SysClk Interrupt", 1, 1, &Timers::AddSysClkTicks, nullptr, false);
   Reset();
 }
 
 void Timers::Shutdown()
 {
-  s_sysclk_event.reset();
+  s_state.sysclk_event.Deactivate();
 }
 
 void Timers::Reset()
 {
-  for (CounterState& cs : s_states)
+  for (CounterState& cs : s_state.counters)
   {
     cs.mode.bits = 0;
     cs.mode.interrupt_request_n = true;
@@ -105,14 +109,15 @@ void Timers::Reset()
     cs.irq_done = false;
   }
 
-  s_syclk_ticks_carry = 0;
-  s_sysclk_div_8_carry = 0;
+  s_state.sysclk_event.Deactivate();
+  s_state.sysclk_ticks_carry = 0;
+  s_state.sysclk_div_8_carry = 0;
   UpdateSysClkEvent();
 }
 
 bool Timers::DoState(StateWrapper& sw)
 {
-  for (CounterState& cs : s_states)
+  for (CounterState& cs : s_state.counters)
   {
     sw.Do(&cs.mode.bits);
     sw.Do(&cs.counter);
@@ -124,8 +129,8 @@ bool Timers::DoState(StateWrapper& sw)
     sw.Do(&cs.irq_done);
   }
 
-  sw.Do(&s_syclk_ticks_carry);
-  sw.Do(&s_sysclk_div_8_carry);
+  sw.Do(&s_state.sysclk_ticks_carry);
+  sw.Do(&s_state.sysclk_div_8_carry);
 
   if (sw.IsReading())
     UpdateSysClkEvent();
@@ -135,28 +140,28 @@ bool Timers::DoState(StateWrapper& sw)
 
 void Timers::CPUClocksChanged()
 {
-  s_syclk_ticks_carry = 0;
+  s_state.sysclk_ticks_carry = 0;
 }
 
 bool Timers::IsUsingExternalClock(u32 timer)
 {
-  return s_states[timer].external_counting_enabled;
+  return s_state.counters[timer].external_counting_enabled;
 }
 
 bool Timers::IsSyncEnabled(u32 timer)
 {
-  return s_states[timer].mode.sync_enable;
+  return s_state.counters[timer].mode.sync_enable;
 }
 
 bool Timers::IsExternalIRQEnabled(u32 timer)
 {
-  const CounterState& cs = s_states[timer];
+  const CounterState& cs = s_state.counters[timer];
   return (cs.external_counting_enabled && (cs.mode.bits & ((1u << 4) | (1u << 5))) != 0);
 }
 
 void Timers::SetGate(u32 timer, bool state)
 {
-  CounterState& cs = s_states[timer];
+  CounterState& cs = s_state.counters[timer];
   if (cs.gate == state)
     return;
 
@@ -165,25 +170,31 @@ void Timers::SetGate(u32 timer, bool state)
   if (!cs.mode.sync_enable)
     return;
 
-  if (cs.counting_enabled && !cs.use_external_clock)
-    s_sysclk_event->InvokeEarly();
+  // Because the gate prevents counting in or outside of the gate, we need a correct counter.
+  // For reset, we _can_ skip it, until the gate clears.
+  if (!cs.use_external_clock && (cs.mode.sync_mode != SyncMode::ResetOnGateEnd || !state))
+    s_state.sysclk_event.InvokeEarly();
 
-  if (state)
+  switch (cs.mode.sync_mode)
   {
-    switch (cs.mode.sync_mode)
-    {
-      case SyncMode::ResetOnGate:
-      case SyncMode::ResetAndRunOnGate:
-        cs.counter = 0;
-        break;
+    case SyncMode::PauseWhileGateActive:
+      break;
 
-      case SyncMode::FreeRunOnGate:
-        cs.mode.sync_enable = false;
-        break;
+    case SyncMode::ResetOnGateEnd:
+      cs.counter = state ? cs.counter : 0;
+      break;
 
-      default:
-        break;
-    }
+    case SyncMode::ResetAndRunOnGateStart:
+      // PS2 hardwires the counter to 0 outside of gate. Needs to be tested for PSX too.
+      cs.counter = state ? 0 : cs.counter;
+      break;
+
+    case SyncMode::FreeRunOnGateEnd:
+      cs.mode.sync_enable &= state;
+      break;
+
+    default:
+      UnreachableCode();
   }
 
   UpdateCountingEnabled(cs);
@@ -192,7 +203,7 @@ void Timers::SetGate(u32 timer, bool state)
 
 TickCount Timers::GetTicksUntilIRQ(u32 timer)
 {
-  const CounterState& cs = s_states[timer];
+  const CounterState& cs = s_state.counters[timer];
   if (!cs.counting_enabled)
     return std::numeric_limits<TickCount>::max();
 
@@ -207,7 +218,7 @@ TickCount Timers::GetTicksUntilIRQ(u32 timer)
 
 void Timers::AddTicks(u32 timer, TickCount count)
 {
-  CounterState& cs = s_states[timer];
+  CounterState& cs = s_state.counters[timer];
   const u32 old_counter = cs.counter;
   cs.counter += static_cast<u32>(count);
   CheckForIRQ(timer, old_counter);
@@ -215,7 +226,7 @@ void Timers::AddTicks(u32 timer, TickCount count)
 
 void Timers::CheckForIRQ(u32 timer, u32 old_counter)
 {
-  CounterState& cs = s_states[timer];
+  CounterState& cs = s_state.counters[timer];
 
   bool interrupt_request = false;
   if (cs.counter >= cs.target && (old_counter < cs.target || cs.target == 0))
@@ -242,7 +253,7 @@ void Timers::CheckForIRQ(u32 timer, u32 old_counter)
       if (!cs.irq_done || cs.mode.irq_repeat)
       {
         // this is actually low for a few cycles
-        Log_DebugPrintf("Raising timer %u pulse IRQ", timer);
+        DEBUG_LOG("Raising timer {} pulse IRQ", timer);
         InterruptController::SetLineState(irqnum, false);
         InterruptController::SetLineState(irqnum, true);
       }
@@ -255,7 +266,7 @@ void Timers::CheckForIRQ(u32 timer, u32 old_counter)
       // TODO: How does the non-repeat mode work here?
       cs.mode.interrupt_request_n ^= true;
       if (!cs.mode.interrupt_request_n)
-        Log_DebugPrintf("Raising timer %u alternate IRQ", timer);
+        DEBUG_LOG("Raising timer {} alternate IRQ", timer);
 
       InterruptController::SetLineState(irqnum, !cs.mode.interrupt_request_n);
     }
@@ -264,19 +275,19 @@ void Timers::CheckForIRQ(u32 timer, u32 old_counter)
 
 void Timers::AddSysClkTicks(void*, TickCount sysclk_ticks, TickCount ticks_late)
 {
-  sysclk_ticks = System::UnscaleTicksToOverclock(sysclk_ticks, &s_syclk_ticks_carry);
+  sysclk_ticks = System::UnscaleTicksToOverclock(sysclk_ticks, &s_state.sysclk_ticks_carry);
 
-  if (!s_states[0].external_counting_enabled && s_states[0].counting_enabled)
+  if (!s_state.counters[0].external_counting_enabled && s_state.counters[0].counting_enabled)
     AddTicks(0, sysclk_ticks);
-  if (!s_states[1].external_counting_enabled && s_states[1].counting_enabled)
+  if (!s_state.counters[1].external_counting_enabled && s_state.counters[1].counting_enabled)
     AddTicks(1, sysclk_ticks);
-  if (s_states[2].external_counting_enabled)
+  if (s_state.counters[2].external_counting_enabled)
   {
-    TickCount sysclk_div_8_ticks = (sysclk_ticks + s_sysclk_div_8_carry) / 8;
-    s_sysclk_div_8_carry = (sysclk_ticks + s_sysclk_div_8_carry) % 8;
+    TickCount sysclk_div_8_ticks = (sysclk_ticks + s_state.sysclk_div_8_carry) / 8;
+    s_state.sysclk_div_8_carry = (sysclk_ticks + s_state.sysclk_div_8_carry) % 8;
     AddTicks(2, sysclk_div_8_ticks);
   }
-  else if (s_states[2].counting_enabled)
+  else if (s_state.counters[2].counting_enabled)
   {
     AddTicks(2, sysclk_ticks);
   }
@@ -288,13 +299,13 @@ u32 Timers::ReadRegister(u32 offset)
 {
   const u32 timer_index = (offset >> 4) & u32(0x03);
   const u32 port_offset = offset & u32(0x0F);
-  if (timer_index >= 3)
+  if (timer_index >= 3) [[unlikely]]
   {
-    Log_ErrorPrintf("Timer read out of range: offset 0x%02X", offset);
+    ERROR_LOG("Timer read out of range: offset 0x{:02X}", offset);
     return UINT32_C(0xFFFFFFFF);
   }
 
-  CounterState& cs = s_states[timer_index];
+  CounterState& cs = s_state.counters[timer_index];
 
   switch (port_offset)
   {
@@ -307,7 +318,7 @@ u32 Timers::ReadRegister(u32 offset)
           g_gpu->SynchronizeCRTC();
       }
 
-      s_sysclk_event->InvokeEarly();
+      s_state.sysclk_event.InvokeEarly();
 
       return cs.counter;
     }
@@ -321,7 +332,7 @@ u32 Timers::ReadRegister(u32 offset)
           g_gpu->SynchronizeCRTC();
       }
 
-      s_sysclk_event->InvokeEarly();
+      s_state.sysclk_event.InvokeEarly();
 
       const u32 bits = cs.mode.bits;
       cs.mode.reached_overflow = false;
@@ -333,7 +344,7 @@ u32 Timers::ReadRegister(u32 offset)
       return cs.target;
 
     default:
-      Log_ErrorPrintf("Read unknown register in timer %u (offset 0x%02X)", timer_index, offset);
+      [[unlikely]] ERROR_LOG("Read unknown register in timer {} (offset 0x{:02X})", timer_index, offset);
       return UINT32_C(0xFFFFFFFF);
   }
 }
@@ -342,13 +353,13 @@ void Timers::WriteRegister(u32 offset, u32 value)
 {
   const u32 timer_index = (offset >> 4) & u32(0x03);
   const u32 port_offset = offset & u32(0x0F);
-  if (timer_index >= 3)
+  if (timer_index >= 3) [[unlikely]]
   {
-    Log_ErrorPrintf("Timer write out of range: offset 0x%02X value 0x%08X", offset, value);
+    ERROR_LOG("Timer write out of range: offset 0{:02X} value 0x{:08X}", offset, value);
     return;
   }
 
-  CounterState& cs = s_states[timer_index];
+  CounterState& cs = s_state.counters[timer_index];
 
   if (timer_index < 2 && cs.external_counting_enabled)
   {
@@ -357,7 +368,7 @@ void Timers::WriteRegister(u32 offset, u32 value)
       g_gpu->SynchronizeCRTC();
   }
 
-  s_sysclk_event->InvokeEarly();
+  s_state.sysclk_event.InvokeEarly();
 
   // Strictly speaking these IRQ checks should probably happen on the next tick.
   switch (port_offset)
@@ -365,7 +376,7 @@ void Timers::WriteRegister(u32 offset, u32 value)
     case 0x00:
     {
       const u32 old_counter = cs.counter;
-      Log_DebugPrintf("Timer %u write counter %u", timer_index, value);
+      DEBUG_LOG("Timer {} write counter {}", timer_index, value);
       cs.counter = value & u32(0xFFFF);
       CheckForIRQ(timer_index, old_counter);
       if (timer_index == 2 || !cs.external_counting_enabled)
@@ -377,7 +388,7 @@ void Timers::WriteRegister(u32 offset, u32 value)
     {
       static constexpr u32 WRITE_MASK = 0b1110001111111111;
 
-      Log_DebugPrintf("Timer %u write mode register 0x%04X", timer_index, value);
+      DEBUG_LOG("Timer {} write mode register 0x{:04X}", timer_index, value);
       cs.mode.bits = (value & WRITE_MASK) | (cs.mode.bits & ~WRITE_MASK);
       cs.use_external_clock = (cs.mode.clock_source & (timer_index == 2 ? 2 : 1)) != 0;
       cs.counter = 0;
@@ -393,7 +404,7 @@ void Timers::WriteRegister(u32 offset, u32 value)
 
     case 0x08:
     {
-      Log_DebugPrintf("Timer %u write target 0x%04X", timer_index, ZeroExtend32(Truncate16(value)));
+      DEBUG_LOG("Timer {} write target 0x{:04X}", timer_index, ZeroExtend32(Truncate16(value)));
       cs.target = value & u32(0xFFFF);
       CheckForIRQ(timer_index, cs.counter);
       if (timer_index == 2 || !cs.external_counting_enabled)
@@ -402,7 +413,7 @@ void Timers::WriteRegister(u32 offset, u32 value)
     break;
 
     default:
-      Log_ErrorPrintf("Write unknown register in timer %u (offset 0x%02X, value 0x%X)", timer_index, offset, value);
+      ERROR_LOG("Write unknown register in timer {} (offset 0x{:02X}, value 0x{:X})", timer_index, offset, value);
       break;
   }
 }
@@ -413,18 +424,21 @@ void Timers::UpdateCountingEnabled(CounterState& cs)
   {
     switch (cs.mode.sync_mode)
     {
-      case SyncMode::PauseOnGate:
+      case SyncMode::PauseWhileGateActive:
         cs.counting_enabled = !cs.gate;
         break;
 
-      case SyncMode::ResetOnGate:
+      case SyncMode::ResetOnGateEnd:
         cs.counting_enabled = true;
         break;
 
-      case SyncMode::ResetAndRunOnGate:
-      case SyncMode::FreeRunOnGate:
+      case SyncMode::ResetAndRunOnGateStart:
+      case SyncMode::FreeRunOnGateEnd:
         cs.counting_enabled = cs.gate;
         break;
+
+      default:
+        UnreachableCode();
     }
   }
   else
@@ -440,7 +454,7 @@ TickCount Timers::GetTicksUntilNextInterrupt()
   TickCount min_ticks = System::GetMaxSliceTicks();
   for (u32 i = 0; i < NUM_TIMERS; i++)
   {
-    const CounterState& cs = s_states[i];
+    const CounterState& cs = s_state.counters[i];
     if (!cs.counting_enabled || (i < 2 && cs.external_counting_enabled) ||
         (!cs.mode.irq_at_target && !cs.mode.irq_on_overflow && (cs.mode.irq_repeat || !cs.irq_done)))
     {
@@ -471,7 +485,7 @@ TickCount Timers::GetTicksUntilNextInterrupt()
 
 void Timers::UpdateSysClkEvent()
 {
-  s_sysclk_event->Schedule(GetTicksUntilNextInterrupt());
+  s_state.sysclk_event.Schedule(GetTicksUntilNextInterrupt());
 }
 
 void Timers::DrawDebugStateWindow()
@@ -486,9 +500,9 @@ void Timers::DrawDebugStateWindow()
      {{"SysClk", "HBlank", "SysClk", "HBlank"}},
      {{"SysClk", "DotClk", "SysClk/8", "SysClk/8"}}}};
 
-  const float framebuffer_scale = Host::GetOSDScale();
+  const float framebuffer_scale = ImGuiManager::GetGlobalScale();
 
-  ImGui::SetNextWindowSize(ImVec2(800.0f * framebuffer_scale, 100.0f * framebuffer_scale), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(800.0f * framebuffer_scale, 115.0f * framebuffer_scale), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Timer State", nullptr))
   {
     ImGui::End();
@@ -515,7 +529,7 @@ void Timers::DrawDebugStateWindow()
 
   for (u32 i = 0; i < NUM_TIMERS; i++)
   {
-    const CounterState& cs = s_states[i];
+    const CounterState& cs = s_state.counters[i];
     ImGui::PushStyleColor(ImGuiCol_Text,
                           cs.counting_enabled ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
     ImGui::Text("%u", i);

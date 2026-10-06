@@ -17,7 +17,7 @@
    <string>DuckStation</string>
   </property>
   <property name="windowIcon">
-   <iconset resource="resources/resources.qrc">
+   <iconset resource="resources/duckstation-qt.qrc">
     <normaloff>:/icons/duck.png</normaloff>:/icons/duck.png</iconset>
   </property>
   <property name="unifiedTitleAndToolBarOnMac">
@@ -100,22 +100,6 @@
     <property name="title">
      <string>S&amp;ettings</string>
     </property>
-    <widget class="QMenu" name="menuSettingsTheme">
-     <property name="title">
-      <string>Theme</string>
-     </property>
-     <property name="icon">
-      <iconset theme="paint-brush-line"/>
-     </property>
-    </widget>
-    <widget class="QMenu" name="menuSettingsLanguage">
-     <property name="title">
-      <string>Language</string>
-     </property>
-     <property name="icon">
-      <iconset theme="global-line"/>
-     </property>
-    </widget>
     <addaction name="actionViewGameProperties"/>
     <addaction name="separator"/>
     <addaction name="actionInterfaceSettings"/>
@@ -137,9 +121,6 @@
     <addaction name="actionAddGameDirectory"/>
     <addaction name="actionScanForNewGames"/>
     <addaction name="actionRescanAllGames"/>
-    <addaction name="separator"/>
-    <addaction name="menuSettingsLanguage"/>
-    <addaction name="menuSettingsTheme"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -178,8 +159,6 @@
     <addaction name="menuRenderer"/>
     <addaction name="menuCropMode"/>
     <addaction name="actionDisableAllEnhancements"/>
-    <addaction name="actionDisableInterlacing"/>
-    <addaction name="actionForceNTSCTimings"/>
     <addaction name="separator"/>
     <addaction name="actionCPUDebugger"/>
     <addaction name="actionEnableGDBServer"/>
@@ -190,7 +169,6 @@
     <addaction name="separator"/>
     <addaction name="actionDebugDumpCPUtoVRAMCopies"/>
     <addaction name="actionDebugDumpVRAMtoCPUCopies"/>
-    <addaction name="actionDumpAudio"/>
     <addaction name="separator"/>
     <addaction name="actionDebugShowVRAM"/>
     <addaction name="actionDebugShowGPUState"/>
@@ -220,6 +198,8 @@
     <addaction name="actionFullscreen"/>
     <addaction name="menuWindowSize"/>
     <addaction name="separator"/>
+    <addaction name="actionMergeDiscSets"/>
+    <addaction name="actionShowGameIcons"/>
     <addaction name="actionGridViewShowTitles"/>
     <addaction name="actionGridViewZoomIn"/>
     <addaction name="actionGridViewZoomOut"/>
@@ -233,6 +213,8 @@
     <addaction name="actionCoverDownloader"/>
     <addaction name="separator"/>
     <addaction name="actionMemoryScanner"/>
+    <addaction name="separator"/>
+    <addaction name="actionMediaCapture"/>
     <addaction name="separator"/>
     <addaction name="actionOpenDataDirectory"/>
    </widget>
@@ -443,7 +425,7 @@
   </action>
   <action name="actionGitHubRepository">
    <property name="icon">
-    <iconset resource="resources/resources.qrc">
+    <iconset resource="resources/duckstation-qt.qrc">
      <normaloff>:/icons/github.png</normaloff>:/icons/github.png</iconset>
    </property>
    <property name="text">
@@ -452,7 +434,7 @@
   </action>
   <action name="actionIssueTracker">
    <property name="icon">
-    <iconset resource="resources/resources.qrc">
+    <iconset resource="resources/duckstation-qt.qrc">
      <normaloff>:/icons/IssueTracker.png</normaloff>:/icons/IssueTracker.png</iconset>
    </property>
    <property name="text">
@@ -461,7 +443,7 @@
   </action>
   <action name="actionDiscordServer">
    <property name="icon">
-    <iconset resource="resources/resources.qrc">
+    <iconset resource="resources/duckstation-qt.qrc">
      <normaloff>:/icons/discord.png</normaloff>:/icons/discord.png</iconset>
    </property>
    <property name="text">
@@ -483,7 +465,7 @@
   </action>
   <action name="actionAboutQt">
    <property name="icon">
-    <iconset resource="resources/resources.qrc">
+    <iconset resource="resources/duckstation-qt.qrc">
      <normaloff>:/icons/QT.png</normaloff>:/icons/QT.png</iconset>
    </property>
    <property name="text">
@@ -492,7 +474,7 @@
   </action>
   <action name="actionAbout">
    <property name="icon">
-    <iconset resource="resources/resources.qrc">
+    <iconset resource="resources/duckstation-qt.qrc">
      <normaloff>:/icons/duck_64.png</normaloff>:/icons/duck_64.png</iconset>
    </property>
    <property name="text">
@@ -661,30 +643,6 @@
    </property>
    <property name="text">
     <string>Disable All Enhancements</string>
-   </property>
-  </action>
-  <action name="actionDisableInterlacing">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Disable Interlacing</string>
-   </property>
-  </action>
-  <action name="actionForceNTSCTimings">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Force NTSC Timings</string>
-   </property>
-  </action>
-  <action name="actionDumpAudio">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Dump Audio</string>
    </property>
   </action>
   <action name="actionDumpRAM">
@@ -863,6 +821,17 @@
     <string>Game &amp;Grid</string>
    </property>
   </action>
+  <action name="actionMergeDiscSets">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Merge Multi-Disc Games</string>
+   </property>
+  </action>
   <action name="actionGridViewShowTitles">
    <property name="checkable">
     <bool>true</bool>
@@ -939,9 +908,28 @@
     <string>Memory &amp;Scanner</string>
    </property>
   </action>
+  <action name="actionShowGameIcons">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Show Game Icons (List View)</string>
+   </property>
+  </action>
+  <action name="actionMediaCapture">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Media Ca&amp;pture</string>
+   </property>
+  </action>
  </widget>
  <resources>
-  <include location="resources/resources.qrc"/>
+  <include location="resources/duckstation-qt.qrc"/>
  </resources>
  <connections/>
 </ui>

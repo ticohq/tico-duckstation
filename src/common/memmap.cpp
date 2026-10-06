@@ -10,24 +10,42 @@
 #include "string_util.h"
 
 #include "fmt/format.h"
+#include "fmt/printf.h"
+
+#include <memory>
 
 #if defined(_WIN32)
 #include "windows_headers.h"
+#include <Psapi.h>
 #elif defined(__SWITCH__)
+#include <cstdlib>
 #include <switch.h>
+extern "C" char __start__;
+#elif defined(__APPLE__)
+#ifdef __aarch64__
+#include <pthread.h> // pthread_jit_write_protect_np()
+#endif
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+#include <mach/mach_init.h>
+#include <mach/mach_port.h>
+#include <mach/mach_vm.h>
+#include <mach/vm_map.h>
+#include <sys/mman.h>
 #elif !defined(__ANDROID__)
 #include <cerrno>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
 
-#if defined(__APPLE__) && defined(__aarch64__)
-// pthread_jit_write_protect_np()
-#include <pthread.h>
-#endif
+Log_SetChannel(MemMap);
 
-Log_SetChannel(MemoryArena);
+namespace MemMap {
+/// Allocates RWX memory at the specified address.
+static void* AllocateJITMemoryAt(const void* addr, size_t size);
+} // namespace MemMap
 
 #ifdef _WIN32
 
@@ -38,7 +56,7 @@ bool MemMap::MemProtect(void* baseaddr, size_t size, PageProtect mode)
   DWORD old_protect;
   if (!VirtualProtect(baseaddr, size, static_cast<DWORD>(mode), &old_protect))
   {
-    Log_ErrorPrintf("VirtualProtect() failed with error %u", GetLastError());
+    ERROR_LOG("VirtualProtect() failed with error {}", GetLastError());
     return false;
   }
 
@@ -53,18 +71,24 @@ std::string MemMap::GetFileMappingName(const char* prefix)
 
 void* MemMap::CreateSharedMemory(const char* name, size_t size, Error* error)
 {
+  const std::wstring mapping_name = name ? StringUtil::UTF8StringToWideString(name) : std::wstring();
   const HANDLE mapping =
-    static_cast<void*>(CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, static_cast<DWORD>(size >> 32),
-                                          static_cast<DWORD>(size), StringUtil::UTF8StringToWideString(name).c_str()));
+    CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, static_cast<DWORD>(size >> 32),
+                       static_cast<DWORD>(size), mapping_name.empty() ? nullptr : mapping_name.c_str());
   if (!mapping)
     Error::SetWin32(error, "CreateFileMappingW() failed: ", GetLastError());
 
-  return mapping;
+  return static_cast<void*>(mapping);
 }
 
 void MemMap::DestroySharedMemory(void* ptr)
 {
   CloseHandle(static_cast<HANDLE>(ptr));
+}
+
+void MemMap::DeleteSharedMemory(const char* name)
+{
+  // Automatically freed on close.
 }
 
 void* MemMap::MapSharedMemory(void* handle, size_t offset, void* baseaddr, size_t size, PageProtect mode)
@@ -88,6 +112,44 @@ void MemMap::UnmapSharedMemory(void* baseaddr, size_t size)
   if (!UnmapViewOfFile(baseaddr))
     Panic("Failed to unmap shared memory");
 }
+
+const void* MemMap::GetBaseAddress()
+{
+  const HMODULE mod = GetModuleHandleW(nullptr);
+  if (!mod)
+    return nullptr;
+
+  MODULEINFO mi;
+  if (!GetModuleInformation(GetCurrentProcess(), mod, &mi, sizeof(mi)))
+    return mod;
+
+  return mi.lpBaseOfDll;
+}
+
+void* MemMap::AllocateJITMemoryAt(const void* addr, size_t size)
+{
+  void* ptr = static_cast<u8*>(VirtualAlloc(const_cast<void*>(addr), size,
+                                            addr ? (MEM_RESERVE | MEM_COMMIT) : MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+  if (!ptr && !addr) [[unlikely]]
+    ERROR_LOG("VirtualAlloc(RWX, {}) for internal buffer failed: {}", size, GetLastError());
+
+  return ptr;
+}
+
+void MemMap::ReleaseJITMemory(void* ptr, size_t size)
+{
+  if (!VirtualFree(ptr, 0, MEM_RELEASE))
+    ERROR_LOG("Failed to free code pointer {}", static_cast<void*>(ptr));
+}
+
+#if defined(CPU_ARCH_ARM32) || defined(CPU_ARCH_ARM64) || defined(CPU_ARCH_RISCV64)
+
+void MemMap::FlushInstructionCache(void* address, size_t size)
+{
+  ::FlushInstructionCache(GetCurrentProcess(), address, size);
+}
+
+#endif
 
 SharedMemoryMappingArea::SharedMemoryMappingArea() = default;
 
@@ -207,7 +269,7 @@ u8* SharedMemoryMappingArea::Map(void* file_handle, size_t file_offset, void* ma
   if (!MapViewOfFile3(static_cast<HANDLE>(file_handle), GetCurrentProcess(), map_base, file_offset, map_size,
                       MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0))
   {
-    Log_ErrorPrintf("MapViewOfFile3() failed: %u", GetLastError());
+    ERROR_LOG("MapViewOfFile3() failed: {}", GetLastError());
     return nullptr;
   }
 
@@ -233,7 +295,7 @@ bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size)
   // unmap the specified range
   if (!UnmapViewOfFile2(GetCurrentProcess(), map_base, MEM_PRESERVE_PLACEHOLDER))
   {
-    Log_ErrorPrintf("UnmapViewOfFile2() failed: %u", GetLastError());
+    ERROR_LOG("UnmapViewOfFile2() failed: {}", GetLastError());
     return false;
   }
 
@@ -279,6 +341,267 @@ bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size)
   m_num_mappings--;
   return true;
 }
+
+#elif defined(__APPLE__)
+
+bool MemMap::MemProtect(void* baseaddr, size_t size, PageProtect mode)
+{
+  DebugAssertMsg((size & (HOST_PAGE_SIZE - 1)) == 0, "Size is page aligned");
+
+  kern_return_t res = mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(baseaddr), size, false,
+                                      static_cast<vm_prot_t>(mode));
+  if (res != KERN_SUCCESS) [[unlikely]]
+  {
+    ERROR_LOG("mach_vm_protect() failed: {}", res);
+    return false;
+  }
+
+  return true;
+}
+
+std::string MemMap::GetFileMappingName(const char* prefix)
+{
+  // name actually is not used.
+  return {};
+}
+
+void* MemMap::CreateSharedMemory(const char* name, size_t size, Error* error)
+{
+  mach_vm_size_t vm_size = size;
+  mach_port_t port;
+  const kern_return_t res = mach_make_memory_entry_64(
+    mach_task_self(), &vm_size, 0, MAP_MEM_NAMED_CREATE | VM_PROT_READ | VM_PROT_WRITE, &port, MACH_PORT_NULL);
+  if (res != KERN_SUCCESS)
+  {
+    Error::SetStringFmt(error, "mach_make_memory_entry_64() failed: {}", res);
+    return nullptr;
+  }
+
+  return reinterpret_cast<void*>(static_cast<uintptr_t>(port));
+}
+
+void MemMap::DestroySharedMemory(void* ptr)
+{
+  mach_port_deallocate(mach_task_self(), static_cast<mach_port_t>(reinterpret_cast<uintptr_t>(ptr)));
+}
+
+void MemMap::DeleteSharedMemory(const char* name)
+{
+}
+
+void* MemMap::MapSharedMemory(void* handle, size_t offset, void* baseaddr, size_t size, PageProtect mode)
+{
+  mach_vm_address_t ptr = reinterpret_cast<mach_vm_address_t>(baseaddr);
+  const kern_return_t res = mach_vm_map(mach_task_self(), &ptr, size, 0, baseaddr ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE,
+                                        static_cast<mach_port_t>(reinterpret_cast<uintptr_t>(handle)), offset, FALSE,
+                                        static_cast<vm_prot_t>(mode), VM_PROT_READ | VM_PROT_WRITE, VM_INHERIT_NONE);
+  if (res != KERN_SUCCESS)
+  {
+    ERROR_LOG("mach_vm_map() failed: {}", res);
+    return nullptr;
+  }
+
+  return reinterpret_cast<void*>(ptr);
+}
+
+void MemMap::UnmapSharedMemory(void* baseaddr, size_t size)
+{
+  const kern_return_t res = mach_vm_deallocate(mach_task_self(), reinterpret_cast<mach_vm_address_t>(baseaddr), size);
+  if (res != KERN_SUCCESS)
+    Panic("Failed to unmap shared memory");
+}
+
+const void* MemMap::GetBaseAddress()
+{
+  u32 name_buffer_size = 0;
+  _NSGetExecutablePath(nullptr, &name_buffer_size);
+  if (name_buffer_size > 0) [[likely]]
+  {
+    std::unique_ptr<char[]> name_buffer = std::make_unique_for_overwrite<char[]>(name_buffer_size + 1);
+    if (_NSGetExecutablePath(name_buffer.get(), &name_buffer_size) == 0) [[likely]]
+    {
+      name_buffer[name_buffer_size] = 0;
+
+      const struct segment_command_64* command = getsegbyname("__TEXT");
+      if (command) [[likely]]
+      {
+        const u8* base = reinterpret_cast<const u8*>(command->vmaddr);
+        const u32 image_count = _dyld_image_count();
+        for (u32 i = 0; i < image_count; i++)
+        {
+          if (std::strcmp(_dyld_get_image_name(i), name_buffer.get()) == 0)
+            return base + _dyld_get_image_vmaddr_slide(i);
+        }
+      }
+    }
+  }
+
+  return reinterpret_cast<const void*>(&GetBaseAddress);
+}
+
+void* MemMap::AllocateJITMemoryAt(const void* addr, size_t size)
+{
+#if !defined(__aarch64__)
+  kern_return_t ret = mach_vm_allocate(mach_task_self(), reinterpret_cast<mach_vm_address_t*>(&addr), size,
+                                       addr ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE);
+  if (ret != KERN_SUCCESS)
+  {
+    ERROR_LOG("mach_vm_allocate() returned {}", ret);
+    return nullptr;
+  }
+
+  ret = mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(addr), size, false,
+                        VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+  if (ret != KERN_SUCCESS)
+  {
+    ERROR_LOG("mach_vm_protect() returned {}", ret);
+    mach_vm_deallocate(mach_task_self(), reinterpret_cast<mach_vm_address_t>(addr), size);
+    return nullptr;
+  }
+
+  return const_cast<void*>(addr);
+#else
+  // On ARM64, we need to use MAP_JIT, which means we can't use MAP_FIXED.
+  if (addr)
+    return nullptr;
+
+  constexpr int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT;
+  void* ptr = mmap(const_cast<void*>(addr), size, PROT_READ | PROT_WRITE | PROT_EXEC, flags, -1, 0);
+  if (ptr == MAP_FAILED)
+  {
+    ERROR_LOG("mmap(RWX, {}) for internal buffer failed: {}", size, errno);
+    return nullptr;
+  }
+
+  return ptr;
+#endif
+}
+
+void MemMap::ReleaseJITMemory(void* ptr, size_t size)
+{
+#if !defined(__aarch64__)
+  const kern_return_t res = mach_vm_deallocate(mach_task_self(), reinterpret_cast<mach_vm_address_t>(ptr), size);
+  if (res != KERN_SUCCESS)
+    ERROR_LOG("mach_vm_deallocate() failed: {}", res);
+#else
+  if (munmap(ptr, size) != 0)
+    ERROR_LOG("Failed to free code pointer {}", static_cast<void*>(ptr));
+#endif
+}
+
+#if defined(CPU_ARCH_ARM32) || defined(CPU_ARCH_ARM64) || defined(CPU_ARCH_RISCV64)
+
+void MemMap::FlushInstructionCache(void* address, size_t size)
+{
+  __builtin___clear_cache(reinterpret_cast<char*>(address), reinterpret_cast<char*>(address) + size);
+}
+
+#endif
+
+SharedMemoryMappingArea::SharedMemoryMappingArea() = default;
+
+SharedMemoryMappingArea::~SharedMemoryMappingArea()
+{
+  Destroy();
+}
+
+bool SharedMemoryMappingArea::Create(size_t size)
+{
+  AssertMsg(Common::IsAlignedPow2(size, HOST_PAGE_SIZE), "Size is page aligned");
+  Destroy();
+
+  const kern_return_t res =
+    mach_vm_map(mach_task_self(), reinterpret_cast<mach_vm_address_t*>(&m_base_ptr), size, 0, VM_FLAGS_ANYWHERE,
+                MEMORY_OBJECT_NULL, 0, false, VM_PROT_NONE, VM_PROT_NONE, VM_INHERIT_NONE);
+  if (res != KERN_SUCCESS)
+  {
+    ERROR_LOG("mach_vm_map() failed: {}", res);
+    return false;
+  }
+
+  m_size = size;
+  m_num_pages = size / HOST_PAGE_SIZE;
+  return true;
+}
+
+void SharedMemoryMappingArea::Destroy()
+{
+  AssertMsg(m_num_mappings == 0, "No mappings left");
+
+  if (m_base_ptr &&
+      mach_vm_deallocate(mach_task_self(), reinterpret_cast<mach_vm_address_t>(m_base_ptr), m_size) != KERN_SUCCESS)
+  {
+    Panic("Failed to release shared memory area");
+  }
+
+  m_base_ptr = nullptr;
+  m_size = 0;
+  m_num_pages = 0;
+}
+
+u8* SharedMemoryMappingArea::Map(void* file_handle, size_t file_offset, void* map_base, size_t map_size,
+                                 PageProtect mode)
+{
+  DebugAssert(static_cast<u8*>(map_base) >= m_base_ptr && static_cast<u8*>(map_base) < (m_base_ptr + m_size));
+
+  const kern_return_t res =
+    mach_vm_map(mach_task_self(), reinterpret_cast<mach_vm_address_t*>(&map_base), map_size, 0, VM_FLAGS_OVERWRITE,
+                static_cast<mach_port_t>(reinterpret_cast<uintptr_t>(file_handle)), file_offset, false,
+                static_cast<vm_prot_t>(mode), VM_PROT_READ | VM_PROT_WRITE, VM_INHERIT_NONE);
+  if (res != KERN_SUCCESS) [[unlikely]]
+  {
+    ERROR_LOG("mach_vm_map() failed: {}", res);
+    return nullptr;
+  }
+
+  m_num_mappings++;
+  return static_cast<u8*>(map_base);
+}
+
+bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size)
+{
+  DebugAssert(static_cast<u8*>(map_base) >= m_base_ptr && static_cast<u8*>(map_base) < (m_base_ptr + m_size));
+
+  const kern_return_t res =
+    mach_vm_map(mach_task_self(), reinterpret_cast<mach_vm_address_t*>(&map_base), map_size, 0, VM_FLAGS_OVERWRITE,
+                MEMORY_OBJECT_NULL, 0, false, VM_PROT_NONE, VM_PROT_NONE, VM_INHERIT_NONE);
+  if (res != KERN_SUCCESS) [[unlikely]]
+  {
+    ERROR_LOG("mach_vm_map() failed: {}", res);
+    return false;
+  }
+
+  m_num_mappings--;
+  return true;
+}
+
+#ifdef __aarch64__
+
+static thread_local int s_code_write_depth = 0;
+
+void MemMap::BeginCodeWrite()
+{
+  // DEBUG_LOG("BeginCodeWrite(): {}", s_code_write_depth);
+  if ((s_code_write_depth++) == 0)
+  {
+    // DEBUG_LOG("  pthread_jit_write_protect_np(0)");
+    pthread_jit_write_protect_np(0);
+  }
+}
+
+void MemMap::EndCodeWrite()
+{
+  // DEBUG_LOG("EndCodeWrite(): {}", s_code_write_depth);
+
+  DebugAssert(s_code_write_depth > 0);
+  if ((--s_code_write_depth) == 0)
+  {
+    // DEBUG_LOG("  pthread_jit_write_protect_np(1)");
+    pthread_jit_write_protect_np(1);
+  }
+}
+
+#endif
 
 #elif defined(__SWITCH__)
 
@@ -334,12 +657,12 @@ void* ReserveVirtmem(size_t size)
   void* addr = virtmemFindAslr(size, 0x1000);
   if (!addr)
   {
-    Log_ErrorPrintf("virtmemFindAslr failed (size %zx)", size);
+    ERROR_LOG("{}", fmt::sprintf("virtmemFindAslr failed (size %zx)", size));
     return nullptr;
   }
   VirtmemReservation* reservation = virtmemAddReservation(addr, size);
   if (!addr)
-    Log_ErrorPrintf("virtmemAddReservation failed");
+    ERROR_LOG("{}", fmt::sprintf("virtmemAddReservation failed"));
 
   VMemReservations.push_back({addr, reservation});
 
@@ -359,7 +682,7 @@ void FreeVirtmem(void* addr)
     }
   }
 
-  Log_ErrorPrintf("Trying to free unknown virtmem reservation %p", addr);
+  ERROR_LOG("{}", fmt::sprintf("Trying to free unknown virtmem reservation %p", addr));
 }
 
 void* MemMap::CreateSharedMemory(const char* name, size_t size, Error* error)
@@ -368,12 +691,17 @@ void* MemMap::CreateSharedMemory(const char* name, size_t size, Error* error)
 
   if (!heapMemory)
   {
-    Log_ErrorPrintf("Failed to allocate heap memory backing %zx", size);
+    ERROR_LOG("{}", fmt::sprintf("Failed to allocate heap memory backing %zx", size));
     virtmemUnlock();
     return nullptr;
   }
 
   return heapMemory;
+}
+
+void MemMap::DeleteSharedMemory(const char* name)
+{
+  // shared memory has no name on the Switch
 }
 
 void MemMap::DestroySharedMemory(void* ptr)
@@ -386,7 +714,7 @@ void MemMap::DestroySharedMemory(void* ptr)
                                                 it->heap_memory, it->size);
       if (R_FAILED(result))
       {
-        Log_ErrorPrintf("Unmapping code memory failed %x %p %lx %lx", result, it->code_memory, it->heap_memory, it->size);
+        ERROR_LOG("{}", fmt::sprintf("Unmapping code memory failed %x %p %lx %lx", result, it->code_memory, it->heap_memory, it->size));
       }
 
       it = CodeMemories.erase(it);
@@ -448,19 +776,19 @@ void* MemMap::MapSharedMemory(void* handle, size_t offset, void* baseaddr, size_
   Result result = svcMapProcessCodeMemory(envGetOwnProcessHandle(), reinterpret_cast<u64>(baseaddr), heap_memory, size);
   if (R_FAILED(result))
   {
-    Log_ErrorPrintf("svcMapProcessCodeMemory failed %x", result);
+    ERROR_LOG("{}", fmt::sprintf("svcMapProcessCodeMemory failed %x", result));
     return nullptr;
   }
   result = svcSetProcessMemoryPermission(envGetOwnProcessHandle(), reinterpret_cast<u64>(baseaddr), size,
                                          ToHOSPermission(mode));
   if (R_FAILED(result))
   {
-    Log_ErrorPrintf("svcSetProcessMemoryPermission failed %x", result);
+    ERROR_LOG("{}", fmt::sprintf("svcSetProcessMemoryPermission failed %x", result));
     return nullptr;
   }
   CodeMemories.push_back(CodeMemoryMapping{heap_memory, baseaddr, size, handle});
 
-  Log_DebugPrintf("Creating code memory %p %lx", baseaddr, size);
+  DEBUG_LOG("{}", fmt::sprintf("Creating code memory %p %lx", baseaddr, size));
   return baseaddr;
 }
 
@@ -483,7 +811,7 @@ void MemMap::UnmapSharedMemory(void* baseaddr, size_t size)
     {
       if (!MemMap::MemProtect(baseaddr, size, PageProtect::NoAccess))
       {
-        Log_ErrorPrintf("Failed to unmap memory mapping");
+        ERROR_LOG("{}", fmt::sprintf("Failed to unmap memory mapping"));
         return;
       }
 
@@ -492,7 +820,7 @@ void MemMap::UnmapSharedMemory(void* baseaddr, size_t size)
     }
   }
 
-  Log_ErrorPrintf("Trying to unmap unknown shared memory (baseaddr=%p, size=%zx)", baseaddr, size);
+  ERROR_LOG("{}", fmt::sprintf("Trying to unmap unknown shared memory (baseaddr=%p, size=%zx)", baseaddr, size));
 }
 
 bool MemMap::MemProtect(void* baseaddr, size_t size, PageProtect mode)
@@ -506,7 +834,7 @@ bool MemMap::MemProtect(void* baseaddr, size_t size, PageProtect mode)
       Result result = svcSetMemoryPermission(baseaddr, size, perms);
       if (R_FAILED(result))
       {
-        Log_ErrorPrintf("svcSetProcessMemoryPermission failed %x %p %lx\n", result, baseaddr, size);
+        ERROR_LOG("{}", fmt::sprintf("svcSetProcessMemoryPermission failed %x %p %lx\n", result, baseaddr, size));
         return false;
       }
       return true;
@@ -533,7 +861,7 @@ bool MemMap::MemProtect(void* baseaddr, size_t size, PageProtect mode)
             if (R_FAILED(svcMapProcessMemory(reinterpret_cast<void*>(reinterpret_cast<u64>(it->addr) + offset),
                                              envGetOwnProcessHandle(), src + offset, island_size)))
             {
-              Log_ErrorPrintf("Map process memory failed\n");
+              ERROR_LOG("{}", fmt::sprintf("Map process memory failed\n"));
               return false;
             }
           }
@@ -545,7 +873,7 @@ bool MemMap::MemProtect(void* baseaddr, size_t size, PageProtect mode)
             if (R_FAILED(svcUnmapProcessMemory(reinterpret_cast<void*>(reinterpret_cast<u64>(it->addr) + offset),
                                                envGetOwnProcessHandle(), src + offset, island_size)))
             {
-              Log_ErrorPrintf("Unmap process memory failed %lx %lx\n", offset, island_size);
+              ERROR_LOG("{}", fmt::sprintf("Unmap process memory failed %lx %lx\n", offset, island_size));
               return false;
             }
           }
@@ -565,7 +893,7 @@ bool MemMap::MemProtect(void* baseaddr, size_t size, PageProtect mode)
     }
   }
 
-  Log_ErrorPrintf("Trying to reprotect memory which was never mapped");
+  ERROR_LOG("{}", fmt::sprintf("Trying to reprotect memory which was never mapped"));
   return false;
 }
 
@@ -581,7 +909,7 @@ bool SharedMemoryMappingArea::Create(size_t size)
   virtmemLock();
   m_base_ptr = reinterpret_cast<u8*>(ReserveVirtmem(size));
   if (!m_base_ptr)
-    Log_ErrorPrintf("failed to create memory area (size=%zx)", size);
+    ERROR_LOG("{}", fmt::sprintf("failed to create memory area (size=%zx)", size));
 
   virtmemUnlock();
   return m_base_ptr != nullptr;
@@ -606,11 +934,107 @@ bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size)
   return true; // cheat
 }
 
-ALWAYS_INLINE static void BeginCodeWrite()
+// JIT code: heap memory turned into code memory, which runs read/execute where
+// it is mapped and is written through a second, read/write mapping.
+static u8* s_jit_heap = nullptr;
+static u8* s_jit_rx = nullptr;
+static u8* s_jit_rw = nullptr;
+static size_t s_jit_size = 0;
+static VirtmemReservation* s_jit_rx_reservation = nullptr;
+static VirtmemReservation* s_jit_rw_reservation = nullptr;
+
+const void* MemMap::GetBaseAddress()
 {
+  return &__start__;
 }
-ALWAYS_INLINE static void EndCodeWrite()
+
+void* MemMap::AllocateJITMemory(size_t size)
 {
+  if (s_jit_rx)
+  {
+    ERROR_LOG("Only one JIT buffer is supported");
+    return nullptr;
+  }
+
+  s_jit_heap = static_cast<u8*>(aligned_alloc(HOST_PAGE_SIZE, size));
+  if (!s_jit_heap)
+  {
+    ERROR_LOG("aligned_alloc({}) for the JIT buffer failed", size);
+    return nullptr;
+  }
+
+  // in branch range of the code: the unmapped space just below the NRO
+  virtmemLock();
+  u8* rx = reinterpret_cast<u8*>(&__start__) - size - HOST_PAGE_SIZE;
+  for (u32 tries = 0;; tries++)
+  {
+    MemoryInfo info = {};
+    u32 page_info = 0;
+    svcQueryMemory(&info, &page_info, reinterpret_cast<u64>(rx));
+    if (info.type == MemType_Unmapped && (info.addr + info.size) >= (reinterpret_cast<u64>(rx) + size))
+      break;
+    if (tries == 8)
+    {
+      virtmemUnlock();
+      ERROR_LOG("No unmapped space for the JIT buffer near the code");
+      std::free(s_jit_heap);
+      s_jit_heap = nullptr;
+      return nullptr;
+    }
+    rx = reinterpret_cast<u8*>(info.addr) - size - HOST_PAGE_SIZE;
+  }
+  u8* rw = static_cast<u8*>(virtmemFindAslr(size, HOST_PAGE_SIZE));
+  s_jit_rx_reservation = virtmemAddReservation(rx, size);
+  s_jit_rw_reservation = virtmemAddReservation(rw, size);
+
+  const Handle process = envGetOwnProcessHandle();
+  Result r = svcMapProcessCodeMemory(process, reinterpret_cast<u64>(rx), reinterpret_cast<u64>(s_jit_heap), size);
+  if (R_SUCCEEDED(r))
+    r = svcSetProcessMemoryPermission(process, reinterpret_cast<u64>(rx), size, Perm_Rx);
+  if (R_SUCCEEDED(r))
+    r = svcMapProcessMemory(rw, process, reinterpret_cast<u64>(rx), size);
+  virtmemUnlock();
+  if (R_FAILED(r))
+  {
+    ERROR_LOG("Mapping the JIT buffer failed: 0x{:08X}", r);
+    return nullptr;
+  }
+
+  s_jit_rx = rx;
+  s_jit_rw = rw;
+  s_jit_size = size;
+  INFO_LOG("JIT buffer of {} MB at {} (written at {})", size / (1024 * 1024), static_cast<void*>(rx),
+           static_cast<void*>(rw));
+  return rx;
+}
+
+void MemMap::ReleaseJITMemory(void* ptr, size_t size)
+{
+  if (!s_jit_rx || ptr != s_jit_rx)
+    return;
+
+  const Handle process = envGetOwnProcessHandle();
+  svcUnmapProcessMemory(s_jit_rw, process, reinterpret_cast<u64>(s_jit_rx), s_jit_size);
+  svcUnmapProcessCodeMemory(process, reinterpret_cast<u64>(s_jit_rx), reinterpret_cast<u64>(s_jit_heap), s_jit_size);
+  virtmemLock();
+  virtmemRemoveReservation(s_jit_rw_reservation);
+  virtmemRemoveReservation(s_jit_rx_reservation);
+  virtmemUnlock();
+  std::free(s_jit_heap);
+  s_jit_heap = s_jit_rx = s_jit_rw = nullptr;
+  s_jit_size = 0;
+}
+
+ptrdiff_t MemMap::GetJITWriteOffset()
+{
+  return s_jit_rw - s_jit_rx;
+}
+
+void MemMap::FlushInstructionCache(void* address, size_t size)
+{
+  // both mappings share the physical pages: cleaning and invalidating through
+  // the executable one covers what was written through the other
+  __builtin___clear_cache(reinterpret_cast<char*>(address), reinterpret_cast<char*>(address) + size);
 }
 
 #elif !defined(__ANDROID__)
@@ -620,9 +1044,9 @@ bool MemMap::MemProtect(void* baseaddr, size_t size, PageProtect mode)
   DebugAssertMsg((size & (HOST_PAGE_SIZE - 1)) == 0, "Size is page aligned");
 
   const int result = mprotect(baseaddr, size, static_cast<int>(mode));
-  if (result != 0)
+  if (result != 0) [[unlikely]]
   {
-    Log_ErrorPrintf("mprotect() for %zu at %p failed", size, baseaddr);
+    ERROR_LOG("mprotect() for {} at {} failed", size, baseaddr);
     return false;
   }
 
@@ -642,21 +1066,35 @@ std::string MemMap::GetFileMappingName(const char* prefix)
 
 void* MemMap::CreateSharedMemory(const char* name, size_t size, Error* error)
 {
+  const bool is_anonymous = (!name || *name == 0);
+#if defined(__linux__) || defined(__FreeBSD__)
+  const int fd = is_anonymous ? memfd_create("", 0) : shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
+  if (fd < 0)
+  {
+    Error::SetErrno(error, is_anonymous ? "memfd_create() failed: " : "shm_open() failed: ", errno);
+    return nullptr;
+  }
+#else
   const int fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
   if (fd < 0)
   {
-    Error::SetErrno(error, "shm_open failed: ", errno);
+    Error::SetErrno(error, "shm_open() failed: ", errno);
     return nullptr;
   }
 
   // we're not going to be opening this mapping in other processes, so remove the file
-  shm_unlink(name);
+  if (is_anonymous)
+    shm_unlink(name);
+#endif
 
   // use fallocate() to ensure we don't SIGBUS later on.
 #ifdef __linux__
   if (fallocate(fd, 0, 0, static_cast<off_t>(size)) < 0)
   {
     Error::SetErrno(error, TinyString::from_format("fallocate({}) failed: ", size), errno);
+    close(fd);
+    if (!is_anonymous)
+      shm_unlink(name);
     return nullptr;
   }
 #else
@@ -664,6 +1102,9 @@ void* MemMap::CreateSharedMemory(const char* name, size_t size, Error* error)
   if (ftruncate(fd, static_cast<off_t>(size)) < 0)
   {
     Error::SetErrno(error, TinyString::from_format("ftruncate({}) failed: ", size), errno);
+    close(fd);
+    if (!is_anonymous)
+      shm_unlink(name);
     return nullptr;
   }
 #endif
@@ -674,6 +1115,11 @@ void* MemMap::CreateSharedMemory(const char* name, size_t size, Error* error)
 void MemMap::DestroySharedMemory(void* ptr)
 {
   close(static_cast<int>(reinterpret_cast<intptr_t>(ptr)));
+}
+
+void MemMap::DeleteSharedMemory(const char* name)
+{
+  shm_unlink(name);
 }
 
 void* MemMap::MapSharedMemory(void* handle, size_t offset, void* baseaddr, size_t size, PageProtect mode)
@@ -689,9 +1135,75 @@ void* MemMap::MapSharedMemory(void* handle, size_t offset, void* baseaddr, size_
 
 void MemMap::UnmapSharedMemory(void* baseaddr, size_t size)
 {
-  if (mmap(baseaddr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED)
+  if (munmap(baseaddr, size) != 0)
     Panic("Failed to unmap shared memory");
 }
+
+const void* MemMap::GetBaseAddress()
+{
+#ifndef __APPLE__
+  Dl_info info;
+  if (dladdr(reinterpret_cast<const void*>(&GetBaseAddress), &info) == 0)
+  {
+    ERROR_LOG("dladdr() failed");
+    return nullptr;
+  }
+
+  return info.dli_fbase;
+#else
+#error Fixme
+#endif
+}
+
+void* MemMap::AllocateJITMemoryAt(const void* addr, size_t size)
+{
+  int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#if defined(__linux__)
+  // Linux does the right thing, allows us to not disturb an existing mapping.
+  if (addr)
+    flags |= MAP_FIXED_NOREPLACE;
+#elif defined(__FreeBSD__)
+  // FreeBSD achieves the same with MAP_FIXED and MAP_EXCL.
+  if (addr)
+    flags |= MAP_FIXED | MAP_EXCL;
+#else
+  // Targeted mapping not available?
+  if (addr)
+    return nullptr;
+#endif
+
+  void* ptr = mmap(const_cast<void*>(addr), size, PROT_READ | PROT_WRITE | PROT_EXEC, flags, -1, 0);
+  if (ptr == MAP_FAILED)
+  {
+    if (!addr)
+      ERROR_LOG("mmap(RWX, {}) for internal buffer failed: {}", size, errno);
+
+    return nullptr;
+  }
+  else if (addr && ptr != addr) [[unlikely]]
+  {
+    if (munmap(ptr, size) != 0)
+      ERROR_LOG("Failed to munmap() incorrectly hinted allocation: {}", errno);
+    return nullptr;
+  }
+
+  return ptr;
+}
+
+void MemMap::ReleaseJITMemory(void* ptr, size_t size)
+{
+  if (munmap(ptr, size) != 0)
+    ERROR_LOG("Failed to free code pointer {}", static_cast<void*>(ptr));
+}
+
+#if defined(CPU_ARCH_ARM32) || defined(CPU_ARCH_ARM64) || defined(CPU_ARCH_RISCV64)
+
+void MemMap::FlushInstructionCache(void* address, size_t size)
+{
+  __builtin___clear_cache(reinterpret_cast<char*>(address), reinterpret_cast<char*>(address) + size);
+}
+
+#endif
 
 SharedMemoryMappingArea::SharedMemoryMappingArea() = default;
 
@@ -754,30 +1266,96 @@ bool SharedMemoryMappingArea::Unmap(void* map_base, size_t map_size)
 
 #endif
 
-#if defined(__APPLE__) && defined(__aarch64__)
-
-static thread_local int s_code_write_depth = 0;
-
-void MemMap::BeginCodeWrite()
+#ifndef __SWITCH__
+void* MemMap::AllocateJITMemory(size_t size)
 {
-  // Log_DebugFmt("BeginCodeWrite(): {}", s_code_write_depth);
-  if ((s_code_write_depth++) == 0)
-  {
-    // Log_DebugPrint("  pthread_jit_write_protect_np(0)");
-    pthread_jit_write_protect_np(0);
-  }
-}
+  const u8* base =
+    reinterpret_cast<const u8*>(Common::AlignDownPow2(reinterpret_cast<uintptr_t>(GetBaseAddress()), HOST_PAGE_SIZE));
+  u8* ptr = nullptr;
+#if !defined(CPU_ARCH_ARM64) || !defined(__APPLE__)
 
-void MemMap::EndCodeWrite()
-{
-  // Log_DebugFmt("EndCodeWrite(): {}", s_code_write_depth);
-
-  DebugAssert(s_code_write_depth > 0);
-  if ((--s_code_write_depth) == 0)
-  {
-    // Log_DebugPrint("  pthread_jit_write_protect_np(1)");
-    pthread_jit_write_protect_np(1);
-  }
-}
-
+#if defined(CPU_ARCH_X64)
+  static constexpr size_t assume_binary_size = 64 * 1024 * 1024;
+  static constexpr size_t step = 64 * 1024 * 1024;
+  static constexpr size_t max_displacement = 0x80000000u;
+#elif defined(CPU_ARCH_ARM64) || defined(CPU_ARCH_RISCV64)
+  static constexpr size_t assume_binary_size = 16 * 1024 * 1024;
+  static constexpr size_t step = 8 * 1024 * 1024;
+  static constexpr size_t max_displacement =
+    1024 * 1024 * 1024; // technically 4GB, but we don't want to spend that much time trying
+#elif defined(CPU_ARCH_ARM32)
+  static constexpr size_t assume_binary_size = 8 * 1024 * 1024; // Wishful thinking...
+  static constexpr size_t step = 2 * 1024 * 1024;
+  static constexpr size_t max_displacement = 32 * 1024 * 1024;
+#else
+#error Unhandled architecture.
 #endif
+
+  const size_t max_displacement_from_start = max_displacement - size;
+  Assert(size <= max_displacement);
+
+  // Try to find a region in the max displacement range of the process base address.
+  // Assume that the DuckStation binary will at max be some size, release is currently around 12MB on Windows.
+  // Therefore the max offset is +/- 12MB + code_size. Try allocating in steps by incrementing the pointer, then if no
+  // address range is found, go backwards from the base address (which will probably fail).
+  const u8* min_address =
+    base - std::min(reinterpret_cast<ptrdiff_t>(base), static_cast<ptrdiff_t>(max_displacement_from_start));
+  const u8* max_address = base + max_displacement_from_start;
+  VERBOSE_LOG("Base address: {}", static_cast<const void*>(base));
+  VERBOSE_LOG("Acceptable address range: {} - {}", static_cast<const void*>(min_address),
+              static_cast<const void*>(max_address));
+
+  // Start offset by the expected binary size.
+  for (const u8* current_address = base + assume_binary_size;; current_address += step)
+  {
+    VERBOSE_LOG("Trying {} (displacement 0x{:X})", static_cast<const void*>(current_address),
+                static_cast<ptrdiff_t>(current_address - base));
+    if ((ptr = static_cast<u8*>(AllocateJITMemoryAt(current_address, size))))
+      break;
+
+    if ((reinterpret_cast<uintptr_t>(current_address) + step) > reinterpret_cast<uintptr_t>(max_address) ||
+        (reinterpret_cast<uintptr_t>(current_address) + step) < reinterpret_cast<uintptr_t>(current_address))
+    {
+      break;
+    }
+  }
+
+  // Try before (will likely fail).
+  if (!ptr && reinterpret_cast<uintptr_t>(base) >= step)
+  {
+    for (const u8* current_address = base - step;; current_address -= step)
+    {
+      VERBOSE_LOG("Trying {} (displacement 0x{:X})", static_cast<const void*>(current_address),
+                  static_cast<ptrdiff_t>(base - current_address));
+      if ((ptr = static_cast<u8*>(AllocateJITMemoryAt(current_address, size))))
+        break;
+
+      if ((reinterpret_cast<uintptr_t>(current_address) - step) < reinterpret_cast<uintptr_t>(min_address) ||
+          (reinterpret_cast<uintptr_t>(current_address) - step) > reinterpret_cast<uintptr_t>(current_address))
+      {
+        break;
+      }
+    }
+  }
+
+  if (!ptr)
+  {
+#ifdef CPU_ARCH_X64
+    ERROR_LOG("Failed to allocate JIT buffer in range, expect crashes.");
+#endif
+    if (!(ptr = static_cast<u8*>(AllocateJITMemoryAt(nullptr, size))))
+      return ptr;
+  }
+#else
+  // We cannot control where the buffer gets allocated on Apple Silicon. Hope for the best.
+  if (!(ptr = static_cast<u8*>(AllocateJITMemoryAt(nullptr, size))))
+    return ptr;
+#endif
+
+  INFO_LOG("Allocated JIT buffer of size {} at {} (0x{:X} bytes / {} MB away)", size, static_cast<void*>(ptr),
+           std::abs(static_cast<ptrdiff_t>(ptr - base)),
+           (std::abs(static_cast<ptrdiff_t>(ptr - base)) + (1024 * 1024 - 1)) / (1024 * 1024));
+
+  return ptr;
+}
+#endif // __SWITCH__

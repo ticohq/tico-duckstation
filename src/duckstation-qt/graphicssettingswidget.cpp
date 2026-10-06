@@ -2,20 +2,17 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "graphicssettingswidget.h"
-#include "core/gpu.h"
-#include "core/settings.h"
 #include "qtutils.h"
 #include "settingswindow.h"
 #include "settingwidgetbinder.h"
 
-// For enumerating adapters.
-#ifdef _WIN32
-#include "util/d3d11_device.h"
-#include "util/d3d12_device.h"
-#endif
-#ifdef ENABLE_VULKAN
-#include "util/vulkan_device.h"
-#endif
+#include "core/game_database.h"
+#include "core/gpu.h"
+#include "core/settings.h"
+
+#include "util/media_capture.h"
+
+#include <algorithm>
 
 static QVariant GetMSAAModeValue(uint multisamples, bool ssaa)
 {
@@ -51,8 +48,10 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
 
   SettingWidgetBinder::BindWidgetToEnumSetting(sif, m_ui.renderer, "GPU", "Renderer", &Settings::ParseRendererName,
                                                &Settings::GetRendererName, Settings::DEFAULT_GPU_RENDERER);
-  SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.resolutionScale, "GPU", "ResolutionScale", 1);
   SettingWidgetBinder::BindWidgetToEnumSetting(sif, m_ui.textureFiltering, "GPU", "TextureFilter",
+                                               &Settings::ParseTextureFilterName, &Settings::GetTextureFilterName,
+                                               Settings::DEFAULT_GPU_TEXTURE_FILTER);
+  SettingWidgetBinder::BindWidgetToEnumSetting(sif, m_ui.spriteTextureFiltering, "GPU", "SpriteTextureFilter",
                                                &Settings::ParseTextureFilterName, &Settings::GetTextureFilterName,
                                                Settings::DEFAULT_GPU_TEXTURE_FILTER);
   SettingWidgetBinder::BindWidgetToEnumSetting(sif, m_ui.gpuDownsampleMode, "GPU", "DownsampleMode",
@@ -86,10 +85,8 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
 
   connect(m_ui.renderer, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           &GraphicsSettingsWidget::updateRendererDependentOptions);
-  connect(m_ui.adapter, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-          &GraphicsSettingsWidget::onAdapterChanged);
-  connect(m_ui.resolutionScale, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-          &GraphicsSettingsWidget::onTrueColorChanged);
+  connect(m_ui.textureFiltering, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          &GraphicsSettingsWidget::updateResolutionDependentOptions);
   connect(m_ui.displayAspectRatio, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           &GraphicsSettingsWidget::onAspectRatioChanged);
   connect(m_ui.gpuDownsampleMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -97,22 +94,20 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
   connect(m_ui.trueColor, &QCheckBox::checkStateChanged, this, &GraphicsSettingsWidget::onTrueColorChanged);
   connect(m_ui.pgxpEnable, &QCheckBox::checkStateChanged, this, &GraphicsSettingsWidget::updatePGXPSettingsEnabled);
 
-  if (!dialog->isPerGameSettings() ||
-      (dialog->containsSettingValue("GPU", "Multisamples") || dialog->containsSettingValue("GPU", "PerSampleShading")))
-  {
-    const QVariant current_msaa_mode(
-      GetMSAAModeValue(static_cast<uint>(dialog->getEffectiveIntValue("GPU", "Multisamples", 1)),
-                       dialog->getEffectiveBoolValue("GPU", "PerSampleShading", false)));
-    const int current_msaa_index = m_ui.msaaMode->findData(current_msaa_mode);
-    if (current_msaa_index >= 0)
-      m_ui.msaaMode->setCurrentIndex(current_msaa_index);
-  }
-  else
-  {
-    m_ui.msaaMode->setCurrentIndex(0);
-  }
-  connect(m_ui.msaaMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-          &GraphicsSettingsWidget::onMSAAModeChanged);
+  SettingWidgetBinder::SetAvailability(m_ui.renderer,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::ForceSoftwareRenderer));
+  SettingWidgetBinder::SetAvailability(m_ui.resolutionScale,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::DisableUpscaling));
+  SettingWidgetBinder::SetAvailability(m_ui.textureFiltering,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::DisableTextureFiltering));
+  SettingWidgetBinder::SetAvailability(m_ui.trueColor, !m_dialog->hasGameTrait(GameDatabase::Trait::DisableTrueColor));
+  SettingWidgetBinder::SetAvailability(m_ui.pgxpEnable, !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXP));
+  SettingWidgetBinder::SetAvailability(m_ui.disableInterlacing,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::ForceInterlacing));
+  SettingWidgetBinder::SetAvailability(m_ui.widescreenHack,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::DisableWidescreen));
+  SettingWidgetBinder::SetAvailability(m_ui.forceNTSCTimings,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::DisableForceNTSCTimings));
 
   // Advanced Tab
 
@@ -123,10 +118,14 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
   SettingWidgetBinder::BindWidgetToEnumSetting(sif, m_ui.displayAlignment, "Display", "Alignment",
                                                &Settings::ParseDisplayAlignment, &Settings::GetDisplayAlignmentName,
                                                Settings::DEFAULT_DISPLAY_ALIGNMENT);
-  SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.displayFPSLimit, "Display", "MaxFPS",
-                                              Settings::DEFAULT_DISPLAY_MAX_FPS);
+  SettingWidgetBinder::BindWidgetToEnumSetting(sif, m_ui.displayRotation, "Display", "Rotation",
+                                               &Settings::ParseDisplayRotation, &Settings::GetDisplayRotationName,
+                                               Settings::DEFAULT_DISPLAY_ROTATION);
   SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.gpuThread, "GPU", "UseThread", true);
-  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.threadedPresentation, "GPU", "ThreadedPresentation", true);
+  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.threadedPresentation, "GPU", "ThreadedPresentation",
+                                               Settings::DEFAULT_THREADED_PRESENTATION);
+  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.disableMailboxPresentation, "Display",
+                                               "DisableMailboxPresentation", false);
   SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.stretchDisplayVertically, "Display", "StretchVertically",
                                                false);
 #ifdef _WIN32
@@ -142,9 +141,12 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
   SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.scaledDithering, "GPU", "ScaledDithering", false);
   SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.useSoftwareRendererForReadbacks, "GPU",
                                                "UseSoftwareRendererForReadbacks", false);
+  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.forceRoundedTexcoords, "GPU", "ForceRoundTextureCoordinates",
+                                               false);
+  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.accurateBlending, "GPU", "AccurateBlending", false);
 
-  connect(m_ui.fullscreenMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-          &GraphicsSettingsWidget::onFullscreenModeChanged);
+  SettingWidgetBinder::SetAvailability(m_ui.scaledDithering,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::DisableScaledDithering));
 
   // PGXP Tab
 
@@ -157,11 +159,22 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
   SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.pgxpPreserveProjPrecision, "GPU", "PGXPPreserveProjFP", false);
   SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.pgxpCPU, "GPU", "PGXPCPU", false);
   SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.pgxpVertexCache, "GPU", "PGXPVertexCache", false);
+  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.pgxpDisableOn2DPolygons, "GPU", "PGXPDisableOn2DPolygons",
+                                               false);
 
   connect(m_ui.pgxpTextureCorrection, &QCheckBox::checkStateChanged, this,
           &GraphicsSettingsWidget::updatePGXPSettingsEnabled);
   connect(m_ui.pgxpDepthBuffer, &QCheckBox::checkStateChanged, this,
           &GraphicsSettingsWidget::updatePGXPSettingsEnabled);
+
+  SettingWidgetBinder::SetAvailability(m_ui.pgxpTextureCorrection,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXPTextureCorrection));
+  SettingWidgetBinder::SetAvailability(m_ui.pgxpColorCorrection,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXPColorCorrection));
+  SettingWidgetBinder::SetAvailability(m_ui.pgxpCulling,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXPCulling));
+  SettingWidgetBinder::SetAvailability(m_ui.pgxpPreserveProjPrecision,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXPPreserveProjFP));
 
   // OSD Tab
 
@@ -190,6 +203,37 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
     &Settings::GetDisplayScreenshotFormatName, Settings::DEFAULT_DISPLAY_SCREENSHOT_FORMAT);
   SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.screenshotQuality, "Display", "ScreenshotQuality",
                                               Settings::DEFAULT_DISPLAY_SCREENSHOT_QUALITY);
+
+  SettingWidgetBinder::BindWidgetToEnumSetting(sif, m_ui.mediaCaptureBackend, "MediaCapture", "Backend",
+                                               &MediaCapture::ParseBackendName, &MediaCapture::GetBackendName,
+                                               Settings::DEFAULT_MEDIA_CAPTURE_BACKEND);
+  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.enableVideoCapture, "MediaCapture", "VideoCapture", true);
+  SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.videoCaptureWidth, "MediaCapture", "VideoWidth",
+                                              Settings::DEFAULT_MEDIA_CAPTURE_VIDEO_WIDTH);
+  SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.videoCaptureHeight, "MediaCapture", "VideoHeight",
+                                              Settings::DEFAULT_MEDIA_CAPTURE_VIDEO_HEIGHT);
+  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.videoCaptureResolutionAuto, "MediaCapture", "VideoAutoSize",
+                                               false);
+  SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.videoCaptureBitrate, "MediaCapture", "VideoBitrate",
+                                              Settings::DEFAULT_MEDIA_CAPTURE_VIDEO_BITRATE);
+  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.enableVideoCaptureArguments, "MediaCapture",
+                                               "VideoCodecUseArgs", false);
+  SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.videoCaptureArguments, "MediaCapture", "AudioCodecArgs");
+  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.enableAudioCapture, "MediaCapture", "AudioCapture", true);
+  SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.audioCaptureBitrate, "MediaCapture", "AudioBitrate",
+                                              Settings::DEFAULT_MEDIA_CAPTURE_AUDIO_BITRATE);
+  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.enableVideoCaptureArguments, "MediaCapture",
+                                               "VideoCodecUseArgs", false);
+  SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.audioCaptureArguments, "MediaCapture", "AudioCodecArgs");
+
+  connect(m_ui.mediaCaptureBackend, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          &GraphicsSettingsWidget::onMediaCaptureBackendChanged);
+  connect(m_ui.enableVideoCapture, &QCheckBox::checkStateChanged, this,
+          &GraphicsSettingsWidget::onMediaCaptureVideoEnabledChanged);
+  connect(m_ui.videoCaptureResolutionAuto, &QCheckBox::checkStateChanged, this,
+          &GraphicsSettingsWidget::onMediaCaptureVideoAutoResolutionChanged);
+  connect(m_ui.enableAudioCapture, &QCheckBox::checkStateChanged, this,
+          &GraphicsSettingsWidget::onMediaCaptureAudioEnabledChanged);
 
   // Texture Replacements Tab
 
@@ -229,7 +273,10 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
   updateRendererDependentOptions();
   onAspectRatioChanged();
   onDownsampleModeChanged();
-  onTrueColorChanged();
+  updateResolutionDependentOptions();
+  onMediaCaptureBackendChanged();
+  onMediaCaptureAudioEnabledChanged();
+  onMediaCaptureVideoEnabledChanged();
   onEnableAnyTextureReplacementsChanged();
   onEnableVRAMWriteDumpingChanged();
   onShowDebugSettingsChanged(QtHost::ShouldShowDebugOptions());
@@ -261,9 +308,14 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
   dialog->registerWidgetHelp(
     m_ui.textureFiltering, tr("Texture Filtering"),
     QString::fromUtf8(Settings::GetTextureFilterDisplayName(Settings::DEFAULT_GPU_TEXTURE_FILTER)),
-    tr("Smooths out the blockiness of magnified textures on 3D object by using filtering. <br>Will have a "
+    tr("Smooths out the blockiness of magnified textures on 3D objects by using filtering. <br>Will have a "
        "greater effect on higher resolution scales. <br>The JINC2 and especially xBR filtering modes are very "
        "demanding, and may not be worth the speed penalty."));
+  dialog->registerWidgetHelp(
+    m_ui.spriteTextureFiltering, tr("Sprite Texture Filtering"),
+    QString::fromUtf8(Settings::GetTextureFilterDisplayName(Settings::DEFAULT_GPU_TEXTURE_FILTER)),
+    tr("Smooths out the blockiness of magnified textures on 2D objects by using filtering. This filter only applies to "
+       "sprites and other 2D elements, such as the HUD."));
   dialog->registerWidgetHelp(
     m_ui.displayAspectRatio, tr("Aspect Ratio"),
     QString::fromUtf8(Settings::GetDisplayAspectRatioDisplayName(Settings::DEFAULT_DISPLAY_ASPECT_RATIO)),
@@ -330,16 +382,16 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
     m_ui.displayAlignment, tr("Position"),
     QString::fromUtf8(Settings::GetDisplayAlignmentDisplayName(Settings::DEFAULT_DISPLAY_ALIGNMENT)),
     tr("Determines the position on the screen when black borders must be added."));
-  dialog->registerWidgetHelp(
-    m_ui.displayFPSLimit, tr("Display FPS Limit"), tr("0"),
-    tr("Limits the number of frames that are <strong>displayed</strong> every second. Discard frames are <strong>still "
-       "rendered.</strong> This option can increase frame rates when fast forwarding on some systems."));
   dialog->registerWidgetHelp(m_ui.gpuThread, tr("Threaded Rendering"), tr("Checked"),
                              tr("Uses a second thread for drawing graphics. Currently only available for the software "
                                 "renderer, but can provide a significant speed improvement, and is safe to use."));
   dialog->registerWidgetHelp(m_ui.threadedPresentation, tr("Threaded Presentation"), tr("Checked"),
                              tr("Presents frames on a background thread when fast forwarding or vsync is disabled. "
                                 "This can measurably improve performance in the Vulkan renderer."));
+  dialog->registerWidgetHelp(
+    m_ui.disableMailboxPresentation, tr("Disable Mailbox Presentation"), tr("Unchecked"),
+    tr("Forces the use of FIFO over Mailbox presentation, i.e. double buffering instead of triple buffering. "
+       "Usually results in worse frame pacing."));
   dialog->registerWidgetHelp(
     m_ui.stretchDisplayVertically, tr("Stretch Vertically"), tr("Unchecked"),
     tr("Prefers stretching the display vertically instead of horizontally, when applying the display aspect ratio."));
@@ -372,6 +424,14 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
     m_ui.useSoftwareRendererForReadbacks, tr("Software Renderer Readbacks"), tr("Unchecked"),
     tr("Runs the software renderer in parallel for VRAM readbacks. On some systems, this may result in greater "
        "performance when using graphical enhancements with the hardware renderer."));
+  dialog->registerWidgetHelp(
+    m_ui.forceRoundedTexcoords, tr("Round Upscaled Texture Coordinates"), tr("Unchecked"),
+    tr("Rounds texture coordinates instead of flooring when upscaling. Can fix misaligned textures in some games, but "
+       "break others, and is incompatible with texture filtering."));
+  dialog->registerWidgetHelp(
+    m_ui.accurateBlending, tr("Accurate Blending"), tr("Unchecked"),
+    tr("Forces blending to be done in the shader at 16-bit precision, when not using true color. Very few games "
+       "actually require this, and there is a <strong>non-trivial</strong> performance cost."));
 
   // PGXP Tab
 
@@ -403,6 +463,10 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
     m_ui.pgxpVertexCache, tr("Vertex Cache"), tr("Unchecked"),
     tr("Uses screen-space vertex positions to obtain precise positions, instead of tracking memory accesses. Can "
        "provide PGXP compatibility for some games, but <strong>generally provides no benefit.</strong>"));
+  dialog->registerWidgetHelp(m_ui.pgxpDisableOn2DPolygons, tr("Disable on 2D Polygons"), tr("Unchecked"),
+                             tr("Uses native resolution coordinates for 2D polygons, instead of precise coordinates. "
+                                "Can fix misaligned UI in some games, but otherwise should be left disabled. The game "
+                                "database will enable this automatically when needed."));
 
   // OSD Tab
 
@@ -455,6 +519,40 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
                              QStringLiteral("%1%").arg(Settings::DEFAULT_DISPLAY_SCREENSHOT_QUALITY),
                              tr("Selects the quality at which screenshots will be compressed. Higher values preserve "
                                 "more detail for JPEG, and reduce file size for PNG."));
+  dialog->registerWidgetHelp(
+    m_ui.mediaCaptureBackend, tr("Backend"),
+    QString::fromUtf8(MediaCapture::GetBackendDisplayName(Settings::DEFAULT_MEDIA_CAPTURE_BACKEND)),
+    tr("Selects the framework that is used to encode video/audio."));
+  dialog->registerWidgetHelp(m_ui.captureContainer, tr("Container"), tr("MP4"),
+                             tr("Determines the file format used to contain the captured audio/video"));
+  dialog->registerWidgetHelp(
+    m_ui.videoCaptureCodec, tr("Video Codec"), tr("Default"),
+    tr("Selects which Video Codec to be used for Video Capture. <b>If unsure, leave it on default.<b>"));
+  dialog->registerWidgetHelp(m_ui.videoCaptureBitrate, tr("Video Bitrate"), tr("6000 kbps"),
+                             tr("Sets the video bitrate to be used. Larger bitrate generally yields better video "
+                                "quality at the cost of larger resulting file size."));
+  dialog->registerWidgetHelp(
+    m_ui.videoCaptureResolutionAuto, tr("Automatic Resolution"), tr("Unchecked"),
+    tr("When checked, the video capture resolution will follows the internal resolution of the running "
+       "game. <b>Be careful when using this setting especially when you are upscaling, as higher internal "
+       "resolutions (above 4x) can cause system slowdown.</b>"));
+  dialog->registerWidgetHelp(m_ui.enableVideoCaptureArguments, tr("Enable Extra Video Arguments"), tr("Unchecked"),
+                             tr("Allows you to pass arguments to the selected video codec."));
+  dialog->registerWidgetHelp(
+    m_ui.videoCaptureArguments, tr("Extra Video Arguments"), tr("Empty"),
+    tr("Parameters passed to the selected video codec.<br><b>You must use '=' to separate key from value and ':' to "
+       "separate two pairs from each other.</b><br>For example: \"crf = 21 : preset = veryfast\""));
+  dialog->registerWidgetHelp(
+    m_ui.audioCaptureCodec, tr("Audio Codec"), tr("Default"),
+    tr("Selects which Audio Codec to be used for Video Capture. <b>If unsure, leave it on default.<b>"));
+  dialog->registerWidgetHelp(m_ui.audioCaptureBitrate, tr("Audio Bitrate"), tr("160 kbps"),
+                             tr("Sets the audio bitrate to be used."));
+  dialog->registerWidgetHelp(m_ui.enableAudioCaptureArguments, tr("Enable Extra Audio Arguments"), tr("Unchecked"),
+                             tr("Allows you to pass arguments to the selected audio codec."));
+  dialog->registerWidgetHelp(
+    m_ui.audioCaptureArguments, tr("Extra Audio Arguments"), tr("Empty"),
+    tr("Parameters passed to the selected audio codec.<br><b>You must use '=' to separate key from value and ':' to "
+       "separate two pairs from each other.</b><br>For example: \"compression_level = 4 : joint_stereo = 1\""));
 
   // Texture Replacements Tab
 
@@ -500,6 +598,12 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* dialog, QWidget* 
   dialog->registerWidgetHelp(m_ui.disableTextureCopyToSelf, tr("Disable Texture Copies To Self"), tr("Unchecked"),
                              tr("Disables the use of self-copy updates for the VRAM texture. Useful for testing broken "
                                 "graphics drivers. <strong>Only for developer use.</strong>"));
+  dialog->registerWidgetHelp(m_ui.disableMemoryImport, tr("Disable Memory Import"), tr("Unchecked"),
+                             tr("Disables the use of host memory importing. Useful for testing broken graphics "
+                                "drivers. <strong>Only for developer use.</strong>"));
+  dialog->registerWidgetHelp(m_ui.disableRasterOrderViews, tr("Disable Rasterizer Order Views"), tr("Unchecked"),
+                             tr("Disables the use of rasterizer order views. Useful for testing broken graphics "
+                                "drivers. <strong>Only for developer use.</strong>"));
 }
 
 GraphicsSettingsWidget::~GraphicsSettingsWidget() = default;
@@ -516,6 +620,8 @@ void GraphicsSettingsWidget::setupAdditionalUi()
   for (u32 i = 0; i < static_cast<u32>(GPUTextureFilter::Count); i++)
   {
     m_ui.textureFiltering->addItem(
+      QString::fromUtf8(Settings::GetTextureFilterDisplayName(static_cast<GPUTextureFilter>(i))));
+    m_ui.spriteTextureFiltering->addItem(
       QString::fromUtf8(Settings::GetTextureFilterDisplayName(static_cast<GPUTextureFilter>(i))));
   }
 
@@ -563,14 +669,10 @@ void GraphicsSettingsWidget::setupAdditionalUi()
       QString::fromUtf8(Settings::GetDisplayAlignmentDisplayName(static_cast<DisplayAlignment>(i))));
   }
 
+  for (u32 i = 0; i < static_cast<u32>(DisplayRotation::Count); i++)
   {
-    if (m_dialog->isPerGameSettings())
-      m_ui.msaaMode->addItem(tr("Use Global Setting"));
-    m_ui.msaaMode->addItem(tr("Disabled"), GetMSAAModeValue(1, false));
-    for (uint i = 2; i <= 32; i *= 2)
-      m_ui.msaaMode->addItem(tr("%1x MSAA").arg(i), GetMSAAModeValue(i, false));
-    for (uint i = 2; i <= 32; i *= 2)
-      m_ui.msaaMode->addItem(tr("%1x SSAA").arg(i), GetMSAAModeValue(i, true));
+    m_ui.displayRotation->addItem(
+      QString::fromUtf8(Settings::GetDisplayRotationDisplayName(static_cast<DisplayRotation>(i))));
   }
 
   for (u32 i = 0; i < static_cast<u32>(GPULineDetectMode::Count); i++)
@@ -591,6 +693,12 @@ void GraphicsSettingsWidget::setupAdditionalUi()
   {
     m_ui.screenshotFormat->addItem(
       QString::fromUtf8(Settings::GetDisplayScreenshotFormatDisplayName(static_cast<DisplayScreenshotFormat>(i))));
+  }
+
+  for (u32 i = 0; i < static_cast<u32>(MediaCaptureBackend::MaxCount); i++)
+  {
+    m_ui.mediaCaptureBackend->addItem(
+      QString::fromUtf8(MediaCapture::GetBackendDisplayName(static_cast<MediaCaptureBackend>(i))));
   }
 
   // Debugging Tab
@@ -636,25 +744,29 @@ void GraphicsSettingsWidget::updateRendererDependentOptions()
   const RenderAPI render_api = Settings::GetRenderAPIForRenderer(renderer);
   const bool is_hardware = (renderer != GPURenderer::Software);
 
-  m_ui.resolutionScale->setEnabled(is_hardware);
-  m_ui.resolutionScaleLabel->setEnabled(is_hardware);
+  m_ui.resolutionScale->setEnabled(is_hardware && !m_dialog->hasGameTrait(GameDatabase::Trait::DisableUpscaling));
+  m_ui.resolutionScaleLabel->setEnabled(is_hardware && !m_dialog->hasGameTrait(GameDatabase::Trait::DisableUpscaling));
   m_ui.msaaMode->setEnabled(is_hardware);
   m_ui.msaaModeLabel->setEnabled(is_hardware);
-  m_ui.textureFiltering->setEnabled(is_hardware);
-  m_ui.textureFilteringLabel->setEnabled(is_hardware);
+  m_ui.textureFiltering->setEnabled(is_hardware &&
+                                    !m_dialog->hasGameTrait(GameDatabase::Trait::DisableTextureFiltering));
+  m_ui.textureFilteringLabel->setEnabled(is_hardware &&
+                                         !m_dialog->hasGameTrait(GameDatabase::Trait::DisableTextureFiltering));
   m_ui.gpuDownsampleLabel->setEnabled(is_hardware);
   m_ui.gpuDownsampleMode->setEnabled(is_hardware);
   m_ui.gpuDownsampleScale->setEnabled(is_hardware);
-  m_ui.trueColor->setEnabled(is_hardware);
-  m_ui.pgxpEnable->setEnabled(is_hardware);
+  m_ui.trueColor->setEnabled(is_hardware && !m_dialog->hasGameTrait(GameDatabase::Trait::DisableTrueColor));
+  m_ui.pgxpEnable->setEnabled(is_hardware && !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXP));
 
   m_ui.gpuLineDetectMode->setEnabled(is_hardware);
   m_ui.gpuLineDetectModeLabel->setEnabled(is_hardware);
   m_ui.gpuWireframeMode->setEnabled(is_hardware);
   m_ui.gpuWireframeModeLabel->setEnabled(is_hardware);
   m_ui.debanding->setEnabled(is_hardware);
-  m_ui.scaledDithering->setEnabled(is_hardware);
+  m_ui.scaledDithering->setEnabled(is_hardware && !m_dialog->hasGameTrait(GameDatabase::Trait::DisableScaledDithering));
   m_ui.useSoftwareRendererForReadbacks->setEnabled(is_hardware);
+  m_ui.forceRoundedTexcoords->setEnabled(is_hardware);
+  m_ui.accurateBlending->setEnabled(is_hardware);
 
   m_ui.tabs->setTabEnabled(TAB_INDEX_TEXTURE_REPLACEMENTS, is_hardware);
 
@@ -675,107 +787,159 @@ void GraphicsSettingsWidget::updateRendererDependentOptions()
 
 void GraphicsSettingsWidget::populateGPUAdaptersAndResolutions(RenderAPI render_api)
 {
-  GPUDevice::AdapterAndModeList aml;
-  switch (render_api)
+  // Don't re-query, it's expensive.
+  if (m_adapters_render_api != render_api)
   {
-#ifdef _WIN32
-    case RenderAPI::D3D11:
-      aml = D3D11Device::StaticGetAdapterAndModeList();
-      break;
-
-    case RenderAPI::D3D12:
-      aml = D3D12Device::StaticGetAdapterAndModeList();
-      break;
-#endif
-#ifdef __APPLE__
-    case RenderAPI::Metal:
-      aml = GPUDevice::WrapGetMetalAdapterAndModeList();
-      break;
-#endif
-#ifdef ENABLE_VULKAN
-    case RenderAPI::Vulkan:
-      aml = VulkanDevice::StaticGetAdapterAndModeList();
-      break;
-#endif
-
-    default:
-      break;
+    m_adapters_render_api = render_api;
+    m_adapters = GPUDevice::GetAdapterListForAPI(render_api);
   }
 
-  {
-    const std::string current_adapter(m_dialog->getEffectiveStringValue("GPU", "Adapter", ""));
-    QSignalBlocker blocker(m_ui.adapter);
+  const GPUDevice::AdapterInfo* current_adapter = nullptr;
+  SettingsInterface* const sif = m_dialog->getSettingsInterface();
 
-    // add the default entry - we'll fall back to this if the GPU no longer exists, or there's no options
+  {
+    m_ui.adapter->disconnect();
     m_ui.adapter->clear();
-    m_ui.adapter->addItem(tr("(Default)"));
+    m_ui.adapter->addItem(tr("(Default)"), QVariant(QString()));
 
-    // add the other adapters
-    for (const std::string& adapter_name : aml.adapter_names)
+    const std::string current_adapter_name = m_dialog->getEffectiveStringValue("GPU", "Adapter", "");
+    for (const GPUDevice::AdapterInfo& adapter : m_adapters)
     {
-      m_ui.adapter->addItem(QString::fromStdString(adapter_name));
-
-      if (adapter_name == current_adapter)
-        m_ui.adapter->setCurrentIndex(m_ui.adapter->count() - 1);
+      const QString qadaptername = QString::fromStdString(adapter.name);
+      m_ui.adapter->addItem(qadaptername, QVariant(qadaptername));
+      if (adapter.name == current_adapter_name)
+        current_adapter = &adapter;
     }
 
+    // default adapter
+    if (!m_adapters.empty() && current_adapter_name.empty())
+      current_adapter = &m_adapters.front();
+
     // disable it if we don't have a choice
-    m_ui.adapter->setEnabled(!aml.adapter_names.empty());
+    m_ui.adapter->setEnabled(!m_adapters.empty());
+    SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.adapter, "GPU", "Adapter");
+    connect(m_ui.adapter, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &GraphicsSettingsWidget::updateRendererDependentOptions);
   }
 
   {
-    const std::string current_mode(m_dialog->getEffectiveStringValue("GPU", "FullscreenMode", ""));
-    QSignalBlocker blocker(m_ui.fullscreenMode);
-
+    m_ui.fullscreenMode->disconnect();
     m_ui.fullscreenMode->clear();
-    m_ui.fullscreenMode->addItem(tr("Borderless Fullscreen"));
-    m_ui.fullscreenMode->setCurrentIndex(0);
 
-    for (const std::string& mode_name : aml.fullscreen_modes)
+    m_ui.fullscreenMode->addItem(tr("Borderless Fullscreen"), QVariant(QString()));
+    if (current_adapter)
     {
-      m_ui.fullscreenMode->addItem(QString::fromStdString(mode_name));
-
-      if (mode_name == current_mode)
-        m_ui.fullscreenMode->setCurrentIndex(m_ui.fullscreenMode->count() - 1);
+      for (const std::string& mode_name : current_adapter->fullscreen_modes)
+      {
+        const QString qmodename = QString::fromStdString(mode_name);
+        m_ui.fullscreenMode->addItem(qmodename, QVariant(qmodename));
+      }
     }
 
     // disable it if we don't have a choice
-    m_ui.fullscreenMode->setEnabled(!aml.fullscreen_modes.empty());
+    m_ui.fullscreenMode->setEnabled(current_adapter && !current_adapter->fullscreen_modes.empty());
+    SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.fullscreenMode, "GPU", "FullscreenMode");
   }
 
-  // TODO: MSAA modes
+  if (!m_dialog->hasGameTrait(GameDatabase::Trait::DisableUpscaling))
+  {
+    m_ui.resolutionScale->disconnect();
+    m_ui.resolutionScale->clear();
+
+    static constexpr const std::pair<int, const char*> templates[] = {
+      {0, QT_TRANSLATE_NOOP("GraphicsSettingsWidget", "Automatic (Based on Window Size)")},
+      {1, QT_TRANSLATE_NOOP("GraphicsSettingsWidget", "1x Native (Default)")},
+      {3, QT_TRANSLATE_NOOP("GraphicsSettingsWidget", "3x Native (for 720p)")},
+      {5, QT_TRANSLATE_NOOP("GraphicsSettingsWidget", "5x Native (for 1080p)")},
+      {6, QT_TRANSLATE_NOOP("GraphicsSettingsWidget", "6x Native (for 1440p)")},
+      {9, QT_TRANSLATE_NOOP("GraphicsSettingsWidget", "9x Native (for 4K)")},
+    };
+
+    const int max_scale =
+      static_cast<int>(current_adapter ? std::max<u32>(current_adapter->max_texture_size / 1024, 1) : 16);
+    for (int scale = 0; scale <= max_scale; scale++)
+    {
+      const auto it = std::find_if(std::begin(templates), std::end(templates),
+                                   [&scale](const std::pair<int, const char*>& it) { return scale == it.first; });
+      m_ui.resolutionScale->addItem((it != std::end(templates)) ?
+                                      qApp->translate("GraphicsSettingsWidget", it->second) :
+                                      qApp->translate("GraphicsSettingsWidget", "%1x Native").arg(scale));
+    }
+
+    SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.resolutionScale, "GPU", "ResolutionScale", 1);
+    connect(m_ui.resolutionScale, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &GraphicsSettingsWidget::updateResolutionDependentOptions);
+  }
+
+  {
+    m_ui.msaaMode->disconnect();
+    m_ui.msaaMode->clear();
+
+    if (m_dialog->isPerGameSettings())
+      m_ui.msaaMode->addItem(tr("Use Global Setting"));
+
+    const u32 max_multisamples = current_adapter ? current_adapter->max_multisamples : 8;
+    m_ui.msaaMode->addItem(tr("Disabled"), GetMSAAModeValue(1, false));
+    for (uint i = 2; i <= max_multisamples; i *= 2)
+      m_ui.msaaMode->addItem(tr("%1x MSAA").arg(i), GetMSAAModeValue(i, false));
+    for (uint i = 2; i <= max_multisamples; i *= 2)
+      m_ui.msaaMode->addItem(tr("%1x SSAA").arg(i), GetMSAAModeValue(i, true));
+
+    if (!m_dialog->isPerGameSettings() || (m_dialog->containsSettingValue("GPU", "Multisamples") ||
+                                           m_dialog->containsSettingValue("GPU", "PerSampleShading")))
+    {
+      const QVariant current_msaa_mode(
+        GetMSAAModeValue(static_cast<uint>(m_dialog->getEffectiveIntValue("GPU", "Multisamples", 1)),
+                         m_dialog->getEffectiveBoolValue("GPU", "PerSampleShading", false)));
+      const int current_msaa_index = m_ui.msaaMode->findData(current_msaa_mode);
+      if (current_msaa_index >= 0)
+        m_ui.msaaMode->setCurrentIndex(current_msaa_index);
+    }
+    else
+    {
+      m_ui.msaaMode->setCurrentIndex(0);
+    }
+    connect(m_ui.msaaMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+      const int index = m_ui.msaaMode->currentIndex();
+      if (m_dialog->isPerGameSettings() && index == 0)
+      {
+        m_dialog->removeSettingValue("GPU", "Multisamples");
+        m_dialog->removeSettingValue("GPU", "PerSampleShading");
+      }
+      else
+      {
+        uint multisamples;
+        bool ssaa;
+        DecodeMSAAModeValue(m_ui.msaaMode->itemData(index), &multisamples, &ssaa);
+        m_dialog->setIntSettingValue("GPU", "Multisamples", static_cast<int>(multisamples));
+        m_dialog->setBoolSettingValue("GPU", "PerSampleShading", ssaa);
+      }
+    });
+  }
 }
 
 void GraphicsSettingsWidget::updatePGXPSettingsEnabled()
 {
-  const bool enabled = (effectiveRendererIsHardware() && m_dialog->getEffectiveBoolValue("GPU", "PGXPEnable", false));
+  const bool enabled = (effectiveRendererIsHardware() && m_dialog->getEffectiveBoolValue("GPU", "PGXPEnable", false) &&
+                        !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXP));
   const bool tc_enabled = (enabled && m_dialog->getEffectiveBoolValue("GPU", "PGXPTextureCorrection", true));
   const bool depth_enabled = (enabled && m_dialog->getEffectiveBoolValue("GPU", "PGXPDepthBuffer", false));
   m_ui.tabs->setTabEnabled(TAB_INDEX_PGXP, enabled);
   m_ui.pgxpTab->setEnabled(enabled);
-  m_ui.pgxpCulling->setEnabled(enabled);
-  m_ui.pgxpTextureCorrection->setEnabled(enabled);
-  m_ui.pgxpColorCorrection->setEnabled(tc_enabled);
-  m_ui.pgxpDepthBuffer->setEnabled(enabled);
-  m_ui.pgxpPreserveProjPrecision->setEnabled(enabled);
+  m_ui.pgxpCulling->setEnabled(enabled && !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXPCulling));
+  m_ui.pgxpTextureCorrection->setEnabled(enabled &&
+                                         !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXPTextureCorrection));
+  m_ui.pgxpColorCorrection->setEnabled(tc_enabled &&
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXPColorCorrection));
+  m_ui.pgxpDepthBuffer->setEnabled(enabled && !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXPDepthBuffer));
+  m_ui.pgxpPreserveProjPrecision->setEnabled(enabled &&
+                                             !m_dialog->hasGameTrait(GameDatabase::Trait::DisablePGXPPreserveProjFP));
   m_ui.pgxpCPU->setEnabled(enabled);
   m_ui.pgxpVertexCache->setEnabled(enabled);
   m_ui.pgxpGeometryTolerance->setEnabled(enabled);
   m_ui.pgxpGeometryToleranceLabel->setEnabled(enabled);
   m_ui.pgxpDepthClearThreshold->setEnabled(depth_enabled);
   m_ui.pgxpDepthClearThresholdLabel->setEnabled(depth_enabled);
-}
-
-void GraphicsSettingsWidget::onAdapterChanged()
-{
-  if (m_ui.adapter->currentIndex() == 0)
-  {
-    // default
-    m_dialog->removeSettingValue("GPU", "Adapter");
-    return;
-  }
-
-  m_dialog->setStringSettingValue("GPU", "Adapter", m_ui.adapter->currentText().toUtf8().constData());
 }
 
 void GraphicsSettingsWidget::onAspectRatioChanged()
@@ -795,32 +959,29 @@ void GraphicsSettingsWidget::onAspectRatioChanged()
   m_ui.customAspectRatioSeparator->setVisible(is_custom);
 }
 
-void GraphicsSettingsWidget::onMSAAModeChanged()
+void GraphicsSettingsWidget::updateResolutionDependentOptions()
 {
-  const int index = m_ui.msaaMode->currentIndex();
-  if (m_dialog->isPerGameSettings() && index == 0)
-  {
-    m_dialog->removeSettingValue("GPU", "Multisamples");
-    m_dialog->removeSettingValue("GPU", "PerSampleShading");
-  }
-  else
-  {
-    uint multisamples;
-    bool ssaa;
-    DecodeMSAAModeValue(m_ui.msaaMode->itemData(index), &multisamples, &ssaa);
-    m_dialog->setIntSettingValue("GPU", "Multisamples", static_cast<int>(multisamples));
-    m_dialog->setBoolSettingValue("GPU", "PerSampleShading", ssaa);
-  }
+  const int scale = m_dialog->getEffectiveIntValue("GPU", "ResolutionScale", 1);
+  const GPUTextureFilter texture_filtering =
+    Settings::ParseTextureFilterName(
+      m_dialog
+        ->getEffectiveStringValue("GPU", "TextureFilter",
+                                  Settings::GetTextureFilterName(Settings::DEFAULT_GPU_TEXTURE_FILTER))
+        .c_str())
+      .value_or(Settings::DEFAULT_GPU_TEXTURE_FILTER);
+  m_ui.forceRoundedTexcoords->setEnabled(scale > 1 && texture_filtering == GPUTextureFilter::Nearest);
+  onTrueColorChanged();
 }
 
 void GraphicsSettingsWidget::onTrueColorChanged()
 {
-  const int resolution_scale = m_ui.resolutionScale->currentIndex();
-  const bool true_color = m_ui.trueColor->isChecked();
-  const bool allow_scaled_dithering = (resolution_scale != 1 && !true_color);
-  const bool allow_debanding = true_color;
+  const int resolution_scale = m_dialog->getEffectiveIntValue("GPU", "ResolutionScale", 1);
+  const bool true_color = m_dialog->getEffectiveBoolValue("GPU", "TrueColor", false);
+  const bool allow_scaled_dithering =
+    (resolution_scale != 1 && !true_color && !m_dialog->hasGameTrait(GameDatabase::Trait::DisableScaledDithering));
   m_ui.scaledDithering->setEnabled(allow_scaled_dithering);
-  m_ui.debanding->setEnabled(allow_debanding);
+  m_ui.debanding->setEnabled(true_color);
+  m_ui.accurateBlending->setEnabled(!true_color);
 }
 
 void GraphicsSettingsWidget::onDownsampleModeChanged()
@@ -846,16 +1007,109 @@ void GraphicsSettingsWidget::onDownsampleModeChanged()
   }
 }
 
-void GraphicsSettingsWidget::onFullscreenModeChanged()
+void GraphicsSettingsWidget::onMediaCaptureBackendChanged()
 {
-  if (m_ui.fullscreenMode->currentIndex() == 0)
+  SettingsInterface* const sif = m_dialog->getSettingsInterface();
+  const MediaCaptureBackend backend =
+    MediaCapture::ParseBackendName(
+      m_dialog
+        ->getEffectiveStringValue("MediaCapture", "Backend",
+                                  MediaCapture::GetBackendName(Settings::DEFAULT_MEDIA_CAPTURE_BACKEND))
+        .c_str())
+      .value_or(Settings::DEFAULT_MEDIA_CAPTURE_BACKEND);
+
   {
-    // default
-    m_dialog->removeSettingValue("GPU", "FullscreenMode");
-    return;
+    m_ui.captureContainer->disconnect();
+    m_ui.captureContainer->clear();
+
+    for (const auto& [name, display_name] : MediaCapture::GetContainerList(backend))
+    {
+      const QString qname = QString::fromStdString(name);
+      m_ui.captureContainer->addItem(tr("%1 (%2)").arg(QString::fromStdString(display_name)).arg(qname), qname);
+    }
+
+    SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.captureContainer, "MediaCapture", "Container",
+                                                   Settings::DEFAULT_MEDIA_CAPTURE_CONTAINER);
+    connect(m_ui.captureContainer, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &GraphicsSettingsWidget::onMediaCaptureContainerChanged);
   }
 
-  m_dialog->setStringSettingValue("GPU", "FullscreenMode", m_ui.fullscreenMode->currentText().toUtf8().constData());
+  onMediaCaptureContainerChanged();
+}
+
+void GraphicsSettingsWidget::onMediaCaptureContainerChanged()
+{
+  SettingsInterface* const sif = m_dialog->getSettingsInterface();
+  const MediaCaptureBackend backend =
+    MediaCapture::ParseBackendName(
+      m_dialog
+        ->getEffectiveStringValue("MediaCapture", "Backend",
+                                  MediaCapture::GetBackendName(Settings::DEFAULT_MEDIA_CAPTURE_BACKEND))
+        .c_str())
+      .value_or(Settings::DEFAULT_MEDIA_CAPTURE_BACKEND);
+  const std::string container = m_dialog->getEffectiveStringValue("MediaCapture", "Container", "mp4");
+
+  {
+    m_ui.videoCaptureCodec->disconnect();
+    m_ui.videoCaptureCodec->clear();
+    m_ui.videoCaptureCodec->addItem(tr("Default"), QVariant(QString()));
+
+    for (const auto& [name, display_name] : MediaCapture::GetVideoCodecList(backend, container.c_str()))
+    {
+      const QString qname = QString::fromStdString(name);
+      m_ui.videoCaptureCodec->addItem(tr("%1 (%2)").arg(QString::fromStdString(display_name)).arg(qname), qname);
+    }
+
+    SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.videoCaptureCodec, "MediaCapture", "VideoCodec");
+  }
+
+  {
+    m_ui.audioCaptureCodec->disconnect();
+    m_ui.audioCaptureCodec->clear();
+    m_ui.audioCaptureCodec->addItem(tr("Default"), QVariant(QString()));
+
+    for (const auto& [name, display_name] : MediaCapture::GetAudioCodecList(backend, container.c_str()))
+    {
+      const QString qname = QString::fromStdString(name);
+      m_ui.audioCaptureCodec->addItem(tr("%1 (%2)").arg(QString::fromStdString(display_name)).arg(qname), qname);
+    }
+
+    SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.audioCaptureCodec, "MediaCapture", "AudioCodec");
+  }
+}
+
+void GraphicsSettingsWidget::onMediaCaptureVideoEnabledChanged()
+{
+  const bool enabled = m_dialog->getEffectiveBoolValue("MediaCapture", "VideoCapture", true);
+  m_ui.videoCaptureCodecLabel->setEnabled(enabled);
+  m_ui.videoCaptureCodec->setEnabled(enabled);
+  m_ui.videoCaptureBitrateLabel->setEnabled(enabled);
+  m_ui.videoCaptureBitrate->setEnabled(enabled);
+  m_ui.videoCaptureResolutionLabel->setEnabled(enabled);
+  m_ui.videoCaptureResolutionAuto->setEnabled(enabled);
+  m_ui.enableVideoCaptureArguments->setEnabled(enabled);
+  m_ui.videoCaptureArguments->setEnabled(enabled);
+  onMediaCaptureVideoAutoResolutionChanged();
+}
+
+void GraphicsSettingsWidget::onMediaCaptureVideoAutoResolutionChanged()
+{
+  const bool enabled = m_dialog->getEffectiveBoolValue("MediaCapture", "VideoCapture", true);
+  const bool auto_enabled = m_dialog->getEffectiveBoolValue("MediaCapture", "VideoAutoSize", false);
+  m_ui.videoCaptureWidth->setEnabled(enabled && !auto_enabled);
+  m_ui.xLabel->setEnabled(enabled && !auto_enabled);
+  m_ui.videoCaptureHeight->setEnabled(enabled && !auto_enabled);
+}
+
+void GraphicsSettingsWidget::onMediaCaptureAudioEnabledChanged()
+{
+  const bool enabled = m_dialog->getEffectiveBoolValue("MediaCapture", "AudioCapture", true);
+  m_ui.audioCaptureCodecLabel->setEnabled(enabled);
+  m_ui.audioCaptureCodec->setEnabled(enabled);
+  m_ui.audioCaptureBitrateLabel->setEnabled(enabled);
+  m_ui.audioCaptureBitrate->setEnabled(enabled);
+  m_ui.enableAudioCaptureArguments->setEnabled(enabled);
+  m_ui.audioCaptureArguments->setEnabled(enabled);
 }
 
 void GraphicsSettingsWidget::onEnableAnyTextureReplacementsChanged()

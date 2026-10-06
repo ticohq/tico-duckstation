@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "metal_device.h"
@@ -15,9 +15,6 @@
 // TODO FIXME...
 #define FMT_EXCEPTIONS 0
 #include "fmt/format.h"
-
-#include "shaderc/shaderc.hpp"
-#include "spirv_cross_c.h"
 
 #include <array>
 #include <pthread.h>
@@ -42,6 +39,9 @@ static constexpr std::array<MTLPixelFormat, static_cast<u32>(GPUTexture::Format:
   MTLPixelFormatA1BGR5Unorm,  // RGBA5551
   MTLPixelFormatR8Unorm,      // R8
   MTLPixelFormatDepth16Unorm, // D16
+  MTLPixelFormatDepth24Unorm_Stencil8, // D24S8
+  MTLPixelFormatDepth32Float, // D32F
+  MTLPixelFormatDepth32Float_Stencil8, // D32FS8
   MTLPixelFormatR16Unorm,     // R16
   MTLPixelFormatR16Sint,      // R16I
   MTLPixelFormatR16Uint,      // R16U
@@ -59,9 +59,7 @@ static constexpr std::array<MTLPixelFormat, static_cast<u32>(GPUTexture::Format:
   MTLPixelFormatBGR10A2Unorm, // RGB10A2
 };
 
-static std::unique_ptr<shaderc::Compiler> s_shaderc_compiler;
-
-static NSString* StringViewToNSString(const std::string_view& str)
+static NSString* StringViewToNSString(std::string_view str)
 {
   if (str.empty())
     return nil;
@@ -71,15 +69,16 @@ static NSString* StringViewToNSString(const std::string_view& str)
                                               encoding:NSUTF8StringEncoding];
 }
 
-static void LogNSError(NSError* error, const char* desc, ...)
+static void LogNSError(NSError* error, std::string_view message)
 {
-  std::va_list ap;
-  va_start(ap, desc);
-  Log::Writev("MetalDevice", "", LOGLEVEL_ERROR, desc, ap);
-  va_end(ap);
+  Log::FastWrite("MetalDevice", LOGLEVEL_ERROR, message);
+  Log::FastWrite("MetalDevice", LOGLEVEL_ERROR, "  NSError Code: {}", static_cast<u32>(error.code));
+  Log::FastWrite("MetalDevice", LOGLEVEL_ERROR, "  NSError Description: {}", [error.description UTF8String]);
+}
 
-  Log::Writef("MetalDevice", "", LOGLEVEL_ERROR, "  NSError Code: %u", static_cast<u32>(error.code));
-  Log::Writef("MetalDevice", "", LOGLEVEL_ERROR, "  NSError Description: %s", [error.description UTF8String]);
+static void NSErrorToErrorObject(Error* errptr, std::string_view message, NSError* error)
+{
+  Error::SetStringFmt(errptr, "{}NSError Code {}: {}", message, static_cast<u32>(error.code), [error.description UTF8String]);
 }
 
 static GPUTexture::Format GetTextureFormatForMTLFormat(MTLPixelFormat fmt)
@@ -91,6 +90,32 @@ static GPUTexture::Format GetTextureFormatForMTLFormat(MTLPixelFormat fmt)
   }
 
   return GPUTexture::Format::Unknown;
+}
+
+static u32 GetMetalMaxTextureSize(id<MTLDevice> device)
+{
+  // https://gist.github.com/kylehowells/63d0723abc9588eb734cade4b7df660d
+  if ([device supportsFamily:MTLGPUFamilyMacCatalyst1] || [device supportsFamily:MTLGPUFamilyMac1] ||
+      [device supportsFamily:MTLGPUFamilyApple3])
+  {
+    return 16384;
+  }
+  else
+  {
+    return 8192;
+  }
+}
+
+static u32 GetMetalMaxMultisamples(id<MTLDevice> device)
+{
+  u32 max_multisamples = 0;
+  for (u32 multisamples = 1; multisamples < 16; multisamples *= 2)
+  {
+    if (![device supportsTextureSampleCount:multisamples])
+      break;
+    max_multisamples = multisamples;
+  }
+  return max_multisamples;
 }
 
 template<typename F>
@@ -122,22 +147,21 @@ bool MetalDevice::HasSurface() const
   return (m_layer != nil);
 }
 
-bool MetalDevice::GetHostRefreshRate(float* refresh_rate)
+void MetalDevice::SetVSyncMode(GPUVSyncMode mode, bool allow_present_throttle)
 {
-  return GPUDevice::GetHostRefreshRate(refresh_rate);
-}
+  // Metal does not support mailbox mode.
+  mode = (mode == GPUVSyncMode::Mailbox) ? GPUVSyncMode::FIFO : mode;
+  m_allow_present_throttle = allow_present_throttle;
 
-void MetalDevice::SetVSyncEnabled(bool enabled)
-{
-  if (m_vsync_enabled == enabled)
+  if (m_vsync_mode == mode)
     return;
 
-  m_vsync_enabled = enabled;
+  m_vsync_mode = mode;
   if (m_layer != nil)
-    [m_layer setDisplaySyncEnabled:enabled];
+    [m_layer setDisplaySyncEnabled:m_vsync_mode == GPUVSyncMode::FIFO];
 }
 
-bool MetalDevice::CreateDevice(const std::string_view& adapter, bool threaded_presentation,
+bool MetalDevice::CreateDevice(std::string_view adapter, bool threaded_presentation,
                                std::optional<bool> exclusive_fullscreen_control, FeatureMask disabled_features,
                                Error* error)
 {
@@ -158,7 +182,7 @@ bool MetalDevice::CreateDevice(const std::string_view& adapter, bool threaded_pr
       }
 
       if (device == nil)
-        Log_ErrorFmt("Failed to find device named '{}'. Trying default.", adapter);
+        ERROR_LOG("Failed to find device named '{}'. Trying default.", adapter);
     }
 
     if (device == nil)
@@ -180,7 +204,7 @@ bool MetalDevice::CreateDevice(const std::string_view& adapter, bool threaded_pr
 
     m_device = [device retain];
     m_queue = [queue retain];
-    Log_InfoPrintf("Metal Device: %s", [[m_device name] UTF8String]);
+    INFO_LOG("Metal Device: {}", [[m_device name] UTF8String]);
 
     SetFeatures(disabled_features);
 
@@ -211,16 +235,8 @@ bool MetalDevice::CreateDevice(const std::string_view& adapter, bool threaded_pr
 
 void MetalDevice::SetFeatures(FeatureMask disabled_features)
 {
-  // https://gist.github.com/kylehowells/63d0723abc9588eb734cade4b7df660d
-  if ([m_device supportsFamily:MTLGPUFamilyMacCatalyst1] || [m_device supportsFamily:MTLGPUFamilyMac1] ||
-      [m_device supportsFamily:MTLGPUFamilyApple3])
-  {
-    m_max_texture_size = 16384;
-  }
-  else
-  {
-    m_max_texture_size = 8192;
-  }
+  m_max_texture_size = GetMetalMaxTextureSize(m_device);
+  m_max_multisamples = GetMetalMaxMultisamples(m_device);
 
   // Framebuffer fetch requires MSL 2.3 and an Apple GPU family.
   const bool supports_fbfetch = [m_device supportsFamily:MTLGPUFamilyApple1];
@@ -228,14 +244,6 @@ void MetalDevice::SetFeatures(FeatureMask disabled_features)
   // If fbfetch is disabled, barriers aren't supported on Apple GPUs.
   const bool supports_barriers =
     ([m_device supportsFamily:MTLGPUFamilyMac1] && ![m_device supportsFamily:MTLGPUFamilyApple3]);
-
-  m_max_multisamples = 0;
-  for (u32 multisamples = 1; multisamples < 16; multisamples *= 2)
-  {
-    if (![m_device supportsTextureSampleCount:multisamples])
-      break;
-    m_max_multisamples = multisamples;
-  }
 
   m_features.dual_source_blend = !(disabled_features & FEATURE_MASK_DUAL_SOURCE_BLEND);
   m_features.framebuffer_fetch = !(disabled_features & FEATURE_MASK_FRAMEBUFFER_FETCH) && supports_fbfetch;
@@ -383,7 +391,7 @@ bool MetalDevice::CreateLayer()
     RunOnMainThread([this]() {
       @autoreleasepool
       {
-        Log_InfoFmt("Creating a {}x{} Metal layer.", m_window_info.surface_width, m_window_info.surface_height);
+        INFO_LOG("Creating a {}x{} Metal layer.", m_window_info.surface_width, m_window_info.surface_height);
         const auto size =
           CGSizeMake(static_cast<float>(m_window_info.surface_width), static_cast<float>(m_window_info.surface_height));
         m_layer = [CAMetalLayer layer];
@@ -395,12 +403,12 @@ bool MetalDevice::CreateLayer()
         m_window_info.surface_format = GetTextureFormatForMTLFormat(layer_fmt);
         if (m_window_info.surface_format == GPUTexture::Format::Unknown)
         {
-          Log_ErrorFmt("Invalid pixel format {} in layer, using BGRA8.", static_cast<u32>(layer_fmt));
+          ERROR_LOG("Invalid pixel format {} in layer, using BGRA8.", static_cast<u32>(layer_fmt));
           [m_layer setPixelFormat:MTLPixelFormatBGRA8Unorm];
           m_window_info.surface_format = GPUTexture::Format::BGRA8;
         }
 
-        Log_VerboseFmt("Metal layer pixel format is {}.", GPUTexture::GetFormatName(m_window_info.surface_format));
+        VERBOSE_LOG("Metal layer pixel format is {}.", GPUTexture::GetFormatName(m_window_info.surface_format));
 
         NSView* view = GetWindowView();
         [view setWantsLayer:TRUE];
@@ -408,7 +416,9 @@ bool MetalDevice::CreateLayer()
       }
     });
 
-    [m_layer setDisplaySyncEnabled:m_vsync_enabled];
+    // Metal does not support mailbox mode.
+    m_vsync_mode = (m_vsync_mode == GPUVSyncMode::Mailbox) ? GPUVSyncMode::FIFO : m_vsync_mode;
+    [m_layer setDisplaySyncEnabled:m_vsync_mode == GPUVSyncMode::FIFO];
 
     DebugAssert(m_layer_pass_desc == nil);
     m_layer_pass_desc = [[MTLRenderPassDescriptor renderPassDescriptor] retain];
@@ -471,7 +481,7 @@ bool MetalDevice::UpdateWindow()
 
   if (m_window_info.type != WindowInfo::Type::Surfaceless && !CreateLayer())
   {
-    Log_ErrorPrintf("Failed to create layer on updated window");
+    ERROR_LOG("Failed to create layer on updated window");
     return false;
   }
 
@@ -517,7 +527,7 @@ bool MetalDevice::CreateBuffers()
       !m_uniform_buffer.Create(m_device, UNIFORM_BUFFER_SIZE) ||
       !m_texture_upload_buffer.Create(m_device, TEXTURE_STREAM_BUFFER_SIZE))
   {
-    Log_ErrorPrintf("Failed to create vertex/index/uniform buffers.");
+    ERROR_LOG("Failed to create vertex/index/uniform buffers.");
     return false;
   }
 
@@ -541,26 +551,6 @@ bool MetalDevice::IsRenderTargetBound(const GPUTexture* tex) const
   }
 
   return false;
-}
-
-GPUDevice::AdapterAndModeList MetalDevice::StaticGetAdapterAndModeList()
-{
-  AdapterAndModeList ret;
-  @autoreleasepool
-  {
-    NSArray<id<MTLDevice>>* devices = [MTLCopyAllDevices() autorelease];
-    const u32 count = static_cast<u32>([devices count]);
-    ret.adapter_names.reserve(count);
-    for (u32 i = 0; i < count; i++)
-      ret.adapter_names.emplace_back([devices[i].name UTF8String]);
-  }
-
-  return ret;
-}
-
-GPUDevice::AdapterAndModeList MetalDevice::GetAdapterAndModeList()
-{
-  return StaticGetAdapterAndModeList();
 }
 
 bool MetalDevice::SetGPUTimingEnabled(bool enabled)
@@ -592,7 +582,7 @@ MetalShader::~MetalShader()
   MetalDevice::DeferRelease(m_library);
 }
 
-void MetalShader::SetDebugName(const std::string_view& name)
+void MetalShader::SetDebugName(std::string_view name)
 {
   @autoreleasepool
   {
@@ -604,7 +594,7 @@ void MetalShader::SetDebugName(const std::string_view& name)
 namespace EmuFolders {
 extern std::string DataRoot;
 }
-static void DumpShader(u32 n, const std::string_view& suffix, const std::string_view& data)
+static void DumpShader(u32 n, std::string_view suffix, std::string_view data)
 {
   if (data.empty())
     return;
@@ -617,27 +607,30 @@ static void DumpShader(u32 n, const std::string_view& suffix, const std::string_
   std::fwrite(data.data(), data.length(), 1, fp.get());
 }
 
-std::unique_ptr<GPUShader> MetalDevice::CreateShaderFromMSL(GPUShaderStage stage, const std::string_view& source,
-                                                            const std::string_view& entry_point)
+std::unique_ptr<GPUShader> MetalDevice::CreateShaderFromMSL(GPUShaderStage stage, std::string_view source,
+                                                            std::string_view entry_point, Error* error)
 {
   @autoreleasepool
   {
     NSString* const ns_source = StringViewToNSString(source);
-    NSError* error = nullptr;
-    id<MTLLibrary> library = [m_device newLibraryWithSource:ns_source options:nil error:&error];
+    NSError* nserror = nullptr;
+    id<MTLLibrary> library = [m_device newLibraryWithSource:ns_source options:nil error:&nserror];
     if (!library)
     {
-      LogNSError(error, "Failed to compile %s shader", GPUShader::GetStageName(stage));
+      LogNSError(nserror, TinyString::from_format("Failed to compile {} shader", GPUShader::GetStageName(stage)));
 
-      const char* utf_error = [error.description UTF8String];
-      DumpBadShader(source, fmt::format("Error {}: {}", static_cast<u32>(error.code), utf_error ? utf_error : ""));
+      const char* utf_error = [nserror.description UTF8String];
+      DumpBadShader(source, fmt::format("Error {}: {}", static_cast<u32>(nserror.code), utf_error ? utf_error : ""));
+      Error::SetStringFmt(error, "Failed to compile {} shader: Error {}: {}", GPUShader::GetStageName(stage),
+                          static_cast<u32>(nserror.code), utf_error ? utf_error : "");
       return {};
     }
 
     id<MTLFunction> function = [library newFunctionWithName:StringViewToNSString(entry_point)];
     if (!function)
     {
-      Log_ErrorPrintf("Failed to get main function in compiled library");
+      ERROR_LOG("Failed to get main function in compiled library");
+      Error::SetStringView(error, "Failed to get main function in compiled library");
       return {};
     }
 
@@ -645,187 +638,42 @@ std::unique_ptr<GPUShader> MetalDevice::CreateShaderFromMSL(GPUShaderStage stage
   }
 }
 
-std::unique_ptr<GPUShader> MetalDevice::CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data)
+std::unique_ptr<GPUShader> MetalDevice::CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data,
+                                                               Error* error)
 {
   const std::string_view str_data(reinterpret_cast<const char*>(data.data()), data.size());
-  return CreateShaderFromMSL(stage, str_data, "main0");
+  return CreateShaderFromMSL(stage, str_data, "main0", error);
 }
 
-std::unique_ptr<GPUShader> MetalDevice::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                               const char* entry_point,
-                                                               DynamicHeapArray<u8>* out_binary /* = nullptr */)
+std::unique_ptr<GPUShader> MetalDevice::CreateShaderFromSource(GPUShaderStage stage, GPUShaderLanguage language,
+                                                               std::string_view source, const char* entry_point,
+                                                               DynamicHeapArray<u8>* out_binary, Error* error)
 {
   static constexpr bool dump_shaders = false;
 
-  static constexpr const std::array<shaderc_shader_kind, static_cast<size_t>(GPUShaderStage::MaxCount)> stage_kinds = {{
-    shaderc_glsl_vertex_shader,
-    shaderc_glsl_fragment_shader,
-    shaderc_glsl_geometry_shader,
-    shaderc_glsl_compute_shader,
-  }};
-
-  // TODO: NOT thread safe, yet.
-  if (!s_shaderc_compiler)
-    s_shaderc_compiler = std::make_unique<shaderc::Compiler>();
-
-  shaderc::CompileOptions spv_options;
-  spv_options.SetSourceLanguage(shaderc_source_language_glsl);
-  spv_options.SetTargetEnvironment(shaderc_target_env_vulkan, 0);
-
-  if (m_debug_device)
-  {
-    spv_options.SetOptimizationLevel(shaderc_optimization_level_zero);
-    spv_options.SetGenerateDebugInfo();
-  }
-  else
-  {
-    spv_options.SetOptimizationLevel(shaderc_optimization_level_performance);
-  }
-
-  const shaderc::SpvCompilationResult result = s_shaderc_compiler->CompileGlslToSpv(
-    source.data(), source.length(), stage_kinds[static_cast<size_t>(stage)], "source", entry_point, spv_options);
-  if (result.GetCompilationStatus() != shaderc_compilation_status_success)
-  {
-    const std::string errors = result.GetErrorMessage();
-    DumpBadShader(source, errors);
-    Log_ErrorFmt("Failed to compile shader to SPIR-V:\n{}", errors);
+  DynamicHeapArray<u8> spv;
+  if (!CompileGLSLShaderToVulkanSpv(stage, language, source, entry_point, !m_debug_device, false, &spv, error))
     return {};
-  }
-  else if (result.GetNumWarnings() > 0)
-  {
-    Log_WarningFmt("Shader compiled with warnings:\n{}", result.GetErrorMessage());
-  }
 
-  spvc_context sctx;
-  spvc_result sres;
-  if ((sres = spvc_context_create(&sctx)) != SPVC_SUCCESS)
-  {
-    Log_ErrorFmt("spvc_context_create() failed: {}", static_cast<int>(sres));
+  std::string msl;
+  if (!TranslateVulkanSpvToLanguage(spv.cspan(), stage, GPUShaderLanguage::MSL, 230, &msl, error))
     return {};
-  }
 
-  const ScopedGuard sctx_guard = [&sctx]() { spvc_context_destroy(sctx); };
-
-  spvc_context_set_error_callback(
-    sctx, [](void*, const char* error) { Log_ErrorFmt("SPIRV-Cross reported an error: {}", error); }, nullptr);
-
-  spvc_parsed_ir sir;
-  if ((sres = spvc_context_parse_spirv(sctx, result.cbegin(), std::distance(result.cbegin(), result.cend()), &sir)) !=
-      SPVC_SUCCESS)
-  {
-    Log_ErrorFmt("spvc_context_parse_spirv() failed: {}", static_cast<int>(sres));
-    DumpBadShader(source, std::string_view());
-    return {};
-  }
-
-  spvc_compiler scompiler;
-  if ((sres = spvc_context_create_compiler(sctx, SPVC_BACKEND_MSL, sir, SPVC_CAPTURE_MODE_TAKE_OWNERSHIP,
-                                           &scompiler)) != SPVC_SUCCESS)
-  {
-    Log_ErrorFmt("spvc_context_create_compiler() failed: {}", static_cast<int>(sres));
-    return {};
-  }
-
-  spvc_compiler_options soptions;
-  if ((sres = spvc_compiler_create_compiler_options(scompiler, &soptions)) != SPVC_SUCCESS)
-  {
-    Log_ErrorFmt("spvc_compiler_create_compiler_options() failed: {}", static_cast<int>(sres));
-    return {};
-  }
-
-  if ((sres = spvc_compiler_options_set_bool(soptions, SPVC_COMPILER_OPTION_MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS,
-                                             true)) != SPVC_SUCCESS)
-  {
-    Log_ErrorFmt("spvc_compiler_options_set_bool(SPVC_COMPILER_OPTION_MSL_PAD_FRAGMENT_OUTPUT_COMPONENTS) failed: {}",
-                 static_cast<int>(sres));
-    return {};
-  }
-
-  if ((sres = spvc_compiler_options_set_bool(soptions, SPVC_COMPILER_OPTION_MSL_FRAMEBUFFER_FETCH_SUBPASS,
-                                             m_features.framebuffer_fetch)) != SPVC_SUCCESS)
-  {
-    Log_ErrorFmt("spvc_compiler_options_set_bool(SPVC_COMPILER_OPTION_MSL_FRAMEBUFFER_FETCH_SUBPASS) failed: {}",
-                 static_cast<int>(sres));
-    return {};
-  }
-
-  if (m_features.framebuffer_fetch &&
-      ((sres = spvc_compiler_options_set_uint(soptions, SPVC_COMPILER_OPTION_MSL_VERSION,
-                                              SPVC_MAKE_MSL_VERSION(2, 3, 0))) != SPVC_SUCCESS))
-  {
-    Log_ErrorFmt("spvc_compiler_options_set_uint(SPVC_COMPILER_OPTION_MSL_VERSION) failed: {}", static_cast<int>(sres));
-    return {};
-  }
-
-  if (stage == GPUShaderStage::Fragment)
-  {
-    for (u32 i = 0; i < MAX_TEXTURE_SAMPLERS; i++)
-    {
-      const spvc_msl_resource_binding rb = {.stage = SpvExecutionModelFragment,
-                                            .desc_set = 1,
-                                            .binding = i,
-                                            .msl_buffer = i,
-                                            .msl_texture = i,
-                                            .msl_sampler = i};
-
-      if ((sres = spvc_compiler_msl_add_resource_binding(scompiler, &rb)) != SPVC_SUCCESS)
-      {
-        Log_ErrorFmt("spvc_compiler_msl_add_resource_binding() failed: {}", static_cast<int>(sres));
-        return {};
-      }
-    }
-
-    if (!m_features.framebuffer_fetch)
-    {
-      const spvc_msl_resource_binding rb = {
-        .stage = SpvExecutionModelFragment, .desc_set = 2, .binding = 0, .msl_texture = MAX_TEXTURE_SAMPLERS};
-
-      if ((sres = spvc_compiler_msl_add_resource_binding(scompiler, &rb)) != SPVC_SUCCESS)
-      {
-        Log_ErrorFmt("spvc_compiler_msl_add_resource_binding() for FB failed: {}", static_cast<int>(sres));
-        return {};
-      }
-    }
-  }
-
-  if ((sres = spvc_compiler_install_compiler_options(scompiler, soptions)) != SPVC_SUCCESS)
-  {
-    Log_ErrorFmt("spvc_compiler_install_compiler_options() failed: {}", static_cast<int>(sres));
-    return {};
-  }
-
-  const char* msl;
-  if ((sres = spvc_compiler_compile(scompiler, &msl)) != SPVC_SUCCESS)
-  {
-    Log_ErrorFmt("spvc_compiler_compile() failed: {}", static_cast<int>(sres));
-    DumpBadShader(source, std::string_view());
-    return {};
-  }
-
-  const size_t msl_length = msl ? std::strlen(msl) : 0;
-  if (msl_length == 0)
-  {
-    Log_ErrorPrint("Failed to compile SPIR-V to MSL.");
-    DumpBadShader(source, std::string_view());
-    return {};
-  }
-
-  const std::string_view mslv(msl, msl_length);
   if constexpr (dump_shaders)
   {
     static unsigned s_next_id = 0;
     ++s_next_id;
     DumpShader(s_next_id, "_input", source);
-    DumpShader(s_next_id, "_msl", mslv);
+    DumpShader(s_next_id, "_msl", msl);
   }
 
   if (out_binary)
   {
-    out_binary->resize(mslv.size());
-    std::memcpy(out_binary->data(), mslv.data(), mslv.size());
+    out_binary->resize(msl.size());
+    std::memcpy(out_binary->data(), msl.data(), msl.size());
   }
 
-  return CreateShaderFromMSL(stage, mslv, "main0");
+  return CreateShaderFromMSL(stage, msl, "main0", error);
 }
 
 MetalPipeline::MetalPipeline(id<MTLRenderPipelineState> pipeline, id<MTLDepthStencilState> depth, MTLCullMode cull_mode,
@@ -839,7 +687,7 @@ MetalPipeline::~MetalPipeline()
   MetalDevice::DeferRelease(m_pipeline);
 }
 
-void MetalPipeline::SetDebugName(const std::string_view& name)
+void MetalPipeline::SetDebugName(std::string_view name)
 {
   // readonly property :/
 }
@@ -869,14 +717,14 @@ id<MTLDepthStencilState> MetalDevice::GetDepthState(const GPUPipeline::DepthStat
 
     id<MTLDepthStencilState> state = [m_device newDepthStencilStateWithDescriptor:desc];
     m_depth_states.emplace(ds.key, state);
-    if (state == nil)
-      Log_ErrorPrintf("Failed to create depth-stencil state.");
+    if (state == nil) [[unlikely]]
+      ERROR_LOG("Failed to create depth-stencil state.");
 
     return state;
   }
 }
 
-std::unique_ptr<GPUPipeline> MetalDevice::CreatePipeline(const GPUPipeline::GraphicsConfig& config)
+std::unique_ptr<GPUPipeline> MetalDevice::CreatePipeline(const GPUPipeline::GraphicsConfig& config, Error* error)
 {
   @autoreleasepool
   {
@@ -1014,11 +862,12 @@ std::unique_ptr<GPUPipeline> MetalDevice::CreatePipeline(const GPUPipeline::Grap
     if (config.layout == GPUPipeline::Layout::SingleTextureBufferAndPushConstants)
       desc.fragmentBuffers[1].mutability = MTLMutabilityImmutable;
 
-    NSError* error = nullptr;
-    id<MTLRenderPipelineState> pipeline = [m_device newRenderPipelineStateWithDescriptor:desc error:&error];
+    NSError* nserror = nullptr;
+    id<MTLRenderPipelineState> pipeline = [m_device newRenderPipelineStateWithDescriptor:desc error:&nserror];
     if (pipeline == nil)
     {
-      LogNSError(error, "Failed to create render pipeline state");
+      LogNSError(nserror, "Failed to create render pipeline state");
+      NSErrorToErrorObject(error, "newRenderPipelineStateWithDescriptor failed: ", nserror);
       return {};
     }
 
@@ -1188,7 +1037,7 @@ void MetalTexture::MakeReadyForSampling()
     dev.EndRenderPass();
 }
 
-void MetalTexture::SetDebugName(const std::string_view& name)
+void MetalTexture::SetDebugName(std::string_view name)
 {
   @autoreleasepool
   {
@@ -1251,7 +1100,7 @@ std::unique_ptr<GPUTexture> MetalDevice::CreateTexture(u32 width, u32 height, u3
     id<MTLTexture> tex = [m_device newTextureWithDescriptor:desc];
     if (tex == nil)
     {
-      Log_ErrorPrintf("Failed to create %ux%u texture.", width, height);
+      ERROR_LOG("Failed to create {}x{} texture.", width, height);
       return {};
     }
 
@@ -1304,7 +1153,7 @@ std::unique_ptr<MetalDownloadTexture> MetalDownloadTexture::Create(u32 width, u3
       buffer = [[dev.m_device newBufferWithLength:buffer_size options:options] retain];
       if (buffer == nil)
       {
-        Log_ErrorFmt("Failed to create {} byte buffer", buffer_size);
+        ERROR_LOG("Failed to create {} byte buffer", buffer_size);
         return {};
       }
 
@@ -1321,8 +1170,7 @@ std::unique_ptr<MetalDownloadTexture> MetalDownloadTexture::Create(u32 width, u3
         reinterpret_cast<void*>(Common::AlignDownPow2(reinterpret_cast<uintptr_t>(memory), HOST_PAGE_SIZE));
       const size_t page_offset = static_cast<size_t>(static_cast<u8*>(memory) - static_cast<u8*>(page_aligned_memory));
       const size_t page_aligned_size = Common::AlignUpPow2(page_offset + memory_size, HOST_PAGE_SIZE);
-      Log_DevFmt("Trying to import {} bytes of memory at {} for download texture", page_aligned_memory,
-                 page_aligned_size);
+      DEV_LOG("Trying to import {} bytes of memory at {} for download texture", page_aligned_memory, page_aligned_size);
 
       buffer = [[dev.m_device newBufferWithBytesNoCopy:page_aligned_memory
                                                 length:page_aligned_size
@@ -1330,7 +1178,7 @@ std::unique_ptr<MetalDownloadTexture> MetalDownloadTexture::Create(u32 width, u3
                                            deallocator:nil] retain];
       if (buffer == nil)
       {
-        Log_ErrorFmt("Failed to import {} byte buffer", page_aligned_size);
+        ERROR_LOG("Failed to import {} byte buffer", page_aligned_size);
         return {};
       }
 
@@ -1434,7 +1282,7 @@ MetalSampler::MetalSampler(id<MTLSamplerState> ss) : m_ss(ss)
 
 MetalSampler::~MetalSampler() = default;
 
-void MetalSampler::SetDebugName(const std::string_view& name)
+void MetalSampler::SetDebugName(std::string_view name)
 {
   // lame.. have to put it on the descriptor :/
 }
@@ -1495,7 +1343,7 @@ std::unique_ptr<GPUSampler> MetalDevice::CreateSampler(const GPUSampler::Config&
       }
       if (i == std::size(border_color_mapping))
       {
-        Log_ErrorPrintf("Unsupported border color: %08X", config.border_color.GetValue());
+        ERROR_LOG("Unsupported border color: {:08X}", config.border_color.GetValue());
         return {};
       }
 
@@ -1506,7 +1354,7 @@ std::unique_ptr<GPUSampler> MetalDevice::CreateSampler(const GPUSampler::Config&
     id<MTLSamplerState> ss = [m_device newSamplerStateWithDescriptor:desc];
     if (ss == nil)
     {
-      Log_ErrorPrintf("Failed to create sampler state.");
+      ERROR_LOG("Failed to create sampler state.");
       return {};
     }
 
@@ -1667,9 +1515,9 @@ void MetalDevice::ClearDepth(GPUTexture* t, float d)
     id<MTLRenderPipelineState> pipeline = GetClearDepthPipeline(config);
     id<MTLDepthStencilState> depth = GetDepthState(GPUPipeline::DepthState::GetAlwaysWriteState());
 
-    const Common::Rectangle<s32> rect(0, 0, t->GetWidth(), t->GetHeight());
-    const bool set_vp = (m_current_viewport != rect);
-    const bool set_scissor = (m_current_scissor != rect);
+    const GSVector4i rect = t->GetRect();
+    const bool set_vp = !m_current_viewport.eq(rect);
+    const bool set_scissor = !m_current_scissor.eq(rect);
     if (set_vp)
     {
       [m_render_encoder setViewport:(MTLViewport){0.0, 0.0, static_cast<double>(t->GetWidth()),
@@ -1831,7 +1679,7 @@ void MetalTextureBuffer::Unmap(u32 used_elements)
   m_buffer.CommitMemory(size);
 }
 
-void MetalTextureBuffer::SetDebugName(const std::string_view& name)
+void MetalTextureBuffer::SetDebugName(std::string_view name)
 {
   @autoreleasepool
   {
@@ -2064,7 +1912,7 @@ void MetalDevice::UnbindTexture(MetalTexture* tex)
     {
       if (m_current_render_targets[i] == tex)
       {
-        Log_WarningPrint("Unbinding current RT");
+        WARNING_LOG("Unbinding current RT");
         SetRenderTargets(nullptr, 0, m_current_depth_target, GPUPipeline::NoRenderPassFlags); // TODO: Wrong
         break;
       }
@@ -2074,7 +1922,7 @@ void MetalDevice::UnbindTexture(MetalTexture* tex)
   {
     if (m_current_depth_target == tex)
     {
-      Log_WarningPrint("Unbinding current DS");
+      WARNING_LOG("Unbinding current DS");
       SetRenderTargets(nullptr, 0, nullptr, GPUPipeline::NoRenderPassFlags);
     }
   }
@@ -2090,24 +1938,24 @@ void MetalDevice::UnbindTextureBuffer(MetalTextureBuffer* buf)
     [m_render_encoder setFragmentBuffer:nil offset:0 atIndex:1];
 }
 
-void MetalDevice::SetViewport(s32 x, s32 y, s32 width, s32 height)
+void MetalDevice::SetViewport(const GSVector4i rc)
 {
-  const Common::Rectangle<s32> new_vp = Common::Rectangle<s32>::FromExtents(x, y, width, height);
-  if (new_vp == m_current_viewport)
+  if (m_current_viewport.eq(rc))
     return;
 
-  m_current_viewport = new_vp;
+  m_current_viewport = rc;
+
   if (InRenderPass())
     SetViewportInRenderEncoder();
 }
 
-void MetalDevice::SetScissor(s32 x, s32 y, s32 width, s32 height)
+void MetalDevice::SetScissor(const GSVector4i rc)
 {
-  const Common::Rectangle<s32> new_sr = Common::Rectangle<s32>::FromExtents(x, y, width, height);
-  if (new_sr == m_current_scissor)
+  if (m_current_scissor.eq(rc))
     return;
 
-  m_current_scissor = new_sr;
+  m_current_scissor = rc;
+
   if (InRenderPass())
     SetScissorInRenderEncoder();
 }
@@ -2270,27 +2118,27 @@ void MetalDevice::SetInitialEncoderState()
 
 void MetalDevice::SetViewportInRenderEncoder()
 {
-  const Common::Rectangle<s32> rc = ClampToFramebufferSize(m_current_viewport);
+  const GSVector4i rc = ClampToFramebufferSize(m_current_viewport);
   [m_render_encoder
     setViewport:(MTLViewport){static_cast<double>(rc.left), static_cast<double>(rc.top),
-                              static_cast<double>(rc.GetWidth()), static_cast<double>(rc.GetHeight()), 0.0, 1.0}];
+                              static_cast<double>(rc.width()), static_cast<double>(rc.height()), 0.0, 1.0}];
 }
 
 void MetalDevice::SetScissorInRenderEncoder()
 {
-  const Common::Rectangle<s32> rc = ClampToFramebufferSize(m_current_scissor);
+  const GSVector4i rc = ClampToFramebufferSize(m_current_scissor);
   [m_render_encoder
     setScissorRect:(MTLScissorRect){static_cast<NSUInteger>(rc.left), static_cast<NSUInteger>(rc.top),
-                                    static_cast<NSUInteger>(rc.GetWidth()), static_cast<NSUInteger>(rc.GetHeight())}];
+                                    static_cast<NSUInteger>(rc.width()), static_cast<NSUInteger>(rc.height())}];
 }
 
-Common::Rectangle<s32> MetalDevice::ClampToFramebufferSize(const Common::Rectangle<s32>& rc) const
+GSVector4i MetalDevice::ClampToFramebufferSize(const GSVector4i rc) const
 {
   const MetalTexture* rt_or_ds =
     (m_num_current_render_targets > 0) ? m_current_render_targets[0] : m_current_depth_target;
   const s32 clamp_width = rt_or_ds ? rt_or_ds->GetWidth() : m_window_info.surface_width;
   const s32 clamp_height = rt_or_ds ? rt_or_ds->GetHeight() : m_window_info.surface_height;
-  return rc.ClampedSize(clamp_width, clamp_height);
+  return rc.rintersect(GSVector4i(0, 0, clamp_width, clamp_height));
 }
 
 void MetalDevice::PreDrawCheck()
@@ -2465,7 +2313,7 @@ id<MTLBlitCommandEncoder> MetalDevice::GetBlitEncoder(bool is_inline)
   }
 }
 
-bool MetalDevice::BeginPresent(bool skip_present)
+bool MetalDevice::BeginPresent(bool skip_present, u32 clear_color)
 {
   @autoreleasepool
   {
@@ -2490,9 +2338,11 @@ bool MetalDevice::BeginPresent(bool skip_present)
     SetViewportAndScissor(0, 0, m_window_info.surface_width, m_window_info.surface_height);
 
     // Set up rendering to layer.
+    const GSVector4 clear_color_v = GSVector4::rgba32(clear_color);
     id<MTLTexture> layer_texture = [m_layer_drawable texture];
     m_layer_pass_desc.colorAttachments[0].texture = layer_texture;
     m_layer_pass_desc.colorAttachments[0].loadAction = MTLLoadActionClear;
+    m_layer_pass_desc.colorAttachments[0].clearColor = MTLClearColorMake(clear_color_v.r, clear_color_v.g, clear_color_v.g, clear_color_v.a);
     m_render_encoder = [[m_render_cmdbuf renderCommandEncoderWithDescriptor:m_layer_pass_desc] retain];
     s_stats.num_render_passes++;
     std::memset(m_current_render_targets.data(), 0, sizeof(m_current_render_targets));
@@ -2592,7 +2442,7 @@ void MetalDevice::SubmitCommandBuffer(bool wait_for_completion)
 
 void MetalDevice::SubmitCommandBufferAndRestartRenderPass(const char* reason)
 {
-  Log_DevPrintf("Submitting command buffer and restarting render pass due to %s", reason);
+  DEV_LOG("Submitting command buffer and restarting render pass due to {}", reason);
 
   const bool in_render_pass = InRenderPass();
   SubmitCommandBuffer();
@@ -2626,6 +2476,12 @@ void MetalDevice::WaitForPreviousCommandBuffers()
   WaitForFenceCounter(m_current_fence_counter - 1);
 }
 
+void MetalDevice::ExecuteAndWaitForGPUIdle()
+{
+  SubmitCommandBuffer(true);
+  CleanupObjects();
+}
+
 void MetalDevice::CleanupObjects()
 {
   const u64 counter = m_completed_fence_counter.load(std::memory_order_acquire);
@@ -2653,7 +2509,24 @@ std::unique_ptr<GPUDevice> GPUDevice::WrapNewMetalDevice()
   return std::unique_ptr<GPUDevice>(new MetalDevice());
 }
 
-GPUDevice::AdapterAndModeList GPUDevice::WrapGetMetalAdapterAndModeList()
+GPUDevice::AdapterInfoList GPUDevice::WrapGetMetalAdapterList()
 {
-  return MetalDevice::StaticGetAdapterAndModeList();
+  AdapterInfoList ret;
+  @autoreleasepool
+  {
+    NSArray<id<MTLDevice>>* devices = [MTLCopyAllDevices() autorelease];
+    const u32 count = static_cast<u32>([devices count]);
+    ret.reserve(count);
+    for (u32 i = 0; i < count; i++)
+    {
+      AdapterInfo ai;
+      ai.name = [devices[i].name UTF8String];
+      ai.max_texture_size = GetMetalMaxTextureSize(devices[i]);
+      ai.max_multisamples = GetMetalMaxMultisamples(devices[i]);
+      ai.supports_sample_shading = true;
+      ret.push_back(std::move(ai));
+    }
+  }
+
+  return ret;
 }

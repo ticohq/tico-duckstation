@@ -4,7 +4,7 @@
 #include "gpu_shadergen.h"
 
 GPUShaderGen::GPUShaderGen(RenderAPI render_api, bool supports_dual_source_blend, bool supports_framebuffer_fetch)
-  : ShaderGen(render_api, supports_dual_source_blend, supports_framebuffer_fetch)
+  : ShaderGen(render_api, GetShaderLanguageForAPI(render_api), supports_dual_source_blend, supports_framebuffer_fetch)
 {
 }
 
@@ -12,7 +12,11 @@ GPUShaderGen::~GPUShaderGen() = default;
 
 void GPUShaderGen::WriteDisplayUniformBuffer(std::stringstream& ss)
 {
-  DeclareUniformBuffer(ss, {"float4 u_src_rect", "float4 u_src_size", "float4 u_clamp_rect", "float4 u_params"}, true);
+  // Rotation matrix split into rows to avoid padding in HLSL.
+  DeclareUniformBuffer(ss,
+                       {"float4 u_src_rect", "float4 u_src_size", "float4 u_clamp_rect", "float4 u_params",
+                        "float2 u_rotation_matrix0", "float2 u_rotation_matrix1"},
+                       true);
 
   ss << R"(
 float2 ClampUV(float2 uv) {
@@ -31,6 +35,10 @@ std::string GPUShaderGen::GenerateDisplayVertexShader()
   float2 pos = float2(float((v_id << 1) & 2u), float(v_id & 2u));
   v_tex0 = u_src_rect.xy + pos * u_src_rect.zw;
   v_pos = float4(pos * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 0.0f, 1.0f);
+
+  // Avoid HLSL/GLSL constructor differences by explicitly multiplying the matrix.
+  v_pos.xy = float2(dot(u_rotation_matrix0, v_pos.xy), dot(u_rotation_matrix1, v_pos.xy));
+
   #if API_VULKAN
     v_pos.y = -v_pos.y;
   #endif
@@ -46,7 +54,7 @@ std::string GPUShaderGen::GenerateDisplayFragmentShader(bool clamp_uv)
   WriteHeader(ss);
   WriteDisplayUniformBuffer(ss);
   DeclareTexture(ss, "samp0", 0);
-  DeclareFragmentEntryPoint(ss, 0, 1, {}, false, 1);
+  DeclareFragmentEntryPoint(ss, 0, 1);
   if (clamp_uv)
     ss << "{\n  o_col0 = float4(SAMPLE_TEXTURE(samp0, ClampUV(v_tex0)).rgb, 1.0f);\n }";
   else
@@ -64,7 +72,7 @@ std::string GPUShaderGen::GenerateDisplaySharpBilinearFragmentShader()
 
   // Based on
   // https://github.com/rsn8887/Sharp-Bilinear-Shaders/blob/master/Copy_To_RetroPie/shaders/sharp-bilinear-simple.glsl
-  DeclareFragmentEntryPoint(ss, 0, 1, {}, false, 1, false, false, false, false);
+  DeclareFragmentEntryPoint(ss, 0, 1);
   ss << R"(
 {
   float2 scale = u_params.xy;
@@ -234,7 +242,7 @@ float3 SampleVRAMAverage2x2(uint2 icoords)
 }
 )";
 
-  DeclareFragmentEntryPoint(ss, 0, 1, {}, true, 1);
+  DeclareFragmentEntryPoint(ss, 0, 1, {}, true);
   ss << R"(
 {
   uint2 icoords = uint2(v_pos.xy) + u_sample_offset;

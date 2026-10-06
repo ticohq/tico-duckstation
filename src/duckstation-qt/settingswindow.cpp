@@ -48,7 +48,7 @@ SettingsWindow::SettingsWindow() : QWidget()
 
 SettingsWindow::SettingsWindow(const std::string& path, const std::string& serial, DiscRegion region,
                                const GameDatabase::Entry* entry, std::unique_ptr<INISettingsInterface> sif)
-  : QWidget(), m_sif(std::move(sif))
+  : QWidget(), m_sif(std::move(sif)), m_database_entry(entry)
 {
   m_ui.setupUi(this);
   setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
@@ -79,7 +79,7 @@ void SettingsWindow::closeEvent(QCloseEvent* event)
 void SettingsWindow::addPages()
 {
   addWidget(
-    m_general_settings = new InterfaceSettingsWidget(this, m_ui.settingsContainer), tr("Interface"),
+    m_interface_settings = new InterfaceSettingsWidget(this, m_ui.settingsContainer), tr("Interface"),
     QStringLiteral("settings-3-line"),
     tr("<strong>Interface Settings</strong><hr>These options control how the emulator looks and "
        "behaves.<br><br>Mouse over an option for additional information, and Shift+Wheel to scroll this panel."));
@@ -250,6 +250,16 @@ void SettingsWindow::setCategory(const char* category)
   }
 }
 
+int SettingsWindow::getCategoryRow() const
+{
+  return m_ui.settingsCategory->currentRow();
+}
+
+void SettingsWindow::setCategoryRow(int index)
+{
+  m_ui.settingsCategory->setCurrentRow(index);
+}
+
 void SettingsWindow::onCategoryCurrentRowChanged(int row)
 {
   DebugAssert(row < static_cast<int>(MAX_SETTINGS_WIDGETS));
@@ -286,11 +296,10 @@ void SettingsWindow::onCopyGlobalSettingsClicked()
   {
     auto lock = Host::GetSettingsLock();
     Settings temp;
-    temp.Load(*Host::Internal::GetBaseSettingsLayer());
+    temp.Load(*Host::Internal::GetBaseSettingsLayer(), *Host::Internal::GetBaseSettingsLayer());
     temp.Save(*m_sif.get(), true);
   }
-  m_sif->Save();
-  g_emu_thread->reloadGameSettings();
+  saveAndReloadGameSettings();
 
   reloadPages();
 
@@ -311,8 +320,7 @@ void SettingsWindow::onClearSettingsClicked()
   }
 
   Settings::Clear(*m_sif.get());
-  m_sif->Save();
-  g_emu_thread->reloadGameSettings();
+  saveAndReloadGameSettings();
 
   reloadPages();
 
@@ -524,8 +532,7 @@ void SettingsWindow::setBoolSettingValue(const char* section, const char* key, s
   if (m_sif)
   {
     value.has_value() ? m_sif->SetBoolValue(section, key, value.value()) : m_sif->DeleteValue(section, key);
-    m_sif->Save();
-    g_emu_thread->reloadGameSettings();
+    saveAndReloadGameSettings();
   }
   else
   {
@@ -541,8 +548,7 @@ void SettingsWindow::setIntSettingValue(const char* section, const char* key, st
   if (m_sif)
   {
     value.has_value() ? m_sif->SetIntValue(section, key, value.value()) : m_sif->DeleteValue(section, key);
-    m_sif->Save();
-    g_emu_thread->reloadGameSettings();
+    saveAndReloadGameSettings();
   }
   else
   {
@@ -558,8 +564,7 @@ void SettingsWindow::setFloatSettingValue(const char* section, const char* key, 
   if (m_sif)
   {
     value.has_value() ? m_sif->SetFloatValue(section, key, value.value()) : m_sif->DeleteValue(section, key);
-    m_sif->Save();
-    g_emu_thread->reloadGameSettings();
+    saveAndReloadGameSettings();
   }
   else
   {
@@ -575,8 +580,7 @@ void SettingsWindow::setStringSettingValue(const char* section, const char* key,
   if (m_sif)
   {
     value.has_value() ? m_sif->SetStringValue(section, key, value.value()) : m_sif->DeleteValue(section, key);
-    m_sif->Save();
-    g_emu_thread->reloadGameSettings();
+    saveAndReloadGameSettings();
   }
   else
   {
@@ -600,8 +604,7 @@ void SettingsWindow::removeSettingValue(const char* section, const char* key)
   if (m_sif)
   {
     m_sif->DeleteValue(section, key);
-    m_sif->Save();
-    g_emu_thread->reloadGameSettings();
+    saveAndReloadGameSettings();
   }
   else
   {
@@ -611,7 +614,21 @@ void SettingsWindow::removeSettingValue(const char* section, const char* key)
   }
 }
 
-void SettingsWindow::openGamePropertiesDialog(const std::string& path, const std::string& serial, DiscRegion region)
+void SettingsWindow::saveAndReloadGameSettings()
+{
+  DebugAssert(m_sif);
+  QtHost::SaveGameSettings(m_sif.get(), true);
+  g_emu_thread->reloadGameSettings(false);
+}
+
+bool SettingsWindow::hasGameTrait(GameDatabase::Trait trait)
+{
+  return (m_database_entry && m_database_entry->HasTrait(trait) &&
+          m_sif->GetBoolValue("Main", "ApplyCompatibilitySettings", true));
+}
+
+void SettingsWindow::openGamePropertiesDialog(const std::string& path, const std::string& title,
+                                              const std::string& serial, DiscRegion region)
 {
   const GameDatabase::Entry* dentry = nullptr;
   if (!System::IsExeFileName(path) && !System::IsPsfFileName(path))
@@ -622,7 +639,7 @@ void SettingsWindow::openGamePropertiesDialog(const std::string& path, const std
     if (image)
       dentry = GameDatabase::GetEntryForDisc(image.get());
     else
-      Log_ErrorFmt("Failed to open '{}' for game properties: {}", path, error.GetDescription());
+      ERROR_LOG("Failed to open '{}' for game properties: {}", path, error.GetDescription());
 
     if (!dentry)
     {
@@ -652,12 +669,7 @@ void SettingsWindow::openGamePropertiesDialog(const std::string& path, const std
   if (FileSystem::FileExists(sif->GetFileName().c_str()))
     sif->Load();
 
-  const QString window_title(tr("%1 [%2]")
-                               .arg(dentry ? QtUtils::StringViewToQString(dentry->title) : QStringLiteral("<UNKNOWN>"))
-                               .arg(QtUtils::StringViewToQString(real_serial)));
-
   SettingsWindow* dialog = new SettingsWindow(path, real_serial, region, dentry, std::move(sif));
-  dialog->setWindowTitle(window_title);
   dialog->show();
 }
 

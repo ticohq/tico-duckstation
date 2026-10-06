@@ -1,8 +1,9 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
 
+#include "common/gsvector.h"
 #include "common/types.h"
 
 #include <algorithm>
@@ -41,6 +42,9 @@ public:
     RGBA5551,
     R8,
     D16,
+    D24S8,
+    D32F,
+    D32FS8,
     R16,
     R16I,
     R16U,
@@ -100,6 +104,10 @@ public:
   ALWAYS_INLINE u32 GetSamples() const { return m_samples; }
   ALWAYS_INLINE Type GetType() const { return m_type; }
   ALWAYS_INLINE Format GetFormat() const { return m_format; }
+  ALWAYS_INLINE GSVector4i GetRect() const
+  {
+    return GSVector4i(0, 0, static_cast<s32>(m_width), static_cast<s32>(m_height));
+  }
 
   ALWAYS_INLINE bool IsTextureArray() const { return m_layers > 1; }
   ALWAYS_INLINE bool IsMultisampled() const { return m_samples > 1; }
@@ -121,6 +129,7 @@ public:
   ALWAYS_INLINE bool IsDepthStencil() const { return (m_type == Type::DepthStencil); }
   ALWAYS_INLINE bool IsTexture() const { return (m_type == Type::Texture || m_type == Type::DynamicTexture); }
   ALWAYS_INLINE bool IsDynamicTexture() const { return (m_type == Type::DynamicTexture); }
+  ALWAYS_INLINE bool IsRWTexture() const { return (m_type == Type::RWTexture); }
 
   ALWAYS_INLINE const ClearValue& GetClearValue() const { return m_clear_value; }
   ALWAYS_INLINE u32 GetClearColor() const { return m_clear_value.color; }
@@ -156,7 +165,7 @@ public:
   // Instructs the backend that we're finished rendering to this texture. It may transition it to a new layout.
   virtual void MakeReadyForSampling();
 
-  virtual void SetDebugName(const std::string_view& name) = 0;
+  virtual void SetDebugName(std::string_view name) = 0;
 
 protected:
   GPUTexture(u16 width, u16 height, u8 layers, u8 levels, u8 samples, Type type, Format format);

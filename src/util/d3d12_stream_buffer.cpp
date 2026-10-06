@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "d3d12_stream_buffer.h"
@@ -6,6 +6,7 @@
 
 #include "common/align.h"
 #include "common/assert.h"
+#include "common/error.h"
 #include "common/log.h"
 
 #include "D3D12MemAlloc.h"
@@ -21,7 +22,7 @@ D3D12StreamBuffer::~D3D12StreamBuffer()
   Destroy();
 }
 
-bool D3D12StreamBuffer::Create(u32 size)
+bool D3D12StreamBuffer::Create(u32 size, Error* error)
 {
   const D3D12_RESOURCE_DESC resource_desc = {
     D3D12_RESOURCE_DIMENSION_BUFFER, 0, size, 1, 1, 1, DXGI_FORMAT_UNKNOWN, {1, 0}, D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
@@ -36,18 +37,18 @@ bool D3D12StreamBuffer::Create(u32 size)
   HRESULT hr = D3D12Device::GetInstance().GetAllocator()->CreateResource(
     &allocationDesc, &resource_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, allocation.ReleaseAndGetAddressOf(),
     IID_PPV_ARGS(buffer.GetAddressOf()));
-  if (FAILED(hr))
+  if (FAILED(hr)) [[unlikely]]
   {
-    Log_ErrorPrintf("CreateResource() failed: %08X", hr);
+    Error::SetHResult(error, "CreateResource() for stream buffer failed: ", hr);
     return false;
   }
 
   static const D3D12_RANGE read_range = {};
   u8* host_pointer;
   hr = buffer->Map(0, &read_range, reinterpret_cast<void**>(&host_pointer));
-  if (FAILED(hr))
+  if (FAILED(hr)) [[unlikely]]
   {
-    Log_ErrorPrintf("Map() failed: %08X", hr);
+    Error::SetHResult(error, "Map() for stream buffer failed: ", hr);
     return false;
   }
 
@@ -66,10 +67,10 @@ bool D3D12StreamBuffer::ReserveMemory(u32 num_bytes, u32 alignment)
   const u32 required_bytes = num_bytes + alignment;
 
   // Check for sane allocations
-  if (num_bytes > m_size)
+  if (num_bytes > m_size) [[unlikely]]
   {
-    Log_ErrorPrintf("Attempting to allocate %u bytes from a %u byte stream buffer", static_cast<u32>(num_bytes),
-                    static_cast<u32>(m_size));
+    ERROR_LOG("Attempting to allocate {} bytes from a {} byte stream buffer", static_cast<u32>(num_bytes),
+              static_cast<u32>(m_size));
     Panic("Stream buffer overflow");
   }
 

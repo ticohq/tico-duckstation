@@ -8,19 +8,18 @@
 #include "common/small_string.h"
 #include "common/types.h"
 
-#include <ctime>
 #include <functional>
-#include <memory>
 #include <mutex>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+class Error;
 class SettingsInterface;
 struct WindowInfo;
 enum class AudioBackend : u8;
+enum class AudioExpansionMode : u8;
 enum class AudioStretchMode : u8;
 enum class RenderAPI : u32;
 class AudioStream;
@@ -68,18 +67,8 @@ std::vector<std::string> GetStringListSetting(const char* section, const char* k
 std::unique_lock<std::mutex> GetSettingsLock();
 SettingsInterface* GetSettingsInterface();
 
-/// Returns the settings interface that controller bindings should be loaded from.
-/// If an input profile is being used, this will be the input layer, otherwise the layered interface.
-SettingsInterface* GetSettingsInterfaceForBindings();
-
-
-
-std::unique_ptr<AudioStream> CreateAudioStream(AudioBackend backend, u32 sample_rate, u32 channels, u32 buffer_ms,
-                                               u32 latency_ms, AudioStretchMode stretch);
-
 /// Debugger feedback.
-void ReportDebuggerMessage(const std::string_view& message);
-void ReportFormattedDebuggerMessage(const char* format, ...);
+void ReportDebuggerMessage(std::string_view message);
 
 /// Returns a list of supported languages and codes (suffixes for translation files).
 std::span<const std::pair<const char*, const char*>> GetAvailableLanguageList();
@@ -95,7 +84,7 @@ void DisplayLoadingScreen(const char* message, int progress_min = -1, int progre
 void RunOnCPUThread(std::function<void()> function, bool block = false);
 
 /// Attempts to create the rendering device backend.
-bool CreateGPUDevice(RenderAPI api);
+bool CreateGPUDevice(RenderAPI api, Error* error);
 
 /// Handles fullscreen transitions and such.
 void UpdateDisplayWindow();
@@ -106,8 +95,8 @@ void ResizeDisplayWindow(s32 width, s32 height, float scale);
 /// Destroys any active rendering device.
 void ReleaseGPUDevice();
 
-/// Called before drawing the OSD and other display elements.
-void BeginPresentFrame();
+/// Called at the end of the frame, before presentation.
+void FrameDone();
 
 namespace Internal {
 /// Retrieves the base settings layer. Must call with lock held.
@@ -123,9 +112,9 @@ SettingsInterface* GetInputSettingsLayer();
 void SetBaseSettingsLayer(SettingsInterface* sif);
 
 /// Sets the game settings layer. Called by VMManager when the game changes.
-void SetGameSettingsLayer(SettingsInterface* sif);
+void SetGameSettingsLayer(SettingsInterface* sif, std::unique_lock<std::mutex>& lock);
 
 /// Sets the input profile settings layer. Called by VMManager when the game changes.
-void SetInputSettingsLayer(SettingsInterface* sif);
+void SetInputSettingsLayer(SettingsInterface* sif, std::unique_lock<std::mutex>& lock);
 } // namespace Internal
 } // namespace Host

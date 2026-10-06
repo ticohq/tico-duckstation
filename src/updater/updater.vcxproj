@@ -2,6 +2,7 @@
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="..\..\dep\msvc\vsprops\Configurations.props" />
   <ItemGroup>
+    <ClCompile Include="..\duckstation-qt\vcruntimecheck.cpp" />
     <ClCompile Include="win32_main.cpp" />
     <ClCompile Include="updater.cpp" />
     <ClCompile Include="win32_progress_callback.cpp" />
@@ -20,6 +21,9 @@
     <ProjectReference Include="..\common\common.vcxproj">
       <Project>{ee054e08-3799-4a59-a422-18259c105ffd}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="updater.rc" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{32EEAF44-57F8-4C6C-A6F0-DE5667123DD5}</ProjectGuid>

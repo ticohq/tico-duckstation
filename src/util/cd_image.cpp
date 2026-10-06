@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "cd_image.h"
+
 #include "common/assert.h"
 #include "common/bitutils.h"
 #include "common/error.h"
@@ -9,7 +10,9 @@
 #include "common/log.h"
 #include "common/path.h"
 #include "common/string_util.h"
+
 #include <array>
+
 Log_SetChannel(CDImage);
 
 CDImage::CDImage() = default;
@@ -302,7 +305,7 @@ bool CDImage::ReadRawSector(void* buffer, SubChannelQ* subq)
       // TODO: This is where we'd reconstruct the header for other mode tracks.
       if (!ReadSectorFromIndex(buffer, *m_current_index, m_position_in_index))
       {
-        Log_ErrorPrintf("Read of LBA %u failed", m_position_on_disc);
+        ERROR_LOG("Read of LBA {} failed", m_position_on_disc);
         Seek(m_position_on_disc);
         return false;
       }
@@ -324,7 +327,7 @@ bool CDImage::ReadRawSector(void* buffer, SubChannelQ* subq)
 
   if (subq && !ReadSubChannelQ(subq, *m_current_index, m_position_in_index))
   {
-    Log_ErrorPrintf("Subchannel read of LBA %u failed", m_position_on_disc);
+    ERROR_LOG("Subchannel read of LBA {} failed", m_position_on_disc);
     Seek(m_position_on_disc);
     return false;
   }
@@ -346,7 +349,7 @@ bool CDImage::HasNonStandardSubchannel() const
   return false;
 }
 
-std::string CDImage::GetMetadata(const std::string_view& type) const
+std::string CDImage::GetMetadata(std::string_view type) const
 {
   std::string result;
   if (type == "title")
@@ -378,7 +381,7 @@ bool CDImage::SwitchSubImage(u32 index, Error* error)
   return false;
 }
 
-std::string CDImage::GetSubImageMetadata(u32 index, const std::string_view& type) const
+std::string CDImage::GetSubImageMetadata(u32 index, std::string_view type) const
 {
   return {};
 }

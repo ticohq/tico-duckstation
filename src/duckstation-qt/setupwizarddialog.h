@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>.
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>.
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
@@ -7,12 +7,15 @@
 
 #include "ui_setupwizarddialog.h"
 
+#include "core/bios.h"
+
 #include <QtCore/QList>
 #include <QtCore/QString>
 #include <QtCore/QVector>
 #include <QtWidgets/QDialog>
-
-#include "core/bios.h"
+#include <string>
+#include <utility>
+#include <vector>
 
 class SetupWizardDialog final : public QDialog
 {
@@ -38,12 +41,13 @@ private Q_SLOTS:
   void onDirectoryListContextMenuRequested(const QPoint& point);
   void onAddSearchDirectoryButtonClicked();
   void onRemoveSearchDirectoryButtonClicked();
+  void onSearchDirectoryListSelectionChanged();
   void refreshDirectoryList();
   void resizeDirectoryListColumns();
 
-  void onInputDevicesEnumerated(const QList<QPair<QString, QString>>& devices);
-  void onInputDeviceConnected(const QString& identifier, const QString& device_name);
-  void onInputDeviceDisconnected(const QString& identifier);
+  void onInputDevicesEnumerated(const std::vector<std::pair<std::string, std::string>>& devices);
+  void onInputDeviceConnected(const std::string& identifier, const std::string& device_name);
+  void onInputDeviceDisconnected(const std::string& identifier);
 
 protected:
   void resizeEvent(QResizeEvent* event);
@@ -64,6 +68,7 @@ private:
   void setupBIOSPage();
   void setupGameListPage();
   void setupControllerPage(bool initial);
+  void updateStylesheets();
 
   void pageChangedTo(int page);
   void updatePageLabels(int prev_page);
@@ -78,5 +83,5 @@ private:
 
   std::array<QLabel*, Page_Count> m_page_labels;
 
-  QList<QPair<QString, QString>> m_device_list;
+  std::vector<std::pair<std::string, std::string>> m_device_list;
 };

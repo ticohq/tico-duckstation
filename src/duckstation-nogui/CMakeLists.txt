@@ -37,7 +37,6 @@ if(NINTENDO_SWITCH)
   target_link_libraries(duckstation-nogui PRIVATE
     "${TICO_FRONTEND}/deps/usbhsfs/lib/libusbhsfs.a" "${TICO_FRONTEND}/deps/usbhsfs/lib/libusbntfs.a")
   target_link_libraries(duckstation-nogui PUBLIC "${NX_LIBRARIES}")
-  target_link_libraries(duckstation-nogui PRIVATE rapidjson)
 
   # The renderers' drivers, linked statically (build_duckstation_nro.sh):
   # deko3D's shader compiler, glslang for Vulkan's shaders, Mesa's NVK for
@@ -47,6 +46,9 @@ if(NINTENDO_SWITCH)
       "${TICO_GLSLANG_BUILD}/glslang/libglslang.a"
       "${TICO_GLSLANG_BUILD}/glslang/libglslang-default-resource-limits.a"
       "${TICO_DEPS_DIR}/lib/libuam.a"
+      # SPIR-V to GLSL, for OpenGL's and deko3D's post-processing shaders
+      "${TICO_DEPS_DIR}/lib/libspirv-cross-c.a" "${TICO_DEPS_DIR}/lib/libspirv-cross-glsl.a"
+      "${TICO_DEPS_DIR}/lib/libspirv-cross-util.a" "${TICO_DEPS_DIR}/lib/libspirv-cross-core.a"
       "-Wl,--start-group"
       "${TICO_NVK_ARCHIVE}"
       -l:libGL.a -l:libEGL.a -l:libglapi.a

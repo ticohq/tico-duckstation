@@ -43,6 +43,7 @@
     <ClCompile Include="fullscreen_ui.cpp" />
     <ClCompile Include="game_database.cpp" />
     <ClCompile Include="game_list.cpp" />
+    <ClCompile Include="gdb_server.cpp" />
     <ClCompile Include="gpu_backend.cpp" />
     <ClCompile Include="gpu_commands.cpp" />
     <ClCompile Include="gpu_hw_shadergen.cpp" />
@@ -51,7 +52,6 @@
     <ClCompile Include="gpu_sw_backend.cpp" />
     <ClCompile Include="gte.cpp" />
     <ClCompile Include="dma.cpp" />
-    <ClCompile Include="gdb_protocol.cpp" />
     <ClCompile Include="gpu.cpp" />
     <ClCompile Include="gpu_hw.cpp" />
     <ClCompile Include="host.cpp" />
@@ -59,6 +59,7 @@
     <ClCompile Include="hotkeys.cpp" />
     <ClCompile Include="imgui_overlays.cpp" />
     <ClCompile Include="interrupt_controller.cpp" />
+    <ClCompile Include="justifier.cpp" />
     <ClCompile Include="mdec.cpp" />
     <ClCompile Include="memory_card.cpp" />
     <ClCompile Include="memory_card_image.cpp" />
@@ -73,9 +74,9 @@
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="cpu_pgxp.cpp" />
+    <ClCompile Include="pine_server.cpp" />
     <ClCompile Include="playstation_mouse.cpp" />
     <ClCompile Include="psf_loader.cpp" />
-    <ClCompile Include="resources.cpp" />
     <ClCompile Include="settings.cpp" />
     <ClCompile Include="sio.cpp" />
     <ClCompile Include="spu.cpp" />
@@ -120,6 +121,7 @@
     <ClInclude Include="fullscreen_ui.h" />
     <ClInclude Include="game_database.h" />
     <ClInclude Include="game_list.h" />
+    <ClInclude Include="gdb_server.h" />
     <ClInclude Include="gpu_backend.h" />
     <ClInclude Include="gpu_hw_shadergen.h" />
     <ClInclude Include="gpu_shadergen.h" />
@@ -129,7 +131,6 @@
     <ClInclude Include="gte.h" />
     <ClInclude Include="cpu_types.h" />
     <ClInclude Include="dma.h" />
-    <ClInclude Include="gdb_protocol.h" />
     <ClInclude Include="gpu.h" />
     <ClInclude Include="gpu_hw.h" />
     <ClInclude Include="gte_types.h" />
@@ -138,6 +139,7 @@
     <ClInclude Include="imgui_overlays.h" />
     <ClInclude Include="input_types.h" />
     <ClInclude Include="interrupt_controller.h" />
+    <ClInclude Include="justifier.h" />
     <ClInclude Include="mdec.h" />
     <ClInclude Include="memory_card.h" />
     <ClInclude Include="memory_card_image.h" />
@@ -150,9 +152,9 @@
     <ClInclude Include="pcdrv.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="cpu_pgxp.h" />
+    <ClInclude Include="pine_server.h" />
     <ClInclude Include="playstation_mouse.h" />
     <ClInclude Include="psf_loader.h" />
-    <ClInclude Include="resources.h" />
     <ClInclude Include="save_state_version.h" />
     <ClInclude Include="settings.h" />
     <ClInclude Include="shader_cache_version.h" />
@@ -165,9 +167,6 @@
     <ClInclude Include="types.h" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\dep\discord-rpc\discord-rpc.vcxproj">
-      <Project>{4266505b-dbaf-484b-ab31-b53b9c8235b3}</Project>
-    </ProjectReference>
     <ProjectReference Include="..\..\dep\imgui\imgui.vcxproj">
       <Project>{bb08260f-6fbc-46af-8924-090ee71360c6}</Project>
     </ProjectReference>

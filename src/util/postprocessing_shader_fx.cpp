@@ -11,6 +11,7 @@
 #include "core/settings.h"
 
 #include "common/assert.h"
+#include "common/bitutils.h"
 #include "common/error.h"
 #include "common/file_system.h"
 #include "common/log.h"
@@ -286,7 +287,7 @@ bool PostProcessing::ReShadeFXShader::LoadFromFile(std::string name, std::string
   std::optional<std::string> data = FileSystem::ReadFileToString(filename.c_str(), error);
   if (!data.has_value())
   {
-    Log_ErrorFmt("Failed to read '{}'.", filename);
+    ERROR_LOG("Failed to read '{}'.", filename);
     return false;
   }
 
@@ -367,6 +368,11 @@ bool PostProcessing::ReShadeFXShader::IsValid() const
   return m_valid;
 }
 
+bool PostProcessing::ReShadeFXShader::WantsDepthBuffer() const
+{
+  return m_wants_depth_buffer;
+}
+
 bool PostProcessing::ReShadeFXShader::CreateModule(s32 buffer_width, s32 buffer_height, reshadefx::module* mod,
                                                    std::string code, Error* error)
 {
@@ -390,11 +396,15 @@ bool PostProcessing::ReShadeFXShader::CreateModule(s32 buffer_width, s32 buffer_
   pp.add_include_path("shaders/reshade/Shaders");
 
   pp.add_macro_definition("__RESHADE__", "50901");
-  pp.add_macro_definition("BUFFER_WIDTH", std::to_string(buffer_width)); // TODO: can we make these uniforms?
-  pp.add_macro_definition("BUFFER_HEIGHT", std::to_string(buffer_height));
-  pp.add_macro_definition("BUFFER_RCP_WIDTH", std::to_string(1.0f / static_cast<float>(buffer_width)));
-  pp.add_macro_definition("BUFFER_RCP_HEIGHT", std::to_string(1.0f / static_cast<float>(buffer_height)));
+  pp.add_macro_definition("BUFFER_WIDTH", StringUtil::ToChars(buffer_width)); // TODO: can we make these uniforms?
+  pp.add_macro_definition("BUFFER_HEIGHT", StringUtil::ToChars(buffer_height));
+  pp.add_macro_definition("BUFFER_RCP_WIDTH", StringUtil::ToChars(1.0f / static_cast<float>(buffer_width)));
+  pp.add_macro_definition("BUFFER_RCP_HEIGHT", StringUtil::ToChars(1.0f / static_cast<float>(buffer_height)));
   pp.add_macro_definition("BUFFER_COLOR_BIT_DEPTH", "32");
+  pp.add_macro_definition("RESHADE_DEPTH_INPUT_IS_UPSIDE_DOWN", "0");
+  pp.add_macro_definition("RESHADE_DEPTH_INPUT_IS_LOGARITHMIC", "0");
+  pp.add_macro_definition("RESHADE_DEPTH_LINEARIZATION_FAR_PLANE", "1000.0");
+  pp.add_macro_definition("RESHADE_DEPTH_INPUT_IS_REVERSED", "0");
 
   switch (GetRenderAPI())
   {
@@ -434,12 +444,10 @@ bool PostProcessing::ReShadeFXShader::CreateModule(s32 buffer_width, s32 buffer_
   }
 
   cg->write_result(*mod);
-
-  // FileSystem::WriteBinaryFile("D:\\out.txt", mod->code.data(), mod->code.size());
   return true;
 }
 
-static bool HasAnnotationWithName(const reshadefx::uniform_info& uniform, const std::string_view& annotation_name)
+static bool HasAnnotationWithName(const reshadefx::uniform_info& uniform, const std::string_view annotation_name)
 {
   for (const reshadefx::annotation& an : uniform.annotations)
   {
@@ -527,8 +535,8 @@ GetVectorAnnotationValue(const reshadefx::uniform_info& uniform, const std::stri
       }
       else
       {
-        Log_ErrorFmt("Unhandled string value for '{}' (annotation type: {}, uniform type {})", uniform.name,
-                     an.type.description(), uniform.type.description());
+        ERROR_LOG("Unhandled string value for '{}' (annotation type: {}, uniform type {})", uniform.name,
+                  an.type.description(), uniform.type.description());
       }
 
       break;
@@ -577,7 +585,7 @@ bool PostProcessing::ReShadeFXShader::CreateOptions(const reshadefx::module& mod
       return false;
     if (so != SourceOptionType::None)
     {
-      Log_DevFmt("Add source based option {} at offset {} ({})", static_cast<u32>(so), ui.offset, ui.name);
+      DEV_LOG("Add source based option {} at offset {} ({})", static_cast<u32>(so), ui.offset, ui.name);
 
       SourceOption sopt;
       sopt.source = so;
@@ -710,8 +718,8 @@ bool PostProcessing::ReShadeFXShader::CreateOptions(const reshadefx::module& mod
 
     if (!ui_type.empty() && opt.vector_size > 1)
     {
-      Log_WarningFmt("Uniform '{}' has UI type of '{}' but is vector not scalar ({}), ignoring", opt.name, ui_type,
-                     opt.vector_size);
+      WARNING_LOG("Uniform '{}' has UI type of '{}' but is vector not scalar ({}), ignoring", opt.name, ui_type,
+                  opt.vector_size);
     }
     else if (!ui_type.empty())
     {
@@ -739,21 +747,26 @@ bool PostProcessing::ReShadeFXShader::CreateOptions(const reshadefx::module& mod
       }
     }
 
-    m_options.push_back(std::move(opt));
+    OptionList::iterator iter = std::find_if(m_options.begin(), m_options.end(),
+                                             [&opt](const ShaderOption& it) { return it.category == opt.category; });
+    if (iter != m_options.end())
+    {
+      // insert at the end of this category
+      while (iter != m_options.end() && iter->category == opt.category)
+        ++iter;
+    }
+    m_options.insert(iter, std::move(opt));
   }
 
-  // sort based on category
-  std::sort(m_options.begin(), m_options.end(),
-            [](const ShaderOption& lhs, const ShaderOption& rhs) { return lhs.category < rhs.category; });
-
   m_uniforms_size = mod.total_uniform_size;
-  Log_DevFmt("{}: {} options", m_filename, m_options.size());
+  DEV_LOG("{}: {} options", m_filename, m_options.size());
   return true;
 }
 
 bool PostProcessing::ReShadeFXShader::GetSourceOption(const reshadefx::uniform_info& ui, SourceOptionType* si,
                                                       Error* error)
 {
+  // TODO: Rewrite these to a lookup table instead, this if chain is terrible.
   const std::string_view source = GetStringAnnotationValue(ui.annotations, "source", {});
   if (!source.empty())
   {
@@ -819,7 +832,7 @@ bool PostProcessing::ReShadeFXShader::GetSourceOption(const reshadefx::uniform_i
     }
     else if (source == "mousebutton")
     {
-      Log_WarningFmt("Ignoring mousebutton source in uniform '{}', not supported.", ui.name);
+      WARNING_LOG("Ignoring mousebutton source in uniform '{}', not supported.", ui.name);
       *si = SourceOptionType::Zero;
       return true;
     }
@@ -836,9 +849,14 @@ bool PostProcessing::ReShadeFXShader::GetSourceOption(const reshadefx::uniform_i
       *si = (ui.type.base == reshadefx::type::t_float) ? SourceOptionType::RandomF : SourceOptionType::Random;
       return true;
     }
-    else if (source == "overlay_active" || source == "has_depth")
+    else if (source == "overlay_active")
     {
       *si = SourceOptionType::Zero;
+      return true;
+    }
+    else if (source == "has_depth")
+    {
+      *si = SourceOptionType::HasDepth;
       return true;
     }
     else if (source == "bufferwidth")
@@ -862,6 +880,161 @@ bool PostProcessing::ReShadeFXShader::GetSourceOption(const reshadefx::uniform_i
     {
       *si = (ui.type.base == reshadefx::type::t_float) ? SourceOptionType::InternalHeightF :
                                                          SourceOptionType::InternalHeight;
+      return true;
+    }
+    else if (source == "nativewidth")
+    {
+      *si = (ui.type.base == reshadefx::type::t_float) ? SourceOptionType::NativeWidthF : SourceOptionType::NativeWidth;
+      return true;
+    }
+    else if (source == "nativeheight")
+    {
+      *si =
+        (ui.type.base == reshadefx::type::t_float) ? SourceOptionType::NativeHeightF : SourceOptionType::NativeHeight;
+      return true;
+    }
+    else if (source == "upscale_multiplier")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 1)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::UpscaleMultiplier;
+      return true;
+    }
+    else if (source == "viewportx")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 1)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::ViewportX;
+      return true;
+    }
+    else if (source == "viewporty")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 1)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::ViewportY;
+      return true;
+    }
+    else if (source == "viewportwidth")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 1)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::ViewportWidth;
+      return true;
+    }
+    else if (source == "viewportheight")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 1)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::ViewportHeight;
+      return true;
+    }
+    else if (source == "viewportoffset")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 2)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::ViewportOffset;
+      return true;
+    }
+    else if (source == "viewportsize")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 2)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::ViewportSize;
+      return true;
+    }
+    else if (source == "internal_pixel_size")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 2)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::InternalPixelSize;
+      return true;
+    }
+    else if (source == "normalized_internal_pixel_size")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 2)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::InternalNormPixelSize;
+      return true;
+    }
+    else if (source == "native_pixel_size")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 2)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::NativePixelSize;
+      return true;
+    }
+    else if (source == "normalized_native_pixel_size")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 2)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::NativeNormPixelSize;
+      return true;
+    }
+    else if (source == "buffer_to_viewport_ratio")
+    {
+      if (!ui.type.is_floating_point() || ui.type.components() != 2)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' for {} source in uniform '{}'", ui.type.description(),
+                                            source, ui.name));
+        return false;
+      }
+
+      *si = SourceOptionType::BufferToViewportRatio;
       return true;
     }
     else
@@ -911,14 +1084,14 @@ bool PostProcessing::ReShadeFXShader::CreatePasses(GPUTexture::Format backbuffer
 
     if (!ti.semantic.empty())
     {
-      Log_DevFmt("Ignoring semantic {} texture {}", ti.semantic, ti.unique_name);
+      DEV_LOG("Ignoring semantic {} texture {}", ti.semantic, ti.unique_name);
       continue;
     }
     if (ti.render_target)
     {
       tex.rt_scale = 1.0f;
       tex.format = MapTextureFormat(ti.format);
-      Log_DevFmt("Creating render target '{}' {}", ti.unique_name, GPUTexture::GetFormatName(tex.format));
+      DEV_LOG("Creating render target '{}' {}", ti.unique_name, GPUTexture::GetFormatName(tex.format));
     }
     else
     {
@@ -936,7 +1109,7 @@ bool PostProcessing::ReShadeFXShader::CreatePasses(GPUTexture::Format backbuffer
       {
         // Might be a base file/resource instead.
         const std::string resource_name = Path::Combine("shaders/reshade/Textures", source);
-        if (std::optional<std::vector<u8>> resdata = Host::ReadResourceFile(resource_name.c_str(), true);
+        if (std::optional<DynamicHeapArray<u8>> resdata = Host::ReadResourceFile(resource_name.c_str(), true);
             !resdata.has_value() || !image.LoadFromBuffer(resource_name.c_str(), resdata->data(), resdata->size()))
         {
           Error::SetString(error, fmt::format("Failed to load image '{}' (from '{}')", source, image_path).c_str());
@@ -954,7 +1127,7 @@ bool PostProcessing::ReShadeFXShader::CreatePasses(GPUTexture::Format backbuffer
         return false;
       }
 
-      Log_DevFmt("Loaded {}x{} texture ({})", image.GetWidth(), image.GetHeight(), source);
+      DEV_LOG("Loaded {}x{} texture ({})", image.GetWidth(), image.GetHeight(), source);
     }
 
     tex.reshade_name = ti.unique_name;
@@ -1029,8 +1202,8 @@ bool PostProcessing::ReShadeFXShader::CreatePasses(GPUTexture::Format backbuffer
             }
             else if (ti.semantic == "DEPTH")
             {
-              Log_WarningFmt("Shader '{}' uses input depth as '{}' which is not supported.", m_name, si.texture_name);
               sampler.texture_id = INPUT_DEPTH_TEXTURE;
+              m_wants_depth_buffer = true;
               break;
             }
             else if (!ti.semantic.empty())
@@ -1060,7 +1233,7 @@ bool PostProcessing::ReShadeFXShader::CreatePasses(GPUTexture::Format backbuffer
           return false;
         }
 
-        Log_DevFmt("Pass {} Texture {} => {}", pi.name, si.texture_name, sampler.texture_id);
+        DEV_LOG("Pass {} Texture {} => {}", pi.name, si.texture_name, sampler.texture_id);
 
         sampler.sampler = GetSampler(MapSampler(si));
         if (!sampler.sampler)
@@ -1096,18 +1269,18 @@ const char* PostProcessing::ReShadeFXShader::GetTextureNameForID(TextureID id) c
     return m_textures[static_cast<size_t>(id)].reshade_name.c_str();
 }
 
-GPUTexture* PostProcessing::ReShadeFXShader::GetTextureByID(TextureID id, GPUTexture* input,
-                                                            GPUTexture* final_target) const
+GPUTexture* PostProcessing::ReShadeFXShader::GetTextureByID(TextureID id, GPUTexture* input_color,
+                                                            GPUTexture* input_depth, GPUTexture* final_target) const
 {
   if (id < 0)
   {
     if (id == INPUT_COLOR_TEXTURE)
     {
-      return input;
+      return input_color;
     }
     else if (id == INPUT_DEPTH_TEXTURE)
     {
-      return PostProcessing::GetDummyTexture();
+      return input_depth ? input_depth : GetDummyTexture();
     }
     else if (id == OUTPUT_COLOR_TEXTURE)
     {
@@ -1135,11 +1308,12 @@ bool PostProcessing::ReShadeFXShader::CompilePipeline(GPUTexture::Format format,
   m_valid = false;
   m_textures.clear();
   m_passes.clear();
+  m_wants_depth_buffer = false;
 
   std::string fxcode;
   if (!PreprocessorReadFileCallback(m_filename, fxcode))
   {
-    Log_ErrorFmt("Failed to re-read shader for pipeline: '{}'", m_filename);
+    ERROR_LOG("Failed to re-read shader for pipeline: '{}'", m_filename);
     return false;
   }
 
@@ -1151,7 +1325,7 @@ bool PostProcessing::ReShadeFXShader::CompilePipeline(GPUTexture::Format format,
   reshadefx::module mod;
   if (!CreateModule(width, height, &mod, std::move(fxcode), &error))
   {
-    Log_ErrorPrintf("Failed to create module for '%s': %s", m_name.c_str(), error.GetDescription().c_str());
+    ERROR_LOG("Failed to create module for '{}': {}", m_name, error.GetDescription());
     return false;
   }
 
@@ -1159,7 +1333,7 @@ bool PostProcessing::ReShadeFXShader::CompilePipeline(GPUTexture::Format format,
 
   if (!CreatePasses(format, mod, &error))
   {
-    Log_ErrorPrintf("Failed to create passes for '%s': %s", m_name.c_str(), error.GetDescription().c_str());
+    ERROR_LOG("Failed to create passes for '{}': {}", m_name, error.GetDescription());
     return false;
   }
 
@@ -1176,8 +1350,13 @@ bool PostProcessing::ReShadeFXShader::CompilePipeline(GPUTexture::Format format,
       const char* precision = (api == RenderAPI::OpenGLES) ?
                                 "precision highp float;\nprecision highp int;\nprecision highp sampler2D;\n" :
                                 "";
-      real_code = fmt::format("#version {}\n#define ENTRY_POINT_{}\n{}\n{}\n{}",
-                              (api == RenderAPI::OpenGLES) ? "320 es" : "460 core", name, defns, precision, code);
+
+      TinyString version_string = "#version 460 core\n";
+#ifdef ENABLE_OPENGL
+      if (api == RenderAPI::OpenGL || api == RenderAPI::OpenGLES)
+        version_string = ShaderGen::GetGLSLVersionString(api, ShaderGen::GetGLSLVersion(api));
+#endif
+      real_code = fmt::format("{}\n#define ENTRY_POINT_{}\n{}\n{}\n{}", version_string, name, defns, precision, code);
 
       for (const Sampler& sampler : samplers)
       {
@@ -1206,10 +1385,11 @@ bool PostProcessing::ReShadeFXShader::CompilePipeline(GPUTexture::Format format,
 
     // FileSystem::WriteStringToFile("D:\\foo.txt", real_code);
 
-    std::unique_ptr<GPUShader> sshader =
-      g_gpu_device->CreateShader(stage, real_code, needs_main_defn ? "main" : name.c_str());
+    Error error;
+    std::unique_ptr<GPUShader> sshader = g_gpu_device->CreateShader(
+      stage, ShaderGen::GetShaderLanguageForAPI(api), real_code, &error, needs_main_defn ? "main" : name.c_str());
     if (!sshader)
-      Log_ErrorPrintf("Failed to compile function '%s'", name.c_str());
+      ERROR_LOG("Failed to compile function '{}': {}", name, error.GetDescription());
 
     return sshader;
   };
@@ -1272,7 +1452,7 @@ bool PostProcessing::ReShadeFXShader::CompilePipeline(GPUTexture::Format format,
       pass.pipeline = g_gpu_device->CreatePipeline(plconfig);
       if (!pass.pipeline)
       {
-        Log_ErrorPrintf("Failed to create pipeline for pass '%s'", info.name.c_str());
+        ERROR_LOG("Failed to create pipeline for pass '{}'", info.name);
         progress->PopState();
         return false;
       }
@@ -1303,7 +1483,7 @@ bool PostProcessing::ReShadeFXShader::ResizeOutput(GPUTexture::Format format, u3
     tex.texture = g_gpu_device->FetchTexture(t_width, t_height, 1, 1, 1, GPUTexture::Type::RenderTarget, tex.format);
     if (!tex.texture)
     {
-      Log_ErrorPrintf("Failed to create %ux%u texture", t_width, t_height);
+      ERROR_LOG("Failed to create {}x{} texture", t_width, t_height);
       return {};
     }
   }
@@ -1312,16 +1492,16 @@ bool PostProcessing::ReShadeFXShader::ResizeOutput(GPUTexture::Format format, u3
   return true;
 }
 
-bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUTexture* final_target, s32 final_left, s32 final_top,
-                                            s32 final_width, s32 final_height, s32 orig_width, s32 orig_height,
-                                            u32 target_width, u32 target_height)
+bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input_color, GPUTexture* input_depth, GPUTexture* final_target,
+                                            GSVector4i final_rect, s32 orig_width, s32 orig_height, s32 native_width,
+                                            s32 native_height, u32 target_width, u32 target_height)
 {
   GL_PUSH_FMT("PostProcessingShaderFX {}", m_name);
 
   m_frame_count++;
 
   // Reshade always draws at full size.
-  g_gpu_device->SetViewportAndScissor(0, 0, target_width, target_height);
+  g_gpu_device->SetViewportAndScissor(GSVector4i(0, 0, target_width, target_height));
 
   if (m_uniforms_size > 0)
   {
@@ -1341,6 +1521,13 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUTexture* final
         case SourceOptionType::Zero:
         {
           const u32 value = 0;
+          std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::HasDepth:
+        {
+          const u32 value = BoolToUInt32(input_depth != nullptr);
           std::memcpy(dst, &value, sizeof(value));
         }
         break;
@@ -1448,8 +1635,8 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUTexture* final
         case SourceOptionType::InternalWidth:
         case SourceOptionType::InternalHeight:
         {
-          const s32 value =
-            (so.source == SourceOptionType::BufferWidth) ? static_cast<s32>(orig_width) : static_cast<s32>(orig_height);
+          const s32 value = (so.source == SourceOptionType::InternalWidth) ? static_cast<s32>(orig_width) :
+                                                                             static_cast<s32>(orig_height);
           std::memcpy(dst, &value, sizeof(value));
         }
         break;
@@ -1457,9 +1644,119 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUTexture* final
         case SourceOptionType::InternalWidthF:
         case SourceOptionType::InternalHeightF:
         {
-          const float value = (so.source == SourceOptionType::BufferWidthF) ? static_cast<float>(orig_width) :
-                                                                              static_cast<float>(orig_height);
+          const float value = (so.source == SourceOptionType::InternalWidthF) ? static_cast<float>(orig_width) :
+                                                                                static_cast<float>(orig_height);
           std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::NativeWidth:
+        case SourceOptionType::NativeHeight:
+        {
+          const s32 value = (so.source == SourceOptionType::NativeWidth) ? static_cast<s32>(native_width) :
+                                                                           static_cast<s32>(native_height);
+          std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::NativeWidthF:
+        case SourceOptionType::NativeHeightF:
+        {
+          const float value = (so.source == SourceOptionType::NativeWidthF) ? static_cast<float>(native_width) :
+                                                                              static_cast<float>(native_height);
+          std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::UpscaleMultiplier:
+        {
+          const float value = static_cast<float>(orig_width) / static_cast<float>(native_width);
+          std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::ViewportX:
+        {
+          const float value = static_cast<float>(final_rect.left);
+          std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::ViewportY:
+        {
+          const float value = static_cast<float>(final_rect.top);
+          std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::ViewportWidth:
+        {
+          const float value = static_cast<float>(final_rect.width());
+          std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::ViewportHeight:
+        {
+          const float value = static_cast<float>(final_rect.height());
+          std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::ViewportOffset:
+        {
+          GSVector4::storel(dst, GSVector4(final_rect));
+        }
+        break;
+
+        case SourceOptionType::ViewportSize:
+        {
+          const float value[2] = {static_cast<float>(final_rect.width()), static_cast<float>(final_rect.height())};
+          std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::InternalPixelSize:
+        {
+          const float value[2] = {static_cast<float>(final_rect.width()) / static_cast<float>(orig_width),
+                                  static_cast<float>(final_rect.height()) / static_cast<float>(orig_height)};
+          std::memcpy(dst, value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::InternalNormPixelSize:
+        {
+          const float value[2] = {(static_cast<float>(final_rect.width()) / static_cast<float>(orig_width)) /
+                                    static_cast<float>(target_width),
+                                  (static_cast<float>(final_rect.height()) / static_cast<float>(orig_height)) /
+                                    static_cast<float>(target_height)};
+          std::memcpy(dst, value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::NativePixelSize:
+        {
+          const float value[2] = {static_cast<float>(final_rect.width()) / static_cast<float>(native_width),
+                                  static_cast<float>(final_rect.height()) / static_cast<float>(native_height)};
+          std::memcpy(dst, value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::NativeNormPixelSize:
+        {
+          const float value[2] = {(static_cast<float>(final_rect.width()) / static_cast<float>(native_width)) /
+                                    static_cast<float>(target_width),
+                                  (static_cast<float>(final_rect.height()) / static_cast<float>(native_height)) /
+                                    static_cast<float>(target_height)};
+          std::memcpy(dst, value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::BufferToViewportRatio:
+        {
+          const float value[2] = {static_cast<float>(target_width) / static_cast<float>(final_rect.width()),
+                                  static_cast<float>(target_height) / static_cast<float>(final_rect.height())};
+          std::memcpy(dst, value, sizeof(value));
         }
         break;
 
@@ -1479,7 +1776,7 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUTexture* final
     // Sucks doing this twice, but we need to set the RT first (for DX11), and transition layouts (for VK).
     for (const Sampler& sampler : pass.samplers)
     {
-      GPUTexture* const tex = GetTextureByID(sampler.texture_id, input, final_target);
+      GPUTexture* const tex = GetTextureByID(sampler.texture_id, input_color, input_depth, final_target);
       if (tex)
         tex->MakeReadyForSampling();
     }
@@ -1500,7 +1797,7 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUTexture* final
       {
         GL_INS_FMT("Render Target {}: ID {} [{}]", i, pass.render_targets[i],
                    GetTextureNameForID(pass.render_targets[i]));
-        render_targets[i] = GetTextureByID(pass.render_targets[i], input, final_target);
+        render_targets[i] = GetTextureByID(pass.render_targets[i], input_color, input_depth, final_target);
         DebugAssert(render_targets[i]);
       }
 
@@ -1513,10 +1810,19 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUTexture* final
     std::bitset<GPUDevice::MAX_TEXTURE_SAMPLERS> bound_textures = {};
     for (const Sampler& sampler : pass.samplers)
     {
+      // Can't bind the RT as a sampler.
+      if (std::any_of(pass.render_targets.begin(), pass.render_targets.end(),
+                      [&sampler](TextureID rt) { return rt == sampler.texture_id; }))
+      {
+        GL_INS_FMT("Not binding RT sampler {}: ID {} [{}]", sampler.slot, sampler.texture_id,
+                   GetTextureNameForID(sampler.texture_id));
+        continue;
+      }
+
       GL_INS_FMT("Texture Sampler {}: ID {} [{}]", sampler.slot, sampler.texture_id,
                  GetTextureNameForID(sampler.texture_id));
-      g_gpu_device->SetTextureSampler(sampler.slot, GetTextureByID(sampler.texture_id, input, final_target),
-                                      sampler.sampler);
+      g_gpu_device->SetTextureSampler(
+        sampler.slot, GetTextureByID(sampler.texture_id, input_color, input_depth, final_target), sampler.sampler);
       bound_textures[sampler.slot] = true;
     }
 
@@ -1530,6 +1836,10 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUTexture* final
 
     g_gpu_device->Draw(pass.num_vertices, 0);
   }
+
+  // Don't leave any textures bound.
+  for (u32 i = 0; i < GPUDevice::MAX_TEXTURE_SAMPLERS; i++)
+    g_gpu_device->SetTextureSampler(i, nullptr, nullptr);
 
   GL_POP();
   m_frame_timer.Reset();

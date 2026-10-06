@@ -15,14 +15,10 @@
     <ClCompile Include="qtprogresscallback.cpp" />
     <ClCompile Include="interfacesettingswidget.cpp" />
     <ClCompile Include="advancedsettingswidget.cpp" />
-    <ClCompile Include="gdbconnection.cpp" />
-    <ClCompile Include="gdbserver.cpp" />
     <ClCompile Include="aboutdialog.cpp" />
     <ClCompile Include="memorycardsettingswidget.cpp" />
-    <ClCompile Include="$(IntDir)qrc_resources.cpp" />
     <ClCompile Include="inputbindingdialog.cpp" />
     <ClCompile Include="gamelistmodel.cpp" />
-    <ClCompile Include="gamelistsearchdirectoriesmodel.cpp" />
     <ClCompile Include="autoupdaterdialog.cpp" />
     <ClCompile Include="biossettingswidget.cpp" />
     <ClCompile Include="memorycardeditorwindow.cpp" />
@@ -118,9 +114,6 @@
     <ClCompile Include="$(IntDir)moc_gamelistrefreshthread.cpp">
       <Filter>moc</Filter>
     </ClCompile>
-    <ClCompile Include="$(IntDir)moc_gamelistsearchdirectoriesmodel.cpp">
-      <Filter>moc</Filter>
-    </ClCompile>
     <ClCompile Include="$(IntDir)moc_gamelistsettingswidget.cpp">
       <Filter>moc</Filter>
     </ClCompile>
@@ -128,12 +121,6 @@
       <Filter>moc</Filter>
     </ClCompile>
     <ClCompile Include="$(IntDir)moc_gamesummarywidget.cpp">
-      <Filter>moc</Filter>
-    </ClCompile>
-    <ClCompile Include="$(IntDir)moc_gdbconnection.cpp">
-      <Filter>moc</Filter>
-    </ClCompile>
-    <ClCompile Include="$(IntDir)moc_gdbserver.cpp">
       <Filter>moc</Filter>
     </ClCompile>
     <ClCompile Include="$(IntDir)moc_hotkeysettingswidget.cpp">
@@ -186,6 +173,12 @@
     <ClCompile Include="$(IntDir)moc_memoryscannerwindow.cpp">
       <Filter>moc</Filter>
     </ClCompile>
+    <ClCompile Include="selectdiscdialog.cpp" />
+    <ClCompile Include="$(IntDir)moc_selectdiscdialog.cpp">
+      <Filter>moc</Filter>
+    </ClCompile>
+    <ClCompile Include="vcruntimecheck.cpp" />
+    <ClCompile Include="qtthemes.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="qtutils.h" />
@@ -219,13 +212,10 @@
     <QtMoc Include="interfacesettingswidget.h" />
     <QtMoc Include="qtprogresscallback.h" />
     <QtMoc Include="advancedsettingswidget.h" />
-    <QtMoc Include="gdbconnection.h" />
-    <QtMoc Include="gdbserver.h" />
     <QtMoc Include="aboutdialog.h" />
     <QtMoc Include="memorycardsettingswidget.h" />
     <QtMoc Include="inputbindingdialog.h" />
     <QtMoc Include="gamelistmodel.h" />
-    <QtMoc Include="gamelistsearchdirectoriesmodel.h" />
     <QtMoc Include="autoupdaterdialog.h" />
     <QtMoc Include="biossettingswidget.h" />
     <QtMoc Include="memorycardeditorwindow.h" />
@@ -251,6 +241,7 @@
     <QtMoc Include="logwindow.h" />
     <QtMoc Include="graphicssettingswidget.h" />
     <QtMoc Include="memoryscannerwindow.h" />
+    <QtMoc Include="selectdiscdialog.h" />
   </ItemGroup>
   <ItemGroup>
     <QtUi Include="consolesettingswidget.ui" />
@@ -264,7 +255,7 @@
     <QtUi Include="inputbindingdialog.ui" />
     <QtUi Include="autoupdaterdialog.ui" />
     <QtUi Include="biossettingswidget.ui" />
-    <QtUi Include="postprocessingsettingswidget.ui" />
+    <QtUi Include="postprocessingchainconfigwidget.ui" />
     <QtUi Include="memorycardeditorwindow.ui" />
     <QtUi Include="cheatmanagerwindow.ui" />
     <QtUi Include="cheatcodeeditordialog.ui" />
@@ -294,9 +285,10 @@
     <QtUi Include="graphicssettingswidget.ui" />
     <QtUi Include="memoryscannerwindow.ui" />
     <QtUi Include="controllerbindingwidget_negconrumble.ui" />
-  </ItemGroup>
-  <ItemGroup>
-    <Natvis Include="qt5.natvis" />
+    <QtUi Include="audioexpansionsettingsdialog.ui" />
+    <QtUi Include="audiostretchsettingsdialog.ui" />
+    <QtUi Include="controllerbindingwidget_justifier.ui" />
+    <QtUi Include="selectdiscdialog.ui" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="duckstation-qt.rc" />
@@ -305,7 +297,7 @@
     <Image Include="duckstation-qt.ico" />
   </ItemGroup>
   <ItemGroup>
-    <QtResource Include="resources\resources.qrc">
+    <QtResource Include="resources\duckstation-qt.qrc">
       <Filter>resources</Filter>
     </QtResource>
   </ItemGroup>

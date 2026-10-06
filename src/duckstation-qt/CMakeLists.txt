@@ -1,13 +1,11 @@
-find_package(Qt6 6.6.0 COMPONENTS Core Gui Widgets Network LinguistTools REQUIRED)
+find_package(Qt6 6.7.2 COMPONENTS Core Gui Widgets LinguistTools REQUIRED)
 
 include(CopyBaseTranslations)
 
 set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 set(SRCS
-  resources/resources.qrc
   aboutdialog.cpp
   aboutdialog.h
   aboutdialog.ui
@@ -20,9 +18,11 @@ set(SRCS
   advancedsettingswidget.cpp
   advancedsettingswidget.h
   advancedsettingswidget.ui
+  audioexpansionsettingsdialog.ui
   audiosettingswidget.cpp
   audiosettingswidget.h
   audiosettingswidget.ui
+  audiostretchsettingsdialog.ui
   autoupdaterdialog.cpp
   autoupdaterdialog.h
   autoupdaterdialog.ui
@@ -46,6 +46,7 @@ set(SRCS
   controllerbindingwidget_analog_joystick.ui
   controllerbindingwidget_digital_controller.ui
   controllerbindingwidget_guncon.ui
+  controllerbindingwidget_justifier.ui
   controllerbindingwidget_mouse.ui
   controllerbindingwidget_negcon.ui
   controllerbindingwidget_negconrumble.ui
@@ -84,8 +85,6 @@ set(SRCS
   gamelistmodel.h
   gamelistrefreshthread.cpp
   gamelistrefreshthread.h
-  gamelistsearchdirectoriesmodel.cpp
-  gamelistsearchdirectoriesmodel.h
   gamelistsettingswidget.cpp
   gamelistsettingswidget.h
   gamelistsettingswidget.ui
@@ -95,10 +94,6 @@ set(SRCS
   gamesummarywidget.cpp
   gamesummarywidget.h
   gamesummarywidget.ui
-  gdbconnection.cpp
-  gdbconnection.h
-  gdbserver.cpp
-  gdbserver.h
   graphicssettingswidget.cpp
   graphicssettingswidget.h
   graphicssettingswidget.ui
@@ -129,16 +124,20 @@ set(SRCS
   memoryviewwidget.h
   postprocessingsettingswidget.cpp
   postprocessingsettingswidget.h
-  postprocessingsettingswidget.ui
+  postprocessingchainconfigwidget.ui
   qthost.cpp
   qthost.h
   qtkeycodes.cpp
   qtprogresscallback.cpp
   qtprogresscallback.h
+  qtthemes.cpp
   qttranslations.cpp
   qtutils.cpp
   qtutils.h
   resource.h
+  selectdiscdialog.cpp
+  selectdiscdialog.h
+  selectdiscdialog.ui
   settingswindow.cpp
   settingswindow.h
   settingswindow.ui
@@ -171,7 +170,7 @@ set(TS_FILES
 add_executable(duckstation-qt ${SRCS} ${QM_FILES})
 target_precompile_headers(duckstation-qt PRIVATE "pch.h")
 target_include_directories(duckstation-qt PRIVATE "${Qt6Gui_PRIVATE_INCLUDE_DIRS}" "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(duckstation-qt PRIVATE core common imgui minizip scmversion Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+target_link_libraries(duckstation-qt PRIVATE core common imgui minizip scmversion Qt6::Core Qt6::Gui Qt6::Widgets)
 
 # Our Qt builds may have exceptions on, so force them off.
 target_compile_definitions(duckstation-qt PRIVATE QT_NO_EXCEPTIONS)
@@ -179,7 +178,10 @@ target_compile_definitions(duckstation-qt PRIVATE QT_NO_EXCEPTIONS)
 add_core_resources(duckstation-qt)
 
 if(WIN32)
-  target_sources(duckstation-qt PRIVATE duckstation-qt.rc)
+  target_sources(duckstation-qt PRIVATE
+    duckstation-qt.rc
+    vcruntimecheck.cpp
+  )
 
   # We want a Windows subsystem application not console.
   set_target_properties(duckstation-qt PROPERTIES
@@ -206,7 +208,8 @@ if(WIN32)
   )
   #set_source_files_properties(${TS_FILES} PROPERTIES OUTPUT_LOCATION "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/translations")
 
-  set(DEPS_TO_COPY freetype.dll harfbuzz.dll libjpeg.dll libpng16.dll libsharpyuv.dll libwebp.dll SDL2.dll shaderc_shared.dll zlib1.dll zstd.dll)
+  set(DEPS_TO_COPY cpuinfo.dll discord-rpc.dll freetype.dll harfbuzz.dll libjpeg.dll libpng16.dll libsharpyuv.dll libwebp.dll
+                   SDL2.dll shaderc_shared.dll soundtouch.dll spirv-cross-c-shared.dll zlib1.dll zstd.dll)
   foreach(DEP ${DEPS_TO_COPY})
     list(APPEND DEP_BINS "${CMAKE_PREFIX_PATH}/bin/${DEP}")
   endforeach()
@@ -223,8 +226,9 @@ if(WIN32)
 elseif(APPLE)
   # Don't generate a bundle for XCode, it makes code signing fail...
   if(NOT CMAKE_GENERATOR MATCHES "Xcode")
+    get_scm_version()
     set(BUNDLE_PATH ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/DuckStation.app)
-      set_target_properties(duckstation-qt PROPERTIES
+    set_target_properties(duckstation-qt PROPERTIES
       MACOSX_BUNDLE true
       MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in
       OUTPUT_NAME DuckStation
@@ -245,6 +249,25 @@ elseif(APPLE)
   set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/DuckStation.icns" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 endif()
 
+if(ALLOW_INSTALL)
+  # Install main binary.
+  install(TARGETS duckstation-qt RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}")
+endif()
+
+# Compile qrc to a binary file.
+if(NOT APPLE)
+  set(RCC_FILE "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/resources/duckstation-qt.rcc")
+  qt_add_binary_resources(duckstation-qt-rcc resources/duckstation-qt.qrc DESTINATION ${RCC_FILE} OPTIONS -no-compress)
+  add_dependencies(duckstation-qt duckstation-qt-rcc)
+else()
+  set(RCC_FILE "${CMAKE_CURRENT_BINARY_DIR}/duckstation-qt.rcc")
+  qt_add_binary_resources(duckstation-qt-rcc resources/duckstation-qt.qrc DESTINATION ${RCC_FILE} OPTIONS -no-compress)
+  add_dependencies(duckstation-qt duckstation-qt-rcc)
+  target_sources(duckstation-qt PRIVATE ${RCC_FILE})
+  set_source_files_properties(${RCC_FILE} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+endif()
+
+
 # Translation setup.
 qt_add_lrelease(duckstation-qt TS_FILES ${TS_FILES} QM_FILES_OUTPUT_VARIABLE QM_FILES)
 if(NOT APPLE)
@@ -253,6 +276,9 @@ if(NOT APPLE)
   foreach (QM_FILE IN LISTS QM_FILES)
     get_filename_component(QM_FILE_NAME ${QM_FILE} NAME)
     add_custom_command(TARGET duckstation-qt POST_BUILD COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${QM_FILE}" "${QM_OUTPUT_DIR}/${QM_FILE_NAME}")
+    if(ALLOW_INSTALL)
+      install(FILES "${QM_FILE}" DESTINATION "${CMAKE_INSTALL_PREFIX}/translations")
+    endif()
   endforeach()
 else()
   foreach (QM_FILE IN LISTS QM_FILES)

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
@@ -6,24 +6,27 @@
 #include "gpu_device.h"
 #include "vulkan_loader.h"
 
+#include "common/small_string.h"
 #include "common/string_util.h"
 
 #include <array>
-#include <cstdarg>
 #include <string_view>
+
+class Error;
 
 #if defined(_DEBUG) && !defined(CPU_ARCH_ARM32) && !defined(CPU_ARCH_X86)
 #define ENABLE_VULKAN_DEBUG_OBJECTS 1
 #endif
 
-#define LOG_VULKAN_ERROR(res, ...) ::Vulkan::LogVulkanResult(__func__, res, __VA_ARGS__)
+#define LOG_VULKAN_ERROR(res, msg) ::Vulkan::LogVulkanResult(__func__, res, msg)
 
 namespace Vulkan {
 // Adds a structure to a chain.
 void AddPointerToChain(void* head, const void* ptr);
 
 const char* VkResultToString(VkResult res);
-void LogVulkanResult(const char* func_name, VkResult res, const char* msg, ...);
+void LogVulkanResult(const char* func_name, VkResult res, std::string_view msg);
+void SetErrorObject(Error* errptr, std::string_view prefix, VkResult res);
 
 class DescriptorSetLayoutBuilder
 {
@@ -89,7 +92,7 @@ public:
 
   void Clear();
 
-  VkPipeline Create(VkDevice device, VkPipelineCache pipeline_cache = VK_NULL_HANDLE, bool clear = true);
+  VkPipeline Create(VkDevice device, VkPipelineCache pipeline_cache, bool clear, Error* error);
 
   void SetShaderStage(VkShaderStageFlagBits stage, VkShaderModule module, const char* entry_point);
   void SetVertexShader(VkShaderModule module) { SetShaderStage(VK_SHADER_STAGE_VERTEX_BIT, module, "main"); }
@@ -390,39 +393,19 @@ struct VkObjectTypeMap;
 
 #endif
 
-static inline void SetFormattedObjectName(VkDevice device, void* object_handle, VkObjectType object_type,
-                                          const char* format, va_list ap)
+template<typename T>
+static inline void SetObjectName(VkDevice device, T object_handle, const std::string_view name)
 {
 #ifdef ENABLE_VULKAN_DEBUG_OBJECTS
   if (!vkSetDebugUtilsObjectNameEXT)
-  {
     return;
-  }
 
-  const std::string str(StringUtil::StdStringFromFormatV(format, ap));
-  const VkDebugUtilsObjectNameInfoEXT nameInfo{VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT, nullptr, object_type,
-                                               reinterpret_cast<uint64_t>(object_handle), str.c_str()};
-  vkSetDebugUtilsObjectNameEXT(device, &nameInfo);
-#endif
-}
-
-template<typename T>
-static inline void SetFormattedObjectName(VkDevice device, T object_handle, const char* format, ...)
-{
-#ifdef ENABLE_VULKAN_DEBUG_OBJECTS
-  std::va_list ap;
-  va_start(ap, format);
-  SetFormattedObjectName(device, reinterpret_cast<void*>((typename VkObjectTypeMap<T>::type)object_handle),
-                         VkObjectTypeMap<T>::value, format, ap);
-  va_end(ap);
-#endif
-}
-
-template<typename T>
-static inline void SetObjectName(VkDevice device, T object_handle, const std::string_view& sv)
-{
-#ifdef ENABLE_VULKAN_DEBUG_OBJECTS
-  SetFormattedObjectName(device, object_handle, "%.*s", static_cast<int>(sv.length()), sv.data());
+  const SmallString terminated_name(name);
+  const VkDebugUtilsObjectNameInfoEXT name_info{
+    VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT, nullptr, VkObjectTypeMap<T>::value,
+    static_cast<uint64_t>(reinterpret_cast<uintptr_t>(static_cast<typename VkObjectTypeMap<T>::type>(object_handle))),
+    terminated_name.c_str()};
+  vkSetDebugUtilsObjectNameEXT(device, &name_info);
 #endif
 }
 } // namespace Vulkan

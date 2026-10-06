@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "d3d12_pipeline.h"
@@ -7,6 +7,7 @@
 #include "d3d_common.h"
 
 #include "common/assert.h"
+#include "common/bitutils.h"
 #include "common/log.h"
 #include "common/sha1_digest.h"
 #include "common/string_util.h"
@@ -21,27 +22,35 @@ D3D12Shader::D3D12Shader(GPUShaderStage stage, Bytecode bytecode) : GPUShader(st
 
 D3D12Shader::~D3D12Shader() = default;
 
-void D3D12Shader::SetDebugName(const std::string_view& name)
+void D3D12Shader::SetDebugName(std::string_view name)
 {
 }
 
-std::unique_ptr<GPUShader> D3D12Device::CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data)
+std::unique_ptr<GPUShader> D3D12Device::CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data,
+                                                               Error* error)
 {
   // Can't do much at this point.
   std::vector bytecode(data.begin(), data.end());
   return std::unique_ptr<GPUShader>(new D3D12Shader(stage, std::move(bytecode)));
 }
 
-std::unique_ptr<GPUShader> D3D12Device::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                               const char* entry_point,
-                                                               DynamicHeapArray<u8>* out_binary)
+std::unique_ptr<GPUShader> D3D12Device::CreateShaderFromSource(GPUShaderStage stage, GPUShaderLanguage language,
+                                                               std::string_view source, const char* entry_point,
+                                                               DynamicHeapArray<u8>* out_binary, Error* error)
 {
+  const u32 shader_model = D3DCommon::GetShaderModelForFeatureLevel(m_feature_level);
+  if (language != GPUShaderLanguage::HLSL)
+  {
+    return TranspileAndCreateShaderFromSource(stage, language, source, entry_point, GPUShaderLanguage::HLSL,
+                                              shader_model, out_binary, error);
+  }
+
   std::optional<DynamicHeapArray<u8>> bytecode =
-    D3DCommon::CompileShader(m_feature_level, m_debug_device, stage, source, entry_point);
+    D3DCommon::CompileShader(shader_model, m_debug_device, stage, source, entry_point, error);
   if (!bytecode.has_value())
     return {};
 
-  std::unique_ptr<GPUShader> ret = CreateShaderFromBinary(stage, bytecode.value());
+  std::unique_ptr<GPUShader> ret = CreateShaderFromBinary(stage, bytecode.value(), error);
   if (ret && out_binary)
     *out_binary = std::move(bytecode.value());
 
@@ -63,7 +72,7 @@ D3D12Pipeline::~D3D12Pipeline()
   D3D12Device::GetInstance().DeferObjectDestruction(std::move(m_pipeline));
 }
 
-void D3D12Pipeline::SetDebugName(const std::string_view& name)
+void D3D12Pipeline::SetDebugName(std::string_view name)
 {
   D3D12::SetObjectName(m_pipeline.Get(), name);
 }
@@ -98,7 +107,7 @@ std::string D3D12Pipeline::GetPipelineName(const GraphicsConfig& config)
   return SHA1Digest::DigestToString(digest);
 }
 
-std::unique_ptr<GPUPipeline> D3D12Device::CreatePipeline(const GPUPipeline::GraphicsConfig& config)
+std::unique_ptr<GPUPipeline> D3D12Device::CreatePipeline(const GPUPipeline::GraphicsConfig& config, Error* error)
 {
   static constexpr std::array<D3D12_PRIMITIVE_TOPOLOGY, static_cast<u32>(GPUPipeline::Primitive::MaxCount)> primitives =
     {{
@@ -172,8 +181,16 @@ std::unique_ptr<GPUPipeline> D3D12Device::CreatePipeline(const GPUPipeline::Grap
     D3D12_BLEND_OP_MAX,          // Max
   }};
 
+  if (config.render_pass_flags & GPUPipeline::BindRenderTargetsAsImages && !m_features.raster_order_views)
+  {
+    ERROR_LOG("Attempting to create ROV pipeline without ROV feature.");
+    return {};
+  }
+
   D3D12::GraphicsPipelineBuilder gpb;
-  gpb.SetRootSignature(m_root_signatures[static_cast<u8>(config.layout)].Get());
+  gpb.SetRootSignature(m_root_signatures[BoolToUInt8(
+    (config.render_pass_flags & GPUPipeline::BindRenderTargetsAsImages))][static_cast<u8>(config.layout)]
+                         .Get());
   gpb.SetVertexShader(static_cast<const D3D12Shader*>(config.vertex_shader)->GetBytecodeData(),
                       static_cast<const D3D12Shader*>(config.vertex_shader)->GetBytecodeSize());
   gpb.SetPixelShader(static_cast<const D3D12Shader*>(config.fragment_shader)->GetBytecodeData(),
@@ -231,23 +248,23 @@ std::unique_ptr<GPUPipeline> D3D12Device::CreatePipeline(const GPUPipeline::Grap
     {
       // E_INVALIDARG = not found.
       if (hr != E_INVALIDARG)
-        Log_ErrorPrintf("LoadGraphicsPipeline() failed with HRESULT %08X", hr);
+        ERROR_LOG("LoadGraphicsPipeline() failed with HRESULT {:08X}", static_cast<unsigned>(hr));
 
       // Need to create it normally.
-      pipeline = gpb.Create(m_device.Get(), false);
+      pipeline = gpb.Create(m_device.Get(), error, false);
 
       // Store if it wasn't an OOM or something else.
       if (pipeline && hr == E_INVALIDARG)
       {
         hr = m_pipeline_library->StorePipeline(name.c_str(), pipeline.Get());
         if (FAILED(hr))
-          Log_ErrorPrintf("StorePipeline() failed with HRESULT %08X", hr);
+          ERROR_LOG("StorePipeline() failed with HRESULT {:08X}", static_cast<unsigned>(hr));
       }
     }
   }
   else
   {
-    pipeline = gpb.Create(m_device.Get(), false);
+    pipeline = gpb.Create(m_device.Get(), error, false);
   }
 
   if (!pipeline)

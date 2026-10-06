@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
@@ -16,12 +16,13 @@ class OpenGLShader final : public GPUShader
 public:
   ~OpenGLShader() override;
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
-  bool Compile();
+  bool Compile(Error* error);
 
   ALWAYS_INLINE GLuint GetGLId() const { return m_id.value(); }
   ALWAYS_INLINE const GPUShaderCache::CacheIndexKey& GetKey() const { return m_key; }
+  ALWAYS_INLINE const std::string& GetSource() const { return m_source; }
 
 private:
   OpenGLShader(GPUShaderStage stage, const GPUShaderCache::CacheIndexKey& key, std::string source);
@@ -103,7 +104,7 @@ public:
   ALWAYS_INLINE const BlendState& GetBlendState() const { return m_blend_state; }
   ALWAYS_INLINE GLenum GetTopology() const { return m_topology; }
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
 private:
   OpenGLPipeline(const ProgramCacheKey& key, GLuint program, VertexArrayCache::const_iterator vao,

@@ -45,12 +45,15 @@ public:
   void resizeTableViewColumnsToFit();
 
   void refresh(bool invalidate_cache);
+  void refreshModel();
   void cancelRefresh();
   void reloadThemeSpecificImages();
 
   bool isShowingGameList() const;
   bool isShowingGameGrid() const;
-  bool getShowGridCoverTitles() const;
+  bool isShowingGridCoverTitles() const;
+  bool isMergingDiscSets() const;
+  bool isShowingGameIcons() const;
 
   const GameList::Entry* getSelectedEntry() const;
 
@@ -66,7 +69,7 @@ Q_SIGNALS:
   void layoutChange();
 
 private Q_SLOTS:
-  void onRefreshProgress(const QString& status, int current, int total);
+  void onRefreshProgress(const QString& status, int current, int total, float time);
   void onRefreshComplete();
 
   void onSelectionModelCurrentChanged(const QModelIndex& current, const QModelIndex& previous);
@@ -82,6 +85,8 @@ public Q_SLOTS:
   void showGameList();
   void showGameGrid();
   void setShowCoverTitles(bool enabled);
+  void setMergeDiscSets(bool enabled);
+  void setShowGameIcons(bool enabled);
   void gridZoomIn();
   void gridZoomOut();
   void gridIntScale(int int_scale);

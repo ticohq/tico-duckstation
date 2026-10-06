@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "qtutils.h"
@@ -6,7 +6,7 @@
 #include "core/game_list.h"
 #include "core/system.h"
 
-#include "common/byte_stream.h"
+#include "common/log.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QMetaObject>
@@ -17,9 +17,11 @@
 #include <QtWidgets/QDialog>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QInputDialog>
+#include <QtWidgets/QLabel>
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QScrollBar>
+#include <QtWidgets/QSlider>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QStyle>
 #include <QtWidgets/QTableView>
@@ -35,6 +37,8 @@
 #ifdef _WIN32
 #include "common/windows_headers.h"
 #endif
+
+Log_SetChannel(QtUtils);
 
 namespace QtUtils {
 
@@ -141,27 +145,6 @@ void ResizeColumnsForTreeView(QTreeView* view, const std::initializer_list<int>&
   ResizeColumnsForView(view, widths);
 }
 
-QByteArray ReadStreamToQByteArray(ByteStream* stream, bool rewind /*= false*/)
-{
-  QByteArray ret;
-  const u64 old_pos = stream->GetPosition();
-  if (rewind && !stream->SeekAbsolute(0))
-    return {};
-
-  const u64 stream_size = stream->GetSize() - stream->GetPosition();
-  ret.resize(static_cast<int>(stream_size));
-  if (stream_size > 0 && !stream->Read2(ret.data(), static_cast<u32>(stream_size), nullptr))
-    return {};
-
-  stream->SeekAbsolute(old_pos);
-  return ret;
-}
-
-bool WriteQByteArrayToStream(QByteArray& arr, ByteStream* stream)
-{
-  return arr.isEmpty() || stream->Write2(arr.data(), static_cast<u32>(arr.size()));
-}
-
 void OpenURL(QWidget* parent, const QUrl& qurl)
 {
   if (!QDesktopServices::openUrl(qurl))
@@ -203,7 +186,7 @@ std::optional<unsigned> PromptForAddress(QWidget* parent, const QString& title, 
   return address;
 }
 
-QString StringViewToQString(const std::string_view& str)
+QString StringViewToQString(std::string_view str)
 {
   return str.empty() ? QString() : QString::fromUtf8(str.data(), str.size());
 }
@@ -216,6 +199,15 @@ void SetWidgetFontForInheritedSetting(QWidget* widget, bool inherited)
     new_font.setItalic(inherited);
     widget->setFont(new_font);
   }
+}
+
+void BindLabelToSlider(QSlider* slider, QLabel* label, float range /*= 1.0f*/)
+{
+  auto update_label = [label, range](int new_value) {
+    label->setText(QString::number(static_cast<int>(new_value) / range));
+  };
+  update_label(slider->value());
+  QObject::connect(slider, &QSlider::valueChanged, label, std::move(update_label));
 }
 
 void SetWindowResizeable(QWidget* widget, bool resizeable)
@@ -293,6 +285,7 @@ QIcon GetIconForEntryType(GameList::EntryType type)
     case GameList::EntryType::Disc:
       return QIcon::fromTheme(QStringLiteral("disc-line"));
     case GameList::EntryType::Playlist:
+    case GameList::EntryType::DiscSet:
       return QIcon::fromTheme(QStringLiteral("play-list-2-line"));
     case GameList::EntryType::PSF:
       return QIcon::fromTheme(QStringLiteral("file-music-line"));
@@ -353,6 +346,21 @@ std::optional<WindowInfo> GetWindowInfoForWidget(QWidget* widget)
   wi.surface_width = static_cast<u32>(static_cast<qreal>(widget->width()) * dpr);
   wi.surface_height = static_cast<u32>(static_cast<qreal>(widget->height()) * dpr);
   wi.surface_scale = static_cast<float>(dpr);
+
+  // Query refresh rate, we need it for sync.
+  std::optional<float> surface_refresh_rate = WindowInfo::QueryRefreshRateForWindow(wi);
+  if (!surface_refresh_rate.has_value())
+  {
+    // Fallback to using the screen, getting the rate for Wayland is an utter mess otherwise.
+    const QScreen* widget_screen = widget->screen();
+    if (!widget_screen)
+      widget_screen = QGuiApplication::primaryScreen();
+    surface_refresh_rate = widget_screen ? static_cast<float>(widget_screen->refreshRate()) : 0.0f;
+  }
+
+  wi.surface_refresh_rate = surface_refresh_rate.value();
+  INFO_LOG("Surface refresh rate: {} hz", wi.surface_refresh_rate);
+
   return wi;
 }
 

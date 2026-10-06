@@ -1,13 +1,11 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include <functional>
-#include <memory>
-#include <string>
-#include <vector>
 
 #include "types.h"
+
+#include <string_view>
 
 class StateWrapper;
 
@@ -17,17 +15,16 @@ using TimingEventCallback = void (*)(void* param, TickCount ticks, TickCount tic
 class TimingEvent
 {
 public:
-  TimingEvent(std::string name, TickCount period, TickCount interval, TimingEventCallback callback,
+  TimingEvent(const std::string_view name, TickCount period, TickCount interval, TimingEventCallback callback,
               void* callback_param);
   ~TimingEvent();
 
-  ALWAYS_INLINE const std::string& GetName() const { return m_name; }
+  ALWAYS_INLINE const std::string_view GetName() const { return m_name; }
   ALWAYS_INLINE bool IsActive() const { return m_active; }
 
   // Returns the number of ticks between each event.
   ALWAYS_INLINE TickCount GetPeriod() const { return m_period; }
   ALWAYS_INLINE TickCount GetInterval() const { return m_interval; }
-  ALWAYS_INLINE TickCount GetDowncount() const { return m_downcount; }
 
   // Includes pending time.
   TickCount GetTicksSinceLastExecution() const;
@@ -39,8 +36,6 @@ public:
   void Schedule(TickCount ticks);
   void SetIntervalAndSchedule(TickCount ticks);
   void SetPeriodAndSchedule(TickCount ticks);
-
-  void Reset();
 
   // Services the event with the current accmulated time. If force is set, when not enough time is pending to
   // simulate a single cycle, the callback will still be invoked, otherwise it won't be.
@@ -69,34 +64,31 @@ public:
   TimingEventCallback m_callback;
   void* m_callback_param;
 
-  TickCount m_downcount;
-  TickCount m_time_since_last_run;
+  GlobalTicks m_next_run_time = 0;
+  GlobalTicks m_last_run_time = 0;
+
   TickCount m_period;
   TickCount m_interval;
   bool m_active = false;
 
-  std::string m_name;
+  std::string_view m_name;
 };
 
 namespace TimingEvents {
 
-u32 GetGlobalTickCounter();
-u32 GetEventRunTickCounter();
+GlobalTicks GetGlobalTickCounter();
+GlobalTicks GetEventRunTickCounter();
 
 void Initialize();
 void Reset();
 void Shutdown();
 
-/// Creates a new event.
-std::unique_ptr<TimingEvent> CreateTimingEvent(std::string name, TickCount period, TickCount interval,
-                                               TimingEventCallback callback, void* callback_param, bool activate);
-
-/// Serialization.
 bool DoState(StateWrapper& sw);
 
 bool IsRunningEvents();
-void SetFrameDone();
+void CancelRunningEvent();
 void RunEvents();
+void CommitLeftoverTicks();
 
 void UpdateCPUDowncount();
 

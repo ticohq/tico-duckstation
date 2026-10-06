@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
-// SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
+// SPDX-License-Identifier: (GPL-3.0 OR PolyForm-Strict-1.0.0)
 
 #include "host.h"
 #include "fullscreen_ui.h"
@@ -10,18 +10,22 @@
 
 #include "scmversion/scmversion.h"
 
+#include "util/compress_helpers.h"
 #include "util/gpu_device.h"
 #include "util/imgui_manager.h"
+#include "util/input_manager.h"
 
 #include "common/assert.h"
 #include "common/error.h"
 #include "common/layered_settings_interface.h"
 #include "common/log.h"
+#include "common/path.h"
 #include "common/string_util.h"
 
 #include "imgui.h"
 
 #include <cstdarg>
+#include <limits>
 
 Log_SetChannel(Host);
 
@@ -40,10 +44,18 @@ SettingsInterface* Host::GetSettingsInterface()
   return &s_layered_settings_interface;
 }
 
-SettingsInterface* Host::GetSettingsInterfaceForBindings()
+std::optional<DynamicHeapArray<u8>> Host::ReadCompressedResourceFile(std::string_view filename, bool allow_override)
 {
-  SettingsInterface* input_layer = s_layered_settings_interface.GetLayer(LayeredSettingsInterface::LAYER_INPUT);
-  return input_layer ? input_layer : &s_layered_settings_interface;
+  std::optional<DynamicHeapArray<u8>> ret = Host::ReadResourceFile(filename, allow_override);
+  if (ret.has_value())
+  {
+    Error error;
+    ret = CompressHelpers::DecompressFile(filename, std::move(ret), std::nullopt, &error);
+    if (!ret.has_value())
+      ERROR_LOG("Failed to decompress '{}': {}", Path::GetFileName(filename), error.GetDescription());
+  }
+
+  return ret;
 }
 
 std::string Host::GetBaseStringSettingValue(const char* section, const char* key, const char* default_value /*= ""*/)
@@ -241,15 +253,13 @@ void Host::Internal::SetBaseSettingsLayer(SettingsInterface* sif)
   s_layered_settings_interface.SetLayer(LayeredSettingsInterface::LAYER_BASE, sif);
 }
 
-void Host::Internal::SetGameSettingsLayer(SettingsInterface* sif)
+void Host::Internal::SetGameSettingsLayer(SettingsInterface* sif, std::unique_lock<std::mutex>& lock)
 {
-  std::unique_lock lock(s_settings_mutex);
   s_layered_settings_interface.SetLayer(LayeredSettingsInterface::LAYER_GAME, sif);
 }
 
-void Host::Internal::SetInputSettingsLayer(SettingsInterface* sif)
+void Host::Internal::SetInputSettingsLayer(SettingsInterface* sif, std::unique_lock<std::mutex>& lock)
 {
-  std::unique_lock lock(s_settings_mutex);
   s_layered_settings_interface.SetLayer(LayeredSettingsInterface::LAYER_INPUT, sif);
 }
 
@@ -258,21 +268,11 @@ std::string Host::GetHTTPUserAgent()
   return fmt::format("DuckStation for {} ({}) {}", TARGET_OS_STR, CPU_ARCH_STR, g_scm_tag_str);
 }
 
-void Host::ReportFormattedDebuggerMessage(const char* format, ...)
-{
-  std::va_list ap;
-  va_start(ap, format);
-  std::string message = StringUtil::StdStringFromFormatV(format, ap);
-  va_end(ap);
-
-  ReportDebuggerMessage(message);
-}
-
-bool Host::CreateGPUDevice(RenderAPI api)
+bool Host::CreateGPUDevice(RenderAPI api, Error* error)
 {
   DebugAssert(!g_gpu_device);
 
-  Log_InfoPrintf("Trying to create a %s GPU device...", GPUDevice::RenderAPIToString(api));
+  INFO_LOG("Trying to create a {} GPU device...", GPUDevice::RenderAPIToString(api));
   g_gpu_device = GPUDevice::CreateDeviceForAPI(api);
 
   std::optional<bool> exclusive_fullscreen_control;
@@ -289,37 +289,45 @@ bool Host::CreateGPUDevice(RenderAPI api)
     disabled_features |= GPUDevice::FEATURE_MASK_FRAMEBUFFER_FETCH;
   if (g_settings.gpu_disable_texture_buffers)
     disabled_features |= GPUDevice::FEATURE_MASK_TEXTURE_BUFFERS;
-  if (g_settings.gpu_disable_texture_copy_to_self)
-    disabled_features |= GPUDevice::FEATURE_MASK_TEXTURE_COPY_TO_SELF;
+  if (g_settings.gpu_disable_memory_import)
+    disabled_features |= GPUDevice::FEATURE_MASK_MEMORY_IMPORT;
+  if (g_settings.gpu_disable_raster_order_views)
+    disabled_features |= GPUDevice::FEATURE_MASK_RASTER_ORDER_VIEWS;
 
-  Error error;
-  if (!g_gpu_device || !g_gpu_device->Create(
-                         g_settings.gpu_adapter,
-                         g_settings.gpu_disable_shader_cache ? std::string_view() : std::string_view(EmuFolders::Cache),
-                         SHADER_CACHE_VERSION, g_settings.gpu_use_debug_device, System::IsVSyncEffectivelyEnabled(),
-                         g_settings.gpu_threaded_presentation, exclusive_fullscreen_control,
-                         static_cast<GPUDevice::FeatureMask>(disabled_features), &error))
+  Error create_error;
+  if (!g_gpu_device || !g_gpu_device->Create(g_settings.gpu_adapter,
+                                             g_settings.gpu_disable_shader_cache ? std::string_view() :
+                                                                                   std::string_view(EmuFolders::Cache),
+                                             SHADER_CACHE_VERSION, g_settings.gpu_use_debug_device,
+                                             System::GetEffectiveVSyncMode(), System::ShouldAllowPresentThrottle(),
+                                             g_settings.gpu_threaded_presentation, exclusive_fullscreen_control,
+                                             static_cast<GPUDevice::FeatureMask>(disabled_features), &create_error))
   {
-    Log_ErrorPrintf("Failed to create GPU device.");
+    ERROR_LOG("Failed to create GPU device: {}", create_error.GetDescription());
     if (g_gpu_device)
       g_gpu_device->Destroy();
     g_gpu_device.reset();
 
-    Host::ReportErrorAsync(
-      "Error", fmt::format("Failed to create render device:\n\n{}\n\nThis may be due to your GPU not supporting the "
-                           "chosen renderer ({}), or because your graphics drivers need to be updated.",
-                           error.GetDescription(), GPUDevice::RenderAPIToString(api)));
+    Error::SetStringFmt(
+      error,
+      TRANSLATE_FS("System", "Failed to create render device:\n\n{0}\n\nThis may be due to your GPU not supporting the "
+                             "chosen renderer ({1}), or because your graphics drivers need to be updated."),
+      create_error.GetDescription(), GPUDevice::RenderAPIToString(api));
     return false;
   }
 
-  if (!ImGuiManager::Initialize(g_settings.display_osd_scale / 100.0f, g_settings.display_show_osd_messages, &error))
+  if (!ImGuiManager::Initialize(g_settings.display_osd_scale / 100.0f, g_settings.display_show_osd_messages,
+                                &create_error))
   {
-    Host::ReportErrorAsync("Error", fmt::format("Failed to initialize ImGuiManager: {}", error.GetDescription()));
+    ERROR_LOG("Failed to initialize ImGuiManager: {}", create_error.GetDescription());
+    Error::SetStringFmt(error, "Failed to initialize ImGuiManager: {}", create_error.GetDescription());
     g_gpu_device->Destroy();
     g_gpu_device.reset();
     return false;
   }
 
+  InputManager::SetDisplayWindowSize(static_cast<float>(g_gpu_device->GetWindowWidth()),
+                                     static_cast<float>(g_gpu_device->GetWindowHeight()));
   return true;
 }
 
@@ -334,11 +342,20 @@ void Host::UpdateDisplayWindow()
     return;
   }
 
-  ImGuiManager::WindowResized();
+  const float f_width = static_cast<float>(g_gpu_device->GetWindowWidth());
+  const float f_height = static_cast<float>(g_gpu_device->GetWindowHeight());
+  ImGuiManager::WindowResized(f_width, f_height);
+  InputManager::SetDisplayWindowSize(f_width, f_height);
 
-  // If we're paused, re-present the current frame at the new window size.
-  if (System::IsValid() && System::IsPaused())
-    System::InvalidateDisplay();
+  if (System::IsValid())
+  {
+    // Fix up vsync etc.
+    System::UpdateSpeedLimiterState();
+
+    // If we're paused, re-present the current frame at the new window size.
+    if (System::IsPaused())
+      System::InvalidateDisplay();
+  }
 }
 
 void Host::ResizeDisplayWindow(s32 width, s32 height, float scale)
@@ -346,10 +363,14 @@ void Host::ResizeDisplayWindow(s32 width, s32 height, float scale)
   if (!g_gpu_device)
     return;
 
-  Log_DevPrintf("Display window resized to %dx%d", width, height);
+  DEV_LOG("Display window resized to {}x{}", width, height);
 
   g_gpu_device->ResizeWindow(width, height, scale);
-  ImGuiManager::WindowResized();
+
+  const float f_width = static_cast<float>(g_gpu_device->GetWindowWidth());
+  const float f_height = static_cast<float>(g_gpu_device->GetWindowHeight());
+  ImGuiManager::WindowResized(f_width, f_height);
+  InputManager::SetDisplayWindowSize(f_width, f_height);
 
   // If we're paused, re-present the current frame at the new window size.
   if (System::IsValid())
@@ -375,44 +396,7 @@ void Host::ReleaseGPUDevice()
   FullscreenUI::Shutdown();
   ImGuiManager::Shutdown();
 
-  Log_InfoPrintf("Destroying %s GPU device...", GPUDevice::RenderAPIToString(g_gpu_device->GetRenderAPI()));
+  INFO_LOG("Destroying {} GPU device...", GPUDevice::RenderAPIToString(g_gpu_device->GetRenderAPI()));
   g_gpu_device->Destroy();
   g_gpu_device.reset();
 }
-
-#ifndef __ANDROID__
-
-std::unique_ptr<AudioStream> Host::CreateAudioStream(AudioBackend backend, u32 sample_rate, u32 channels, u32 buffer_ms,
-                                                     u32 latency_ms, AudioStretchMode stretch)
-{
-  switch (backend)
-  {
-#ifdef ENABLE_CUBEB
-    case AudioBackend::Cubeb:
-      return AudioStream::CreateCubebAudioStream(sample_rate, channels, buffer_ms, latency_ms, stretch);
-#endif
-
-#ifdef ENABLE_SDL2
-    case AudioBackend::SDL:
-      return AudioStream::CreateSDLAudioStream(sample_rate, channels, buffer_ms, latency_ms, stretch);
-#endif
-
-#ifdef _WIN32
-    case AudioBackend::XAudio2:
-      return AudioStream::CreateXAudio2Stream(sample_rate, channels, buffer_ms, latency_ms, stretch);
-#endif
-
-#ifdef __SWITCH__
-    case AudioBackend::Switch:
-      return AudioStream::CreateSwitchAudioStream(sample_rate, channels, buffer_ms, latency_ms, stretch);
-#endif
-
-    case AudioBackend::Null:
-      return AudioStream::CreateNullStream(sample_rate, channels, buffer_ms);
-
-    default:
-      return nullptr;
-  }
-}
-
-#endif

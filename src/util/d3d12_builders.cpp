@@ -1,17 +1,15 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "d3d12_builders.h"
 #include "d3d12_device.h"
 
 #include "common/assert.h"
-#include "common/log.h"
+#include "common/error.h"
 #include "common/string_util.h"
 
 #include <cstdarg>
 #include <limits>
-
-Log_SetChannel(D3D12Device);
 
 D3D12::GraphicsPipelineBuilder::GraphicsPipelineBuilder()
 {
@@ -27,14 +25,14 @@ void D3D12::GraphicsPipelineBuilder::Clear()
   m_desc.SampleDesc.Count = 1;
 }
 
-Microsoft::WRL::ComPtr<ID3D12PipelineState> D3D12::GraphicsPipelineBuilder::Create(ID3D12Device* device,
-                                                                                   bool clear /*= true*/)
+Microsoft::WRL::ComPtr<ID3D12PipelineState> D3D12::GraphicsPipelineBuilder::Create(ID3D12Device* device, Error* error,
+                                                                                   bool clear)
 {
   Microsoft::WRL::ComPtr<ID3D12PipelineState> ps;
   HRESULT hr = device->CreateGraphicsPipelineState(&m_desc, IID_PPV_ARGS(ps.GetAddressOf()));
   if (FAILED(hr))
   {
-    Log_ErrorPrintf("CreateGraphicsPipelineState() failed: %08X", hr);
+    Error::SetHResult(error, "CreateGraphicsPipelineState() failed: ", hr);
     return {};
   }
 
@@ -218,14 +216,14 @@ void D3D12::ComputePipelineBuilder::Clear()
   std::memset(&m_desc, 0, sizeof(m_desc));
 }
 
-Microsoft::WRL::ComPtr<ID3D12PipelineState> D3D12::ComputePipelineBuilder::Create(ID3D12Device* device,
-                                                                                  bool clear /*= true*/)
+Microsoft::WRL::ComPtr<ID3D12PipelineState> D3D12::ComputePipelineBuilder::Create(ID3D12Device* device, Error* error,
+                                                                                  bool clear)
 {
   Microsoft::WRL::ComPtr<ID3D12PipelineState> ps;
   HRESULT hr = device->CreateComputePipelineState(&m_desc, IID_PPV_ARGS(ps.GetAddressOf()));
-  if (FAILED(hr))
+  if (FAILED(hr)) [[unlikely]]
   {
-    Log_ErrorPrintf("CreateComputePipelineState() failed: %08X", hr);
+    Error::SetHResult(error, "CreateComputePipelineState() failed: ", hr);
     return {};
   }
 
@@ -260,9 +258,9 @@ void D3D12::RootSignatureBuilder::Clear()
   m_num_descriptor_ranges = 0;
 }
 
-Microsoft::WRL::ComPtr<ID3D12RootSignature> D3D12::RootSignatureBuilder::Create(bool clear /*= true*/)
+Microsoft::WRL::ComPtr<ID3D12RootSignature> D3D12::RootSignatureBuilder::Create(Error* error, bool clear)
 {
-  Microsoft::WRL::ComPtr<ID3D12RootSignature> rs = D3D12Device::GetInstance().CreateRootSignature(&m_desc);
+  Microsoft::WRL::ComPtr<ID3D12RootSignature> rs = D3D12Device::GetInstance().CreateRootSignature(&m_desc, error);
   if (!rs)
     return {};
 
@@ -336,17 +334,9 @@ u32 D3D12::RootSignatureBuilder::AddDescriptorTable(D3D12_DESCRIPTOR_RANGE_TYPE 
 
 #ifdef _DEBUG
 
-void D3D12::SetObjectName(ID3D12Object* object, const std::string_view& name)
+void D3D12::SetObjectName(ID3D12Object* object, std::string_view name)
 {
   object->SetName(StringUtil::UTF8StringToWideString(name).c_str());
-}
-
-void D3D12::SetObjectNameFormatted(ID3D12Object* object, const char* format, ...)
-{
-  std::va_list ap;
-  va_start(ap, format);
-  SetObjectName(object, StringUtil::StdStringFromFormatV(format, ap).c_str());
-  va_end(ap);
 }
 
 #endif

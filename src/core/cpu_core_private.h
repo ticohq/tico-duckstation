@@ -7,6 +7,8 @@
 
 namespace CPU {
 
+void SetPC(u32 new_pc);
+
 // exceptions
 void RaiseException(Exception excode);
 void RaiseException(u32 CAUSE_bits, u32 EPC);
@@ -25,7 +27,6 @@ ALWAYS_INLINE static void CheckForPendingInterrupt()
 }
 
 void DispatchInterrupt();
-bool UpdateDebugDispatcherFlag();
 
 // icache stuff
 ALWAYS_INLINE static bool IsCachedAddress(VirtualMemoryAddress address)
@@ -66,7 +67,7 @@ ALWAYS_INLINE static bool CompareICacheTag(VirtualMemoryAddress address)
 TickCount GetInstructionReadTicks(VirtualMemoryAddress address);
 TickCount GetICacheFillTicks(VirtualMemoryAddress address);
 u32 FillICache(VirtualMemoryAddress address);
-void CheckAndUpdateICacheTags(u32 line_count, TickCount uncached_ticks);
+void CheckAndUpdateICacheTags(u32 line_count);
 
 ALWAYS_INLINE static Segment GetSegmentForAddress(VirtualMemoryAddress address)
 {

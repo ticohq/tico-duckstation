@@ -178,7 +178,8 @@ AdvancedSettingsWidget::AdvancedSettingsWidget(SettingsWindow* dialog, QWidget* 
   connect(m_ui.resetToDefaultButton, &QPushButton::clicked, this, &AdvancedSettingsWidget::onResetToDefaultClicked);
   connect(m_ui.showDebugMenu, &QCheckBox::checkStateChanged, g_main_window, &MainWindow::updateDebugMenuVisibility,
           Qt::QueuedConnection);
-  connect(m_ui.showDebugMenu, &QCheckBox::checkStateChanged, this, &AdvancedSettingsWidget::onShowDebugOptionsStateChanged);
+  connect(m_ui.showDebugMenu, &QCheckBox::checkStateChanged, this,
+          &AdvancedSettingsWidget::onShowDebugOptionsStateChanged);
 
   m_ui.tweakOptionTable->setColumnWidth(0, 380);
   m_ui.tweakOptionTable->setColumnWidth(1, 170);
@@ -209,14 +210,23 @@ void AdvancedSettingsWidget::onShowDebugOptionsStateChanged()
 
 void AdvancedSettingsWidget::addTweakOptions()
 {
+  if (!m_dialog->isPerGameSettings())
+  {
+    addBooleanTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Apply Game Settings"), "Main", "ApplyGameSettings",
+                          true);
+  }
+
   addBooleanTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Apply Compatibility Settings"), "Main",
                         "ApplyCompatibilitySettings", true);
   addBooleanTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Increase Timer Resolution"), "Main",
                         "IncreaseTimerResolution", true);
   addBooleanTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Load Devices From Save States"), "Main",
                         "LoadDevicesFromSaveStates", false);
-  addBooleanTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Compress Save States"), "Main", "CompressSaveStates",
-                        Settings::DEFAULT_SAVE_STATE_COMPRESSION);
+  addChoiceTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Save State Compression"), "Main", "SaveStateCompression",
+                       &Settings::ParseSaveStateCompressionModeName, &Settings::GetSaveStateCompressionModeName,
+                       &Settings::GetSaveStateCompressionModeDisplayName,
+                       static_cast<u32>(SaveStateCompressionMode::Count),
+                       Settings::DEFAULT_SAVE_STATE_COMPRESSION_MODE);
 
   if (m_dialog->isPerGameSettings())
   {
@@ -230,9 +240,9 @@ void AdvancedSettingsWidget::addTweakOptions()
                            -128, 127, 0);
   }
 
-  addIntRangeTweakOption(m_dialog, m_ui.tweakOptionTable, tr("DMA Max Slice Ticks"), "Hacks", "DMAMaxSliceTicks", 100,
+  addIntRangeTweakOption(m_dialog, m_ui.tweakOptionTable, tr("DMA Max Slice Ticks"), "Hacks", "DMAMaxSliceTicks", 1,
                          10000, Settings::DEFAULT_DMA_MAX_SLICE_TICKS);
-  addIntRangeTweakOption(m_dialog, m_ui.tweakOptionTable, tr("DMA Halt Ticks"), "Hacks", "DMAHaltTicks", 100, 10000,
+  addIntRangeTweakOption(m_dialog, m_ui.tweakOptionTable, tr("DMA Halt Ticks"), "Hacks", "DMAHaltTicks", 1, 10000,
                          Settings::DEFAULT_DMA_HALT_TICKS);
   addIntRangeTweakOption(m_dialog, m_ui.tweakOptionTable, tr("GPU FIFO Size"), "Hacks", "GPUFIFOSize", 16, 4096,
                          Settings::DEFAULT_GPU_FIFO_SIZE);
@@ -256,6 +266,12 @@ void AdvancedSettingsWidget::addTweakOptions()
   addBooleanTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Allow Booting Without SBI File"), "CDROM",
                         "AllowBootingWithoutSBIFile", false);
 
+  addBooleanTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Export Shared Memory"), "Hacks", "ExportSharedMemory",
+                        false);
+  addBooleanTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Enable PINE"), "PINE", "Enabled", false);
+  addIntRangeTweakOption(m_dialog, m_ui.tweakOptionTable, tr("PINE Slot"), "PINE", "Slot", 0, 65535,
+                         Settings::DEFAULT_PINE_SLOT);
+
   addBooleanTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Enable PCDrv"), "PCDrv", "Enabled", false);
   addBooleanTweakOption(m_dialog, m_ui.tweakOptionTable, tr("Enable PCDrv Writes"), "PCDrv", "EnableWrites", false);
   addDirectoryOption(m_dialog, m_ui.tweakOptionTable, tr("PCDrv Root Directory"), "PCDrv", "Root");
@@ -267,10 +283,12 @@ void AdvancedSettingsWidget::onResetToDefaultClicked()
   {
     int i = 0;
 
+    setBooleanTweakOption(m_ui.tweakOptionTable, i++, true);  // Apply Game Settings
     setBooleanTweakOption(m_ui.tweakOptionTable, i++, true);  // Apply compatibility settings
     setBooleanTweakOption(m_ui.tweakOptionTable, i++, true);  // Increase Timer Resolution
     setBooleanTweakOption(m_ui.tweakOptionTable, i++, false); // Load Devices From Save States
-    setBooleanTweakOption(m_ui.tweakOptionTable, i++, Settings::DEFAULT_SAVE_STATE_COMPRESSION); // Compress Save States
+    setChoiceTweakOption(m_ui.tweakOptionTable, i++,
+                         Settings::DEFAULT_SAVE_STATE_COMPRESSION_MODE); // Save State Compression
     setIntRangeTweakOption(m_ui.tweakOptionTable, i++,
                            static_cast<int>(Settings::DEFAULT_DMA_MAX_SLICE_TICKS)); // DMA max slice ticks
     setIntRangeTweakOption(m_ui.tweakOptionTable, i++,
@@ -284,12 +302,15 @@ void AdvancedSettingsWidget::onResetToDefaultClicked()
     setChoiceTweakOption(m_ui.tweakOptionTable, i++,
                          Settings::DEFAULT_CPU_FASTMEM_MODE); // Recompiler fastmem mode
     setChoiceTweakOption(m_ui.tweakOptionTable, i++,
-                         Settings::DEFAULT_CDROM_MECHACON_VERSION); // CDROM Mechacon Version
-    setBooleanTweakOption(m_ui.tweakOptionTable, i++, false);       // CDROM Region Check
-    setBooleanTweakOption(m_ui.tweakOptionTable, i++, false);       // Allow booting without SBI file
-    setBooleanTweakOption(m_ui.tweakOptionTable, i++, false);       // Enable PCDRV
-    setBooleanTweakOption(m_ui.tweakOptionTable, i++, false);       // Enable PCDRV Writes
-    setDirectoryOption(m_ui.tweakOptionTable, i++, "");             // PCDrv Root Directory
+                         Settings::DEFAULT_CDROM_MECHACON_VERSION);                  // CDROM Mechacon Version
+    setBooleanTweakOption(m_ui.tweakOptionTable, i++, false);                        // CDROM Region Check
+    setBooleanTweakOption(m_ui.tweakOptionTable, i++, false);                        // Allow booting without SBI file
+    setBooleanTweakOption(m_ui.tweakOptionTable, i++, false);                        // Export Shared Memory
+    setBooleanTweakOption(m_ui.tweakOptionTable, i++, false);                        // Enable PINE
+    setIntRangeTweakOption(m_ui.tweakOptionTable, i++, Settings::DEFAULT_PINE_SLOT); // PINE Slot
+    setBooleanTweakOption(m_ui.tweakOptionTable, i++, false);                        // Enable PCDRV
+    setBooleanTweakOption(m_ui.tweakOptionTable, i++, false);                        // Enable PCDRV Writes
+    setDirectoryOption(m_ui.tweakOptionTable, i++, "");                              // PCDrv Root Directory
 
     return;
   }
@@ -308,12 +329,15 @@ void AdvancedSettingsWidget::onResetToDefaultClicked()
   sif->DeleteValue("Hacks", "DMAHaltTicks");
   sif->DeleteValue("Hacks", "GPUFIFOSize");
   sif->DeleteValue("Hacks", "GPUMaxRunAhead");
+  sif->DeleteValue("Hacks", "ExportSharedMemory");
   sif->DeleteValue("CPU", "RecompilerMemoryExceptions");
   sif->DeleteValue("CPU", "RecompilerBlockLinking");
   sif->DeleteValue("CPU", "FastmemMode");
   sif->DeleteValue("CDROM", "MechaconVersion");
   sif->DeleteValue("CDROM", "RegionCheck");
   sif->DeleteValue("CDROM", "AllowBootingWithoutSBIFile");
+  sif->DeleteValue("PINE", "Enabled");
+  sif->DeleteValue("PINE", "Slot");
   sif->DeleteValue("PCDrv", "Enabled");
   sif->DeleteValue("PCDrv", "EnableWrites");
   sif->DeleteValue("PCDrv", "Root");

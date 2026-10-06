@@ -202,7 +202,7 @@ Vuoi abilitare la modalità Hardcore?</translation>
         <location filename="../achievementsettingswidget.ui" line="49"/>
         <location filename="../achievementsettingswidget.cpp" line="68"/>
         <source>Test Unofficial Achievements</source>
-        <translation>Prova Obiettivi non ufficiali</translation>
+        <translation>Prova Obiettivi Non Ufficiali</translation>
     </message>
     <message>
         <location filename="../achievementsettingswidget.ui" line="56"/>
@@ -9376,7 +9376,7 @@ L&apos;errore è:</translation>
     <message>
         <location filename="../../core/fullscreen_ui.cpp" line="7558"/>
         <source>When enabled, DuckStation will assume all achievements are locked and not send any unlock notifications to the server.</source>
-        <translation>Quando abilitato, DuckStation presumerà che tutti gli achievements siano bloccati e non manderà alcuna notifica di sblocco al server.</translation>
+        <translation>Quando abilitato, DuckStation presumerà che tutti gli obiettivi siano bloccati e non manderà alcuna notifica di sblocco al server.</translation>
     </message>
     <message>
         <location filename="../../core/fullscreen_ui.cpp" line="7559"/>
@@ -12784,7 +12784,7 @@ Scansionare ricorsivamente richiede più tempo, ma identificherà file anche nel
     <message>
         <location filename="../mainwindow.ui" line="539"/>
         <source>Achievements</source>
-        <translation>Achievements</translation>
+        <translation>Obiettivi</translation>
     </message>
     <message>
         <location filename="../mainwindow.ui" line="547"/>
@@ -12825,7 +12825,7 @@ Scansionare ricorsivamente richiede più tempo, ma identificherà file anche nel
         <location filename="../mainwindow.ui" line="921"/>
         <location filename="../mainwindow.cpp" line="1308"/>
         <source>Start Big Picture Mode</source>
-        <translation>Avvia modalità grande immagine</translation>
+        <translation>Avvia Modalità Big Picture</translation>
     </message>
     <message>
         <location filename="../mainwindow.ui" line="929"/>
@@ -16058,8 +16058,8 @@ Vuoi continuare?</translation>
     </message>
     <message>
         <location filename="../setupwizarddialog.ui" line="50"/>
-        <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;h1 style=&quot; margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:xx-large; font-weight:700;&quot;&gt;Welcome to DuckStation!&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;This wizard will help guide you through the configuration steps required to use the application. It is recommended if this is your first time installing DuckStation that you view the setup guide at &lt;a href=&quot;https://github.com/stenzek/duckstation#downloading-and-running&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0000ff;&quot;&gt;https://github.com/stenzek/duckstation#downloading-and-running&lt;/span&gt;&lt;/a&gt;.&lt;/p&gt;&lt;p&gt;By default, DuckStation will connect to the server at &lt;a href=&quot;https://github.com/&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0000ff;&quot;&gt;github.com&lt;/span&gt;&lt;/a&gt; to check for updates, and if available and confirmed, download update packages from &lt;a href=&quot;https://github.com/&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0000ff;&quot;&gt;github.com&lt;/span&gt;&lt;/a&gt;. If you do not wish for DuckStation to make any network connections on startup, you should uncheck the Automatic Updates option now. The Automatic Update setting can be changed later at any time in Interface Settings.&lt;/p&gt;&lt;p&gt;Please choose a language and theme to begin.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
-        <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;h1 style=&quot; margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:xx-large; font-weight:700;&quot;&gt;Benvenuto su DuckStation!&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;Questa procedura guidata ti aiuterà ad attraversare i passi di configurazione richiesti per usare l&apos;applicazione..È consigliato, se questa è la prima volta che installi DuckStation, che tu visualizzi la guida di setup su &lt;a href=&quot;https://github.com/stenzek/duckstation#downloading-and-running&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0000ff;&quot;&gt;https://github.com/stenzek/duckstation#downloading-and-running&lt;/span&gt;&lt;/a&gt;.&lt;/p&gt;&lt;p&gt;Per impostazione predefinita, DuckStation si connetterà al server di &lt;a href=&quot;https://github.com/&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0000ff;&quot;&gt;github.com&lt;/span&gt;&lt;/a&gt; per controllare la presenza di aggiornamenti, e se disponibili e confermati, scaricare pacchetti di aggiornamento da &lt;a href=&quot;https://github.com/&quot;&gt;&lt;span style=&quot; text-decoration: underline; color:#0000ff;&quot;&gt;github.com&lt;/span&gt;&lt;/a&gt;. Se non desideri che DuckStation esegua alcuna connessione di rete all&apos;avvio, dovresti deselezionare l&apos;opzione Aggiornamenti Automatici adesso. L&apos;impostazione Aggiornamento Automatico può essere cambiata più tardi in qualunque momento sotto Impostazioni Interfaccia.&lt;/p&gt;&lt;p&gt;Per favore, scegli una lingua e un tema per iniziare.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+        <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;h1 style=&quot; margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:xx-large; font-weight:700;&quot;&gt;Welcome to DuckStation!&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;This wizard will help guide you through the configuration steps required to use the application. It is recommended if this is your first time installing DuckStation that you view the setup guide at &lt;a href=&quot;https://github.com/stenzek/duckstation#downloading-and-running&quot;&gt;https://github.com/stenzek/duckstation#downloading-and-running&lt;/a&gt;.&lt;/p&gt;&lt;p&gt;By default, DuckStation will connect to the server at &lt;a href=&quot;https://github.com/&quot;&gt;github.com&lt;/a&gt; to check for updates, and if available and confirmed, download update packages from &lt;a href=&quot;https://github.com/&quot;&gt;github.com&lt;/a&gt;. If you do not wish for DuckStation to make any network connections on startup, you should uncheck the Automatic Updates option now. The Automatic Update setting can be changed later at any time in Interface Settings.&lt;/p&gt;&lt;p&gt;Please choose a language and theme to begin.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;h1 style=&quot; margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:xx-large; font-weight:700;&quot;&gt;Benvenuto su DuckStation!&lt;/span&gt;&lt;/h1&gt;&lt;p&gt;Questa procedura guidata ti aiuterà ad attraversare i passi di configurazione richiesti per usare l&apos;applicazione..È consigliato, se questa è la prima volta che installi DuckStation, che tu visualizzi la guida di setup su &lt;a href=&quot;https://github.com/stenzek/duckstation#downloading-and-running&quot;&gt;https://github.com/stenzek/duckstation#downloading-and-running&lt;/a&gt;.&lt;/p&gt;&lt;p&gt;Per impostazione predefinita, DuckStation si connetterà al server di &lt;a href=&quot;https://github.com/&quot;&gt;github.com&lt;/a&gt; per controllare la presenza di aggiornamenti, e se disponibili e confermati, scaricare pacchetti di aggiornamento da &lt;a href=&quot;https://github.com/&quot;&gt;github.com&lt;/a&gt;. Se non desideri che DuckStation esegua alcuna connessione di rete all&apos;avvio, dovresti deselezionare l&apos;opzione Aggiornamenti Automatici adesso. L&apos;impostazione Aggiornamento Automatico può essere cambiata più tardi in qualunque momento sotto Impostazioni Interfaccia.&lt;/p&gt;&lt;p&gt;Per favore, scegli una lingua e un tema per iniziare.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
     </message>
     <message>
         <location filename="../setupwizarddialog.ui" line="71"/>

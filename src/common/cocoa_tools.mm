@@ -15,7 +15,7 @@
 #error ARC should not be enabled.
 #endif
 
-NSString* CocoaTools::StringViewToNSString(const std::string_view& str)
+NSString* CocoaTools::StringViewToNSString(std::string_view str)
 {
   if (str.empty())
     return nil;
@@ -105,6 +105,17 @@ void CocoaTools::RemoveThemeChangeHandler(void* ctx)
 {
   assert([NSThread isMainThread]);
   [s_themeChangeHandler removeCallback:ctx];
+}
+
+std::optional<std::string> CocoaTools::GetBundlePath()
+{
+  std::optional<std::string> ret;
+  @autoreleasepool {
+    NSURL* url = [NSURL fileURLWithPath:[[NSBundle mainBundle] bundlePath]];
+    if (url)
+      ret = std::string([url fileSystemRepresentation]);
+  }
+  return ret;
 }
 
 std::optional<std::string> CocoaTools::GetNonTranslocatedBundlePath()

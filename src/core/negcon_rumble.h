@@ -1,12 +1,13 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com> and contributors.
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com> and contributors.
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
 #include "controller.h"
+
 #include <array>
 #include <memory>
 #include <optional>
-#include <string_view>
 
 class NeGconRumble final : public Controller
 {
@@ -68,7 +69,7 @@ public:
   u32 GetButtonStateBits() const override;
   std::optional<u32> GetAnalogInputBytes() const override;
 
-  void LoadSettings(SettingsInterface& si, const char* section) override;
+  void LoadSettings(SettingsInterface& si, const char* section, bool initial) override;
 
 private:
   using MotorState = std::array<u8, NUM_MOTORS>;

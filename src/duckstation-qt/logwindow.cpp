@@ -27,15 +27,12 @@ LogWindow::LogWindow(bool attach_to_main)
   Log::RegisterCallback(&LogWindow::logCallback, this);
 }
 
-LogWindow::~LogWindow()
-{
-  Log::UnregisterCallback(&LogWindow::logCallback, this);
-}
+LogWindow::~LogWindow() = default;
 
 void LogWindow::updateSettings()
 {
-  const bool new_enabled = Host::GetBaseBoolSettingValue("Logging", "LogToWindow", false);
-  const bool attach_to_main = Host::GetBaseBoolSettingValue("Logging", "AttachLogWindowToMainWindow", true);
+  const bool new_enabled = Host::GetBoolSettingValue("Logging", "LogToWindow", false);
+  const bool attach_to_main = Host::GetBoolSettingValue("Logging", "AttachLogWindowToMainWindow", true);
   const bool curr_enabled = (g_log_window != nullptr);
   if (new_enabled == curr_enabled)
   {
@@ -174,7 +171,7 @@ void LogWindow::createUi()
   m_text = new QPlainTextEdit(this);
   m_text->setReadOnly(true);
   m_text->setUndoRedoEnabled(false);
-  m_text->setTextInteractionFlags(Qt::TextSelectableByKeyboard);
+  m_text->setTextInteractionFlags(Qt::TextSelectableByKeyboard | Qt::TextSelectableByMouse);
   m_text->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
 
 #if defined(_WIN32)
@@ -292,7 +289,7 @@ void LogWindow::logCallback(void* pUserParam, const char* channelName, const cha
   qmessage.append(QUtf8StringView(message.data(), message.length()));
   qmessage.append(QChar('\n'));
 
-  const QLatin1StringView qchannel((level <= LOGLEVEL_PERF) ? functionName : channelName);
+  const QLatin1StringView qchannel((level <= LOGLEVEL_WARNING) ? functionName : channelName);
 
   if (g_emu_thread->isOnUIThread())
   {
@@ -331,16 +328,14 @@ void LogWindow::appendMessage(const QLatin1StringView& channel, quint32 level, c
   temp_cursor.movePosition(QTextCursor::End);
 
   {
-    static constexpr const QChar level_characters[LOGLEVEL_COUNT] = {'X', 'E', 'W', 'P', 'I', 'V', 'D', 'R', 'B', 'T'};
+    static constexpr const QChar level_characters[LOGLEVEL_COUNT] = {'X', 'E', 'W', 'I', 'V', 'D', 'B', 'T'};
     static constexpr const QColor level_colors[LOGLEVEL_COUNT] = {
       QColor(255, 255, 255),    // NONE
       QColor(0xE7, 0x48, 0x56), // ERROR, Red Intensity
       QColor(0xF9, 0xF1, 0xA5), // WARNING, Yellow Intensity
-      QColor(0xB4, 0x00, 0x9E), // PERF, Purple Intensity
       QColor(0xF2, 0xF2, 0xF2), // INFO, White Intensity
       QColor(0x16, 0xC6, 0x0C), // VERBOSE, Green Intensity
       QColor(0xCC, 0xCC, 0xCC), // DEV, White
-      QColor(0x61, 0xD6, 0xD6), // PROFILE, Cyan Intensity
       QColor(0x13, 0xA1, 0x0E), // DEBUG, Green
       QColor(0x00, 0x37, 0xDA), // TRACE, Blue
     };
@@ -358,7 +353,7 @@ void LogWindow::appendMessage(const QLatin1StringView& channel, quint32 level, c
       temp_cursor.insertText(qtimestamp);
     }
 
-    const QString qchannel = (level <= LOGLEVEL_PERF) ?
+    const QString qchannel = (level <= LOGLEVEL_WARNING) ?
                                QStringLiteral("%1(%2): ").arg(level_characters[level]).arg(channel) :
                                QStringLiteral("%1/%2: ").arg(level_characters[level]).arg(channel);
     format.setForeground(QBrush(channel_color));

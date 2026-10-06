@@ -1,7 +1,9 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
+#include "common/assert.h"
 
 #include "gpu_device.h"
 #include "gpu_texture.h"
@@ -90,7 +92,7 @@ template<typename FBOType, FBOType (*FactoryFunc)(GPUTexture* const* rts, u32 nu
          void (*DestroyFunc)(FBOType fbo)>
 void GPUFramebufferManager<FBOType, FactoryFunc, DestroyFunc>::RemoveRTReferences(const GPUTexture* tex)
 {
-  DebugAssert(tex->IsRenderTarget());
+  DebugAssert(tex->IsRenderTarget() || tex->IsRWTexture());
   for (auto it = m_map.begin(); it != m_map.end();)
   {
     if (!it->first.ContainsRT(tex))
@@ -136,7 +138,7 @@ template<typename FBOType, FBOType (*FactoryFunc)(GPUTexture* const* rts, u32 nu
          void (*DestroyFunc)(FBOType fbo)>
 void GPUFramebufferManager<FBOType, FactoryFunc, DestroyFunc>::Clear()
 {
-  for (auto it : m_map)
+  for (const auto& it : m_map)
     DestroyFunc(it.second);
   m_map.clear();
 }

@@ -50,26 +50,32 @@ union CacheControl
   BitField<u32, bool, 11, 1> icache_enable;
 };
 
-struct PGXP_value
+struct PGXPValue
 {
   float x;
   float y;
   float z;
   u32 value;
-  union
+  u32 flags;
+
+  ALWAYS_INLINE void Validate(u32 psxval) { flags = (value == psxval) ? flags : 0; }
+
+  ALWAYS_INLINE float GetValidX(u32 psxval) const
   {
-    u32 flags;
-    u8 compFlags[4];
-    u16 halfFlags[2];
-  };
+    return (flags & 1) ? x : static_cast<float>(static_cast<s16>(psxval));
+  }
+  ALWAYS_INLINE float GetValidY(u32 psxval) const
+  {
+    return (flags & 2) ? y : static_cast<float>(static_cast<s16>(psxval >> 16));
+  }
 };
 
 struct State
 {
   // ticks the CPU has executed
-  TickCount downcount = 0;
-  TickCount pending_ticks = 0;
-  TickCount gte_completion_tick = 0;
+  u32 downcount = 0;
+  u32 pending_ticks = 0;
+  u32 gte_completion_tick = 0;
 
   Registers regs = {};
   Cop0Registers cop0_regs = {};
@@ -99,32 +105,34 @@ struct State
   // GTE registers are stored here so we can access them on ARM with a single instruction
   GTE::Regs gte_regs = {};
 
-  // 4 bytes of padding here on x64
-  bool use_debug_dispatcher = false;
+  // 2 bytes of padding here on x64
+  bool using_interpreter = false;
+  bool using_debug_dispatcher = false;
 
   void* fastmem_base = nullptr;
   void** memory_handlers = nullptr;
 
-  PGXP_value pgxp_gpr[static_cast<u8>(Reg::count)] = {};
-  PGXP_value pgxp_cop0[32] = {};
-  PGXP_value pgxp_gte[64] = {};
+  PGXPValue pgxp_gpr[static_cast<u8>(Reg::count)] = {};
+  PGXPValue pgxp_cop0[32] = {};
+  PGXPValue pgxp_gte[64] = {};
 
   std::array<u32, ICACHE_LINES> icache_tags = {};
   std::array<u8, ICACHE_SIZE> icache_data = {};
 
   std::array<u8, SCRATCHPAD_SIZE> scratchpad = {};
 
-  static constexpr u32 GPRRegisterOffset(u32 index) { return offsetof(State, regs.r) + (sizeof(u32) * index); }
-  static constexpr u32 GTERegisterOffset(u32 index) { return offsetof(State, gte_regs.r32) + (sizeof(u32) * index); }
+  static constexpr u32 GPRRegisterOffset(u32 index) { return OFFSETOF(State, regs.r) + (sizeof(u32) * index); }
+  static constexpr u32 GTERegisterOffset(u32 index) { return OFFSETOF(State, gte_regs.r32) + (sizeof(u32) * index); }
 };
 
-extern State g_state;
+ALIGN_TO_CACHE_LINE extern State g_state;
 
 void Initialize();
 void Shutdown();
 void Reset();
 bool DoState(StateWrapper& sw);
 void ClearICache();
+bool UpdateDebugDispatcherFlag();
 void UpdateMemoryPointers();
 void ExecutionModeChanged();
 
@@ -132,14 +140,14 @@ void ExecutionModeChanged();
 void Execute();
 
 // Forces an early exit from the CPU dispatcher.
-void ExitExecution();
+[[noreturn]] void ExitExecution();
 
 ALWAYS_INLINE static Registers& GetRegs()
 {
   return g_state.regs;
 }
 
-ALWAYS_INLINE static TickCount GetPendingTicks()
+ALWAYS_INLINE static u32 GetPendingTicks()
 {
   return g_state.pending_ticks;
 }
@@ -151,7 +159,7 @@ ALWAYS_INLINE static void ResetPendingTicks()
 }
 ALWAYS_INLINE static void AddPendingTicks(TickCount ticks)
 {
-  g_state.pending_ticks += ticks;
+  g_state.pending_ticks += static_cast<u32>(ticks);
 }
 
 // state helpers
@@ -171,9 +179,11 @@ bool SafeReadMemoryByte(VirtualMemoryAddress addr, u8* value);
 bool SafeReadMemoryHalfWord(VirtualMemoryAddress addr, u16* value);
 bool SafeReadMemoryWord(VirtualMemoryAddress addr, u32* value);
 bool SafeReadMemoryCString(VirtualMemoryAddress addr, std::string* value, u32 max_length = 1024);
+bool SafeReadMemoryBytes(VirtualMemoryAddress addr, void* data, u32 length);
 bool SafeWriteMemoryByte(VirtualMemoryAddress addr, u8 value);
 bool SafeWriteMemoryHalfWord(VirtualMemoryAddress addr, u16 value);
 bool SafeWriteMemoryWord(VirtualMemoryAddress addr, u32 value);
+bool SafeWriteMemoryBytes(VirtualMemoryAddress addr, const void* data, u32 length);
 
 // External IRQs
 void SetIRQRequest(bool state);

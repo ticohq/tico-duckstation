@@ -60,8 +60,8 @@ InputBindingKey InputSource::MakeGenericControllerMotorKey(InputSourceType clazz
 }
 
 std::optional<InputBindingKey> InputSource::ParseGenericControllerKey(InputSourceType clazz,
-                                                                      const std::string_view& source,
-                                                                      const std::string_view& sub_binding)
+                                                                      std::string_view source,
+                                                                      std::string_view sub_binding)
 {
   // try to find the number, this function doesn't care about whether it's xinput or sdl or whatever
   std::string_view::size_type pos = 0;
@@ -75,7 +75,7 @@ std::optional<InputBindingKey> InputSource::ParseGenericControllerKey(InputSourc
     return std::nullopt;
 
   const std::optional<s32> source_index = StringUtil::FromChars<s32>(source.substr(pos));
-  if (source_index.has_value() || source_index.value() < 0)
+  if (!source_index.has_value() || source_index.value() < 0)
     return std::nullopt;
 
   InputBindingKey key = {};

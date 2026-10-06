@@ -1,13 +1,16 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com> and contributors.
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com> and contributors.
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "multitap.h"
-#include "common/log.h"
-#include "common/types.h"
 #include "controller.h"
 #include "memory_card.h"
 #include "pad.h"
+
 #include "util/state_wrapper.h"
+
+#include "common/log.h"
+#include "common/types.h"
+
 Log_SetChannel(Multitap);
 
 Multitap::Multitap()
@@ -148,7 +151,7 @@ bool Multitap::Transfer(const u8 data_in, u8* data_out)
 
       if (!ack)
       {
-        Log_DevPrintf("Memory card transfer ended");
+        DEV_LOG("Memory card transfer ended");
         m_transfer_state = TransferState::Idle;
       }
     }
@@ -206,7 +209,7 @@ bool Multitap::Transfer(const u8 data_in, u8* data_out)
 
       if (!ack)
       {
-        Log_DevPrintf("Controller transfer ended");
+        DEV_LOG("Controller transfer ended");
         m_transfer_state = TransferState::Idle;
       }
     }

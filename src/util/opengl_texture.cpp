@@ -29,55 +29,61 @@ const std::tuple<GLenum, GLenum, GLenum>& OpenGLTexture::GetPixelFormatMapping(G
 {
   static constexpr std::array<std::tuple<GLenum, GLenum, GLenum>, static_cast<u32>(GPUTexture::Format::MaxCount)>
     mapping = {{
-      {},                                                     // Unknown
-      {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},                  // RGBA8
-      {GL_RGBA8, GL_BGRA, GL_UNSIGNED_BYTE},                  // BGRA8
-      {GL_RGB565, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},           // RGB565
-      {GL_RGB5_A1, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV},   // RGBA5551
-      {GL_R8, GL_RED, GL_UNSIGNED_BYTE},                      // R8
-      {GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_SHORT},   // D16
-      {GL_R16, GL_RED, GL_UNSIGNED_SHORT},                    // R16
-      {GL_R16I, GL_RED_INTEGER, GL_SHORT},                    // R16I
-      {GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT},          // R16U
-      {GL_R16F, GL_RED, GL_HALF_FLOAT},                       // R16F
-      {GL_R32I, GL_RED_INTEGER, GL_INT},                      // R32I
-      {GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT},            // R32U
-      {GL_R32F, GL_RED, GL_FLOAT},                            // R32F
-      {GL_RG8, GL_RG_INTEGER, GL_UNSIGNED_BYTE},              // RG8
-      {GL_RG16F, GL_RG, GL_UNSIGNED_SHORT},                   // RG16
-      {GL_RG16F, GL_RG, GL_HALF_FLOAT},                       // RG16F
-      {GL_RG32F, GL_RG, GL_FLOAT},                            // RG32F
-      {GL_RGBA16, GL_RGBA, GL_UNSIGNED_BYTE},                 // RGBA16
-      {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT},                   // RGBA16F
-      {GL_RGBA32F, GL_RGBA, GL_FLOAT},                        // RGBA32F
-      {GL_RGB10_A2, GL_BGRA, GL_UNSIGNED_INT_2_10_10_10_REV}, // RGB10A2
+      {},                                                       // Unknown
+      {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},                    // RGBA8
+      {GL_RGBA8, GL_BGRA, GL_UNSIGNED_BYTE},                    // BGRA8
+      {GL_RGB565, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},             // RGB565
+      {GL_RGB5_A1, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV},     // RGBA5551
+      {GL_R8, GL_RED, GL_UNSIGNED_BYTE},                        // R8
+      {GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_SHORT},     // D16
+      {GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL, GL_UNSIGNED_INT}, // D24S8
+      {GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT},    // D32F
+      {GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL, GL_FLOAT},       // D32FS8
+      {GL_R16, GL_RED, GL_UNSIGNED_SHORT},                      // R16
+      {GL_R16I, GL_RED_INTEGER, GL_SHORT},                      // R16I
+      {GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT},            // R16U
+      {GL_R16F, GL_RED, GL_HALF_FLOAT},                         // R16F
+      {GL_R32I, GL_RED_INTEGER, GL_INT},                        // R32I
+      {GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT},              // R32U
+      {GL_R32F, GL_RED, GL_FLOAT},                              // R32F
+      {GL_RG8, GL_RG_INTEGER, GL_UNSIGNED_BYTE},                // RG8
+      {GL_RG16F, GL_RG, GL_UNSIGNED_SHORT},                     // RG16
+      {GL_RG16F, GL_RG, GL_HALF_FLOAT},                         // RG16F
+      {GL_RG32F, GL_RG, GL_FLOAT},                              // RG32F
+      {GL_RGBA16, GL_RGBA, GL_UNSIGNED_BYTE},                   // RGBA16
+      {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT},                     // RGBA16F
+      {GL_RGBA32F, GL_RGBA, GL_FLOAT},                          // RGBA32F
+      {GL_RGB10_A2, GL_BGRA, GL_UNSIGNED_INT_2_10_10_10_REV},   // RGB10A2
     }};
 
   // GLES doesn't have the non-normalized 16-bit formats.. use float and hope for the best, lol.
   static constexpr std::array<std::tuple<GLenum, GLenum, GLenum>, static_cast<u32>(GPUTexture::Format::MaxCount)>
     mapping_gles = {{
-      {},                                                     // Unknown
-      {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},                  // RGBA8
-      {GL_RGBA8, GL_BGRA, GL_UNSIGNED_BYTE},                  // BGRA8
-      {GL_RGB565, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},           // RGB565
-      {GL_RGB5_A1, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV},   // RGBA5551
-      {GL_R8, GL_RED, GL_UNSIGNED_BYTE},                      // R8
-      {GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_SHORT},   // D16
-      {GL_R16F, GL_RED, GL_HALF_FLOAT},                       // R16
-      {GL_R16I, GL_RED_INTEGER, GL_SHORT},                    // R16I
-      {GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT},          // R16U
-      {GL_R16F, GL_RED, GL_HALF_FLOAT},                       // R16F
-      {GL_R32I, GL_RED_INTEGER, GL_INT},                      // R32I
-      {GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT},            // R32U
-      {GL_R32F, GL_RED, GL_FLOAT},                            // R32F
-      {GL_RG8, GL_RG, GL_UNSIGNED_BYTE},                      // RG8
-      {GL_RG16F, GL_RG, GL_HALF_FLOAT},                       // RG16
-      {GL_RG16F, GL_RG, GL_HALF_FLOAT},                       // RG16F
-      {GL_RG32F, GL_RG, GL_FLOAT},                            // RG32F
-      {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT},                   // RGBA16
-      {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT},                   // RGBA16F
-      {GL_RGBA32F, GL_RGBA, GL_FLOAT},                        // RGBA32F
-      {GL_RGB10_A2, GL_BGRA, GL_UNSIGNED_INT_2_10_10_10_REV}, // RGB10A2
+      {},                                                       // Unknown
+      {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},                    // RGBA8
+      {GL_RGBA8, GL_BGRA, GL_UNSIGNED_BYTE},                    // BGRA8
+      {GL_RGB565, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},             // RGB565
+      {GL_RGB5_A1, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV},     // RGBA5551
+      {GL_R8, GL_RED, GL_UNSIGNED_BYTE},                        // R8
+      {GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_SHORT},     // D16
+      {GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL, GL_UNSIGNED_INT}, // D24S8
+      {GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT},    // D32F
+      {GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL, GL_FLOAT},       // D32FS8
+      {GL_R16F, GL_RED, GL_HALF_FLOAT},                         // R16
+      {GL_R16I, GL_RED_INTEGER, GL_SHORT},                      // R16I
+      {GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT},            // R16U
+      {GL_R16F, GL_RED, GL_HALF_FLOAT},                         // R16F
+      {GL_R32I, GL_RED_INTEGER, GL_INT},                        // R32I
+      {GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT},              // R32U
+      {GL_R32F, GL_RED, GL_FLOAT},                              // R32F
+      {GL_RG8, GL_RG, GL_UNSIGNED_BYTE},                        // RG8
+      {GL_RG16F, GL_RG, GL_HALF_FLOAT},                         // RG16
+      {GL_RG16F, GL_RG, GL_HALF_FLOAT},                         // RG16F
+      {GL_RG32F, GL_RG, GL_FLOAT},                              // RG32F
+      {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT},                     // RGBA16
+      {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT},                     // RGBA16F
+      {GL_RGBA32F, GL_RGBA, GL_FLOAT},                          // RGBA32F
+      {GL_RGB10_A2, GL_BGRA, GL_UNSIGNED_INT_2_10_10_10_REV},   // RGB10A2
     }};
 
   return gles ? mapping_gles[static_cast<u32>(format)] : mapping[static_cast<u32>(format)];
@@ -119,7 +125,7 @@ std::unique_ptr<OpenGLTexture> OpenGLTexture::Create(u32 width, u32 height, u32 
 
   if (layers > 1 && data)
   {
-    Log_ErrorPrintf("Loading texture array data not currently supported");
+    ERROR_LOG("Loading texture array data not currently supported");
     return nullptr;
   }
 
@@ -224,7 +230,7 @@ std::unique_ptr<OpenGLTexture> OpenGLTexture::Create(u32 width, u32 height, u32 
   GLenum error = glGetError();
   if (error != GL_NO_ERROR)
   {
-    Log_ErrorPrintf("Failed to create texture: 0x%X", error);
+    ERROR_LOG("Failed to create texture: 0x{:X}", error);
     glDeleteTextures(1, &id);
     return nullptr;
   }
@@ -350,7 +356,7 @@ void OpenGLTexture::Unmap()
   sb->Unbind();
 }
 
-void OpenGLTexture::SetDebugName(const std::string_view& name)
+void OpenGLTexture::SetDebugName(std::string_view name)
 {
 #ifdef _DEBUG
   if (glObjectLabel)
@@ -375,7 +381,7 @@ OpenGLSampler::~OpenGLSampler()
   OpenGLDevice::GetInstance().UnbindSampler(m_id);
 }
 
-void OpenGLSampler::SetDebugName(const std::string_view& name)
+void OpenGLSampler::SetDebugName(std::string_view name)
 {
 #ifdef _DEBUG
   if (glObjectLabel)
@@ -411,7 +417,7 @@ std::unique_ptr<GPUSampler> OpenGLDevice::CreateSampler(const GPUSampler::Config
   glGenSamplers(1, &sampler);
   if (glGetError() != GL_NO_ERROR)
   {
-    Log_ErrorPrintf("Failed to create sampler: %u", sampler);
+    ERROR_LOG("Failed to create sampler: {:X}", sampler);
     return {};
   }
 
@@ -548,6 +554,7 @@ void OpenGLDevice::CommitRTClearInFB(OpenGLTexture* tex, u32 idx)
       glEnable(GL_SCISSOR_TEST);
       tex->SetState(GPUTexture::State::Dirty);
     }
+    break;
 
     case GPUTexture::State::Dirty:
       break;
@@ -630,7 +637,7 @@ bool OpenGLTextureBuffer::CreateBuffer()
     glGenTextures(1, &m_texture_id);
     if (const GLenum err = glGetError(); err != GL_NO_ERROR)
     {
-      Log_ErrorPrintf("Failed to create texture for buffer: %u", err);
+      ERROR_LOG("Failed to create texture for buffer: 0x{:X}", err);
       return false;
     }
 
@@ -660,7 +667,7 @@ void OpenGLTextureBuffer::Unmap(u32 used_elements)
   m_buffer->Unmap(size);
 }
 
-void OpenGLTextureBuffer::SetDebugName(const std::string_view& name)
+void OpenGLTextureBuffer::SetDebugName(std::string_view name)
 {
 #ifdef _DEBUG
   if (glObjectLabel)
@@ -683,7 +690,7 @@ std::unique_ptr<GPUTextureBuffer> OpenGLDevice::CreateTextureBuffer(GPUTextureBu
     glGetInteger64v(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &max_ssbo_size);
     if (static_cast<GLint64>(buffer_size) > max_ssbo_size)
     {
-      Log_ErrorPrintf("Buffer size of %u not supported, max is %" PRId64, buffer_size, max_ssbo_size);
+      ERROR_LOG("Buffer size of {} not supported, max is {}", buffer_size, max_ssbo_size);
       return {};
     }
   }
@@ -701,7 +708,7 @@ std::unique_ptr<GPUTextureBuffer> OpenGLDevice::CreateTextureBuffer(GPUTextureBu
     glGenTextures(1, &texture_id);
     if (const GLenum err = glGetError(); err != GL_NO_ERROR)
     {
-      Log_ErrorPrintf("Failed to create texture for buffer: %u", err);
+      ERROR_LOG("Failed to create texture for buffer: 0x{:X}", err);
       return {};
     }
 
@@ -776,7 +783,7 @@ std::unique_ptr<OpenGLDownloadTexture> OpenGLDownloadTexture::Create(u32 width, 
 
     if (!buffer_map)
     {
-      Log_ErrorPrint("Failed to map persistent download buffer");
+      ERROR_LOG("Failed to map persistent download buffer");
       glDeleteBuffers(1, &buffer_id);
       return {};
     }

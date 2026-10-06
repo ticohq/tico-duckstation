@@ -22,6 +22,8 @@
 
 Log_SetChannel(VulkanDevice);
 
+static_assert(VulkanSwapChain::NUM_SEMAPHORES == (VulkanDevice::NUM_COMMAND_BUFFERS + 1));
+
 static VkFormat GetLinearFormat(VkFormat format)
 {
   switch (format)
@@ -70,10 +72,10 @@ static const char* PresentModeToString(VkPresentModeKHR mode)
   }
 }
 
-VulkanSwapChain::VulkanSwapChain(const WindowInfo& wi, VkSurfaceKHR surface, bool vsync,
+VulkanSwapChain::VulkanSwapChain(const WindowInfo& wi, VkSurfaceKHR surface, VkPresentModeKHR present_mode,
                                  std::optional<bool> exclusive_fullscreen_control)
-  : m_window_info(wi), m_surface(surface), m_exclusive_fullscreen_control(exclusive_fullscreen_control),
-    m_vsync_enabled(vsync)
+  : m_window_info(wi), m_surface(surface), m_present_mode(present_mode),
+    m_exclusive_fullscreen_control(exclusive_fullscreen_control)
 {
 }
 
@@ -227,11 +229,12 @@ void VulkanSwapChain::DestroyVulkanSurface(VkInstance instance, WindowInfo* wi, 
 #endif
 }
 
-std::unique_ptr<VulkanSwapChain> VulkanSwapChain::Create(const WindowInfo& wi, VkSurfaceKHR surface, bool vsync,
+std::unique_ptr<VulkanSwapChain> VulkanSwapChain::Create(const WindowInfo& wi, VkSurfaceKHR surface,
+                                                         VkPresentModeKHR present_mode,
                                                          std::optional<bool> exclusive_fullscreen_control)
 {
   std::unique_ptr<VulkanSwapChain> swap_chain =
-    std::unique_ptr<VulkanSwapChain>(new VulkanSwapChain(wi, surface, vsync, exclusive_fullscreen_control));
+    std::unique_ptr<VulkanSwapChain>(new VulkanSwapChain(wi, surface, present_mode, exclusive_fullscreen_control));
   if (!swap_chain->CreateSwapChain())
     return nullptr;
 
@@ -271,15 +274,14 @@ std::optional<VkSurfaceFormatKHR> VulkanSwapChain::SelectSurfaceFormat(VkSurface
       return VkSurfaceFormatKHR{format, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
   }
 
-  Log_ErrorPrintf("Failed to find a suitable format for swap chain buffers. Available formats were:");
+  ERROR_LOG("Failed to find a suitable format for swap chain buffers. Available formats were:");
   for (const VkSurfaceFormatKHR& sf : surface_formats)
-    Log_ErrorPrintf("  %u", static_cast<unsigned>(sf.format));
+    ERROR_LOG("  {}", static_cast<unsigned>(sf.format));
 
   return std::nullopt;
 }
 
-std::optional<VkPresentModeKHR> VulkanSwapChain::SelectPresentMode(VkSurfaceKHR surface,
-                                                                   VkPresentModeKHR requested_mode)
+bool VulkanSwapChain::SelectPresentMode(VkSurfaceKHR surface, GPUVSyncMode* vsync_mode, VkPresentModeKHR* present_mode)
 {
   VulkanDevice& dev = VulkanDevice::GetInstance();
   VkResult res;
@@ -288,7 +290,7 @@ std::optional<VkPresentModeKHR> VulkanSwapChain::SelectPresentMode(VkSurfaceKHR 
   if (res != VK_SUCCESS || mode_count == 0)
   {
     LOG_VULKAN_ERROR(res, "vkGetPhysicalDeviceSurfaceFormatsKHR failed: ");
-    return std::nullopt;
+    return false;
   }
 
   std::vector<VkPresentModeKHR> present_modes(mode_count);
@@ -297,53 +299,71 @@ std::optional<VkPresentModeKHR> VulkanSwapChain::SelectPresentMode(VkSurfaceKHR 
   Assert(res == VK_SUCCESS);
 
   // Checks if a particular mode is supported, if it is, returns that mode.
-  auto CheckForMode = [&present_modes](VkPresentModeKHR check_mode) {
+  const auto CheckForMode = [&present_modes](VkPresentModeKHR check_mode) {
     auto it = std::find_if(present_modes.begin(), present_modes.end(),
                            [check_mode](VkPresentModeKHR mode) { return check_mode == mode; });
     return it != present_modes.end();
   };
 
-  // Use preferred mode if available.
-  VkPresentModeKHR selected_mode;
-  if (CheckForMode(requested_mode))
+  switch (*vsync_mode)
   {
-    selected_mode = requested_mode;
-  }
-  else if (requested_mode != VK_PRESENT_MODE_FIFO_KHR && CheckForMode(VK_PRESENT_MODE_MAILBOX_KHR))
-  {
-    // Prefer mailbox over fifo for adaptive vsync/no-vsync. This way it'll only delay one frame.
-    selected_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-  }
-  else if (requested_mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR && CheckForMode(VK_PRESENT_MODE_FIFO_KHR))
-  {
-    // Fallback to FIFO if we're using any kind of vsync.
-    // This should never fail, FIFO is mandated.
-    selected_mode = VK_PRESENT_MODE_FIFO_KHR;
-  }
-  else
-  {
-    // Fall back to whatever is available.
-    selected_mode = present_modes[0];
+    case GPUVSyncMode::Disabled:
+    {
+      // Prefer immediate > mailbox > fifo.
+      if (CheckForMode(VK_PRESENT_MODE_IMMEDIATE_KHR))
+      {
+        *present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+      }
+      else if (CheckForMode(VK_PRESENT_MODE_MAILBOX_KHR))
+      {
+        WARNING_LOG("Immediate not supported for vsync-disabled, using mailbox.");
+        *present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+      }
+      else
+      {
+        WARNING_LOG("Mailbox not supported for vsync-disabled, using FIFO.");
+        *present_mode = VK_PRESENT_MODE_FIFO_KHR;
+        *vsync_mode = GPUVSyncMode::FIFO;
+      }
+    }
+    break;
+
+    case GPUVSyncMode::FIFO:
+    {
+      // FIFO is always available.
+      *present_mode = VK_PRESENT_MODE_FIFO_KHR;
+    }
+    break;
+
+    case GPUVSyncMode::Mailbox:
+    {
+      // Mailbox > fifo.
+      if (CheckForMode(VK_PRESENT_MODE_MAILBOX_KHR))
+      {
+        *present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+      }
+      else
+      {
+        WARNING_LOG("Mailbox not supported for vsync-mailbox, using FIFO.");
+        *present_mode = VK_PRESENT_MODE_FIFO_KHR;
+        *vsync_mode = GPUVSyncMode::FIFO;
+      }
+    }
+    break;
+
+      DefaultCaseIsUnreachable()
   }
 
-  Log_DevPrintf("(SwapChain) Preferred present mode: %s, selected: %s", PresentModeToString(requested_mode),
-                PresentModeToString(selected_mode));
-
-  return selected_mode;
+  return true;
 }
 
 bool VulkanSwapChain::CreateSwapChain()
 {
   VulkanDevice& dev = VulkanDevice::GetInstance();
 
-  // Select swap chain format and present mode
+  // Select swap chain format
   std::optional<VkSurfaceFormatKHR> surface_format = SelectSurfaceFormat(m_surface);
-
-  // Prefer relaxed vsync if available, stalling is bad.
-  const VkPresentModeKHR requested_mode =
-    m_vsync_enabled ? VK_PRESENT_MODE_FIFO_RELAXED_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
-  std::optional<VkPresentModeKHR> present_mode = SelectPresentMode(m_surface, requested_mode);
-  if (!surface_format.has_value() || !present_mode.has_value())
+  if (!surface_format.has_value())
     return false;
 
   // Look up surface properties to determine image count and dimensions
@@ -356,12 +376,12 @@ bool VulkanSwapChain::CreateSwapChain()
     return false;
   }
 
-  // Select number of images in swap chain, we prefer one buffer in the background to work on
-  u32 image_count = std::max(surface_capabilities.minImageCount + 1u, 2u);
-
+  // Select number of images in swap chain, we prefer one buffer in the background to work on in triple-buffered mode.
   // maxImageCount can be zero, in which case there isn't an upper limit on the number of buffers.
-  if (surface_capabilities.maxImageCount > 0)
-    image_count = std::min(image_count, surface_capabilities.maxImageCount);
+  u32 image_count = std::clamp<u32>(
+    (m_present_mode == VK_PRESENT_MODE_MAILBOX_KHR) ? 3 : 2, surface_capabilities.minImageCount,
+    (surface_capabilities.maxImageCount == 0) ? std::numeric_limits<u32>::max() : surface_capabilities.maxImageCount);
+  DEV_LOG("Creating a swap chain with {} images in present mode {}", image_count, PresentModeToString(m_present_mode));
 
   // Determine the dimensions of the swap chain. Values of -1 indicate the size we specify here
   // determines window size? Android sometimes lags updating currentExtent, so don't use it.
@@ -395,7 +415,7 @@ bool VulkanSwapChain::CreateSwapChain()
   VkImageUsageFlags image_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   if ((surface_capabilities.supportedUsageFlags & image_usage) != image_usage)
   {
-    Log_ErrorPrintf("Vulkan: Swap chain does not support usage as color attachment");
+    ERROR_LOG("Vulkan: Swap chain does not support usage as color attachment");
     return false;
   }
 
@@ -420,7 +440,7 @@ bool VulkanSwapChain::CreateSwapChain()
                                               nullptr,
                                               transform,
                                               alpha,
-                                              present_mode.value(),
+                                              m_present_mode,
                                               VK_TRUE,
                                               old_swap_chain};
   std::array<uint32_t, 2> indices = {{
@@ -450,19 +470,19 @@ bool VulkanSwapChain::CreateSwapChain()
       exclusive_win32_info.hmonitor =
         MonitorFromWindow(reinterpret_cast<HWND>(m_window_info.window_handle), MONITOR_DEFAULTTONEAREST);
       if (!exclusive_win32_info.hmonitor)
-        Log_ErrorPrintf("MonitorFromWindow() for exclusive fullscreen exclusive override failed.");
+        ERROR_LOG("MonitorFromWindow() for exclusive fullscreen exclusive override failed.");
 
       Vulkan::AddPointerToChain(&swap_chain_info, &exclusive_info);
       Vulkan::AddPointerToChain(&swap_chain_info, &exclusive_win32_info);
     }
     else
     {
-      Log_ErrorPrintf("Exclusive fullscreen control requested, but VK_EXT_full_screen_exclusive is not supported.");
+      ERROR_LOG("Exclusive fullscreen control requested, but VK_EXT_full_screen_exclusive is not supported.");
     }
   }
 #else
   if (m_exclusive_fullscreen_control.has_value())
-    Log_ErrorPrintf("Exclusive fullscreen control requested, but is not supported on this platform.");
+    ERROR_LOG("Exclusive fullscreen control requested, but is not supported on this platform.");
 #endif
 
   res = vkCreateSwapchainKHR(dev.GetVulkanDevice(), &swap_chain_info, nullptr, &m_swap_chain);
@@ -481,10 +501,9 @@ bool VulkanSwapChain::CreateSwapChain()
   m_window_info.surface_width = std::max(1u, size.width);
   m_window_info.surface_height = std::max(1u, size.height);
   m_window_info.surface_format = VulkanDevice::GetFormatForVkFormat(surface_format->format);
-  m_actual_present_mode = present_mode.value();
   if (m_window_info.surface_format == GPUTexture::Format::Unknown)
   {
-    Log_ErrorPrintf("Unknown Vulkan surface format %u", static_cast<u32>(surface_format->format));
+    ERROR_LOG("Unknown Vulkan surface format {}", static_cast<u32>(surface_format->format));
     return false;
   }
 
@@ -543,15 +562,10 @@ bool VulkanSwapChain::CreateSwapChain()
     m_images.push_back(image);
   }
 
-  // We don't actually need +1 semaphores, or, more than one really.
-  // But, the validation layer gets cranky if we don't fence wait before the next image acquire.
-  // So, add an additional semaphore to ensure that we're never acquiring before fence waiting.
-  const u32 semaphore_count = image_count + 1;
-  m_semaphores.reserve(semaphore_count);
   m_current_semaphore = 0;
-  for (u32 i = 0; i < semaphore_count; i++)
+  for (u32 i = 0; i < NUM_SEMAPHORES; i++)
   {
-    ImageSemaphores sema;
+    ImageSemaphores& sema = m_semaphores[i];
 
     const VkSemaphoreCreateInfo semaphore_info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, nullptr, 0};
     res = vkCreateSemaphore(dev.GetVulkanDevice(), &semaphore_info, nullptr, &sema.available_semaphore);
@@ -566,10 +580,9 @@ bool VulkanSwapChain::CreateSwapChain()
     {
       LOG_VULKAN_ERROR(res, "vkCreateSemaphore failed: ");
       vkDestroySemaphore(dev.GetVulkanDevice(), sema.available_semaphore, nullptr);
+      sema.available_semaphore = VK_NULL_HANDLE;
       return false;
     }
-
-    m_semaphores.push_back(sema);
   }
 
   return true;
@@ -587,10 +600,12 @@ void VulkanSwapChain::DestroySwapChainImages()
   m_images.clear();
   for (auto& it : m_semaphores)
   {
-    vkDestroySemaphore(dev.GetVulkanDevice(), it.rendering_finished_semaphore, nullptr);
-    vkDestroySemaphore(dev.GetVulkanDevice(), it.available_semaphore, nullptr);
+    if (it.rendering_finished_semaphore != VK_NULL_HANDLE)
+      vkDestroySemaphore(dev.GetVulkanDevice(), it.rendering_finished_semaphore, nullptr);
+    if (it.available_semaphore != VK_NULL_HANDLE)
+      vkDestroySemaphore(dev.GetVulkanDevice(), it.available_semaphore, nullptr);
   }
-  m_semaphores.clear();
+  m_semaphores = {};
 
   m_image_acquire_result.reset();
 }
@@ -628,11 +643,34 @@ VkResult VulkanSwapChain::AcquireNextImage()
 
 void VulkanSwapChain::ReleaseCurrentImage()
 {
+  if (!m_image_acquire_result.has_value())
+    return;
+
+  if ((m_image_acquire_result.value() == VK_SUCCESS || m_image_acquire_result.value() == VK_SUBOPTIMAL_KHR) &&
+      VulkanDevice::GetInstance().GetOptionalExtensions().vk_ext_swapchain_maintenance1)
+  {
+    VulkanDevice::GetInstance().WaitForGPUIdle();
+
+    const VkReleaseSwapchainImagesInfoEXT info = {.sType = VK_STRUCTURE_TYPE_RELEASE_SWAPCHAIN_IMAGES_INFO_EXT,
+                                                  .swapchain = m_swap_chain,
+                                                  .imageIndexCount = 1,
+                                                  .pImageIndices = &m_current_image};
+    VkResult res = vkReleaseSwapchainImagesEXT(VulkanDevice::GetInstance().GetVulkanDevice(), &info);
+    if (res != VK_SUCCESS)
+      LOG_VULKAN_ERROR(res, "vkReleaseSwapchainImagesEXT() failed: ");
+  }
+
+  m_image_acquire_result.reset();
+}
+
+void VulkanSwapChain::ResetImageAcquireResult()
+{
   m_image_acquire_result.reset();
 }
 
 bool VulkanSwapChain::ResizeSwapChain(u32 new_width, u32 new_height, float new_scale)
 {
+  ReleaseCurrentImage();
   DestroySwapChainImages();
 
   if (new_width != 0 && new_height != 0)
@@ -652,15 +690,16 @@ bool VulkanSwapChain::ResizeSwapChain(u32 new_width, u32 new_height, float new_s
   return true;
 }
 
-bool VulkanSwapChain::SetVSyncEnabled(bool enabled)
+bool VulkanSwapChain::SetPresentMode(VkPresentModeKHR present_mode)
 {
-  if (m_vsync_enabled == enabled)
+  if (m_present_mode == present_mode)
     return true;
 
-  m_vsync_enabled = enabled;
+  m_present_mode = present_mode;
 
   // Recreate the swap chain with the new present mode.
-  Log_VerbosePrintf("Recreating swap chain to change present mode.");
+  VERBOSE_LOG("Recreating swap chain to change present mode.");
+  ReleaseCurrentImage();
   DestroySwapChainImages();
   if (!CreateSwapChain())
   {

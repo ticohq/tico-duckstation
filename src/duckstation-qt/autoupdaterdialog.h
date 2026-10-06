@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include <QtCore/QDateTime>
 #include <QtCore/QStringList>
@@ -32,6 +33,8 @@ public:
   static QStringList getTagList();
   static std::string getDefaultTag();
   static void cleanupAfterUpdate();
+  static bool isOfficialBuild();
+  static bool warnAboutUnofficialBuild();
 
 Q_SIGNALS:
   void updateCheckCompleted();
@@ -48,7 +51,7 @@ private Q_SLOTS:
   void remindMeLaterClicked();
 
 private:
-  void reportError(const char* msg, ...);
+  void reportError(const std::string_view msg);
 
   bool ensureHttpReady();
 

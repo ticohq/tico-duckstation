@@ -115,20 +115,6 @@ class Assembler : public internal::AssemblerBase {
     VIXL_ASSERT(isa == T32);
 #endif
   }
-  explicit Assembler(size_t capacity, InstructionSet isa = kDefaultISA)
-      : AssemblerBase(capacity),
-        isa_(isa),
-        first_condition_(al),
-        it_mask_(0),
-        has_32_dregs_(true),
-        allow_unpredictable_(false),
-        allow_strongly_discouraged_(false) {
-#if defined(VIXL_INCLUDE_TARGET_A32_ONLY)
-    VIXL_ASSERT(isa == A32);
-#elif defined(VIXL_INCLUDE_TARGET_T32_ONLY)
-    VIXL_ASSERT(isa == T32);
-#endif
-  }
   Assembler(byte* buffer, size_t capacity, InstructionSet isa = kDefaultISA)
       : AssemblerBase(buffer, capacity),
         isa_(isa),
@@ -214,7 +200,7 @@ class Assembler : public internal::AssemblerBase {
     VIXL_ASSERT(literal->IsManuallyPlaced());
     literal->SetLocation(this, GetCursorOffset());
     literal->MarkBound();
-    GetBuffer()->EnsureSpaceFor(literal->GetSize());
+    VIXL_ASSERT(GetBuffer()->HasSpaceFor(literal->GetSize()));
     GetBuffer()->EmitData(literal->GetDataAddress(), literal->GetSize());
   }
 

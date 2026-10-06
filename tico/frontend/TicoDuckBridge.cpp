@@ -173,7 +173,7 @@ public:
     if (!System::IsValid())
       return;
     Error error;
-    if (!System::LoadState(StatePath(index).c_str(), &error))
+    if (!System::LoadState(StatePath(index).c_str(), &error, false))
       LOG_ERROR("OVERLAY", "Load state %d failed: %s", index, error.GetDescription().c_str());
   }
   void SwapDisc(const std::string& path) override
@@ -465,7 +465,7 @@ void RunMenuAction()
       CloseMenu();
       return;
     case Action::Exit:
-      Log_InfoPrint("Exit requested");
+      INFO_LOG("{}", "Exit requested");
       s_chainload_launcher = true;
       EndSession();
       return;
@@ -473,7 +473,7 @@ void RunMenuAction()
       // this NRO starts again with the same arguments (a renderer change
       // takes effect then); the relaunch finds the marker and skips the
       // resume prompt, Restart meaning from the start
-      Log_InfoPrint("Restart requested");
+      INFO_LOG("{}", "Restart requested");
       if (System::IsValid())
       {
         if (std::FILE* marker = std::fopen(RestartMarkerPath().c_str(), "wb"))
@@ -596,12 +596,11 @@ OverlayUI::SlotPreview SlotPreview(int slot)
   char when[32];
   std::strftime(when, sizeof(when), "%Y-%m-%d %H:%M", std::localtime(&info->timestamp));
   preview.saved_at = when;
-  if (info->screenshot_width && info->screenshot_height &&
-      info->screenshot_data.size() >= static_cast<size_t>(info->screenshot_width) * info->screenshot_height)
+  if (info->screenshot.IsValid())
   {
-    picture = s_host->CreateTextureRGBA(reinterpret_cast<const unsigned char*>(info->screenshot_data.data()),
-                                        static_cast<int>(info->screenshot_width),
-                                        static_cast<int>(info->screenshot_height));
+    picture = s_host->CreateTextureRGBA(reinterpret_cast<const unsigned char*>(info->screenshot.GetPixels()),
+                                        static_cast<int>(info->screenshot.GetWidth()),
+                                        static_cast<int>(info->screenshot.GetHeight()));
   }
   preview.texture = SwitchFrontend::FromTextureId(picture);
   preview.aspect = g_settings.gpu_widescreen_hack ? 16.0f / 9.0f : 4.0f / 3.0f;
@@ -718,7 +717,7 @@ void PrepareLaunch(int argc, char* argv[])
     {
       s_resolved_rom = UsbStorage::Resolve(s_rom_path);
       if (s_resolved_rom.empty())
-        Log_ErrorFmt("USB drive for {} is not connected", s_rom_path);
+        ERROR_LOG("USB drive for {} is not connected", s_rom_path);
       else
         argv[1] = s_resolved_rom.data();
       s_rom_path = argv[1];
@@ -755,7 +754,7 @@ void Initialize()
   s_ready = InitOverlay();
   if (!s_ready)
   {
-    Log_ErrorPrint("tico overlay unavailable");
+    ERROR_LOG("{}", "tico overlay unavailable");
     return;
   }
   s_last_frame = Common::Timer::GetCurrentValue();
@@ -804,7 +803,7 @@ bool ShouldChainloadLauncher()
 void ExitApplication()
 {
   UsbStorage::Shutdown(); // flush and unmount before tico takes over again
-  const Tico::LogCallback log = [](const std::string& message) { Log_InfoPrint(message.c_str()); };
+  const Tico::LogCallback log = [](const std::string& message) { INFO_LOG("{}", message.c_str()); };
   if (s_relaunch)
     Tico::RelaunchSelf(s_argc, s_argv, log);
   else if (s_chainload_launcher)

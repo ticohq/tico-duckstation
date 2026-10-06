@@ -1,9 +1,10 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "vulkan_builders.h"
 
 #include "common/assert.h"
+#include "common/error.h"
 #include "common/log.h"
 
 #include <limits>
@@ -103,15 +104,15 @@ const char* Vulkan::VkResultToString(VkResult res)
   }
 }
 
-void Vulkan::LogVulkanResult(const char* func_name, VkResult res, const char* msg, ...)
+void Vulkan::LogVulkanResult(const char* func_name, VkResult res, std::string_view msg)
 {
-  std::va_list ap;
-  va_start(ap, msg);
-  std::string real_msg = StringUtil::StdStringFromFormatV(msg, ap);
-  va_end(ap);
+  Log::FastWrite("VulkanDevice", func_name, LOGLEVEL_ERROR, "{} (0x{:08X}: {})", msg, static_cast<unsigned>(res),
+                 VkResultToString(res));
+}
 
-  Log::Writef("VulkanDevice", func_name, LOGLEVEL_ERROR, "%s (%d: %s)", real_msg.c_str(), static_cast<int>(res),
-              VkResultToString(res));
+void Vulkan::SetErrorObject(Error* errptr, std::string_view prefix, VkResult res)
+{
+  Error::SetStringFmt(errptr, "{} (0x{:08X}: {})", prefix, static_cast<unsigned>(res), VkResultToString(res));
 }
 
 Vulkan::DescriptorSetLayoutBuilder::DescriptorSetLayoutBuilder()
@@ -282,14 +283,15 @@ void Vulkan::GraphicsPipelineBuilder::Clear()
   SetMultisamples(VK_SAMPLE_COUNT_1_BIT);
 }
 
-VkPipeline Vulkan::GraphicsPipelineBuilder::Create(VkDevice device, VkPipelineCache pipeline_cache,
-                                                   bool clear /* = true */)
+VkPipeline Vulkan::GraphicsPipelineBuilder::Create(VkDevice device, VkPipelineCache pipeline_cache, bool clear,
+                                                   Error* error)
 {
   VkPipeline pipeline;
   VkResult res = vkCreateGraphicsPipelines(device, pipeline_cache, 1, &m_ci, nullptr, &pipeline);
   if (res != VK_SUCCESS)
   {
     LOG_VULKAN_ERROR(res, "vkCreateGraphicsPipelines() failed: ");
+    SetErrorObject(error, "vkCreateGraphicsPipelines() failed: ", res);
     return VK_NULL_HANDLE;
   }
 

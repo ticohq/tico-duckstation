@@ -1,12 +1,13 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com> and contributors.
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com> and contributors.
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
 #include "controller.h"
+
 #include <array>
 #include <memory>
 #include <optional>
-#include <string_view>
 
 class AnalogController final : public Controller
 {
@@ -74,11 +75,12 @@ public:
   void SetBindState(u32 index, float value) override;
   u32 GetButtonStateBits() const override;
   std::optional<u32> GetAnalogInputBytes() const override;
+  u32 GetInputOverlayIconColor() const override;
 
   void ResetTransferState() override;
   bool Transfer(const u8 data_in, u8* data_out) override;
 
-  void LoadSettings(SettingsInterface& si, const char* section) override;
+  void LoadSettings(SettingsInterface& si, const char* section, bool initial) override;
 
 private:
   using MotorState = std::array<u8, NUM_MOTORS>;

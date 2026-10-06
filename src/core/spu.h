@@ -1,8 +1,10 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
 #include "types.h"
+
 #include <array>
 
 class StateWrapper;
@@ -35,15 +37,6 @@ void DrawDebugStateWindow();
 
 // Executes the SPU, generating any pending samples.
 void GeneratePendingSamples();
-
-/// Returns true if currently dumping audio.
-bool IsDumpingAudio();
-
-/// Starts dumping audio to file.
-bool StartDumpingAudio(const char* filename);
-
-/// Stops dumping audio to file, if started.
-bool StopDumpingAudio();
 
 /// Access to SPU RAM.
 const std::array<u8, RAM_SIZE>& GetRAM();

@@ -26,7 +26,7 @@ public:
   bool Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer = 0, u32 level = 0) override;
   void Unmap() override;
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
   static std::unique_ptr<Deko3DTexture> Create(u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type,
                                                Format format, uint32_t flags);
@@ -84,7 +84,7 @@ class Deko3DSampler final : public GPUSampler
 public:
   ~Deko3DSampler() override;
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
   ALWAYS_INLINE u64 GetDescriptorFence() const { return m_descriptor_fence; }
   ALWAYS_INLINE void SetDescriptorFence(u64 counter) { m_descriptor_fence = counter; }
@@ -117,7 +117,7 @@ public:
   void* Map(u32 required_elements) override;
   void Unmap(u32 used_elements) override;
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
   ALWAYS_INLINE u64 GetDescriptorFence() const { return m_descriptor_fence; }
   ALWAYS_INLINE void SetDescriptorFence(u64 counter) { m_descriptor_fence = counter; }

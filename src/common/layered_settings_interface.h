@@ -10,7 +10,6 @@ class LayeredSettingsInterface final : public SettingsInterface
 public:
   enum Layer : u32
   {
-    LAYER_CMDLINE,
     LAYER_GAME,
     LAYER_INPUT,
     LAYER_BASE,
@@ -26,6 +25,8 @@ public:
   bool Save(Error* error = nullptr) override;
 
   void Clear() override;
+
+  bool IsEmpty() override;
 
   bool GetIntValue(const char* section, const char* key, s32* value) const override;
   bool GetUIntValue(const char* section, const char* key, u32* value) const override;
@@ -44,6 +45,8 @@ public:
   bool ContainsValue(const char* section, const char* key) const override;
   void DeleteValue(const char* section, const char* key) override;
   void ClearSection(const char* section) override;
+  void RemoveSection(const char* section) override;
+  void RemoveEmptySections() override;
 
   std::vector<std::string> GetStringList(const char* section, const char* key) const override;
   void SetStringList(const char* section, const char* key, const std::vector<std::string>& items) override;
@@ -62,7 +65,7 @@ public:
   using SettingsInterface::GetUIntValue;
 
 private:
-  static constexpr Layer FIRST_LAYER = LAYER_CMDLINE;
+  static constexpr Layer FIRST_LAYER = LAYER_GAME;
   static constexpr Layer LAST_LAYER = LAYER_BASE;
 
   std::array<SettingsInterface*, NUM_LAYERS> m_layers{};

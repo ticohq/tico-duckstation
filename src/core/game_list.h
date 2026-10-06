@@ -25,6 +25,7 @@ namespace GameList {
 enum class EntryType
 {
   Disc,
+  DiscSet,
   PSExe,
   Playlist,
   PSF,
@@ -57,18 +58,25 @@ struct Entry
   u8 min_blocks = 0;
   u8 max_blocks = 0;
   s8 disc_set_index = -1;
+  bool disc_set_member = false;
+  bool has_custom_title = false;
+  bool has_custom_region = false;
 
   GameDatabase::CompatibilityRating compatibility = GameDatabase::CompatibilityRating::Unknown;
 
   size_t GetReleaseDateString(char* buffer, size_t buffer_size) const;
 
   ALWAYS_INLINE bool IsDisc() const { return (type == EntryType::Disc); }
+  ALWAYS_INLINE bool IsDiscSet() const { return (type == EntryType::DiscSet); }
+  ALWAYS_INLINE EntryType GetSortType() const { return (type == EntryType::DiscSet) ? EntryType::Disc : type; }
 };
+
+using EntryList = std::vector<Entry>;
 
 const char* GetEntryTypeName(EntryType type);
 const char* GetEntryTypeDisplayName(EntryType type);
 
-bool IsScannableFilename(const std::string_view& path);
+bool IsScannableFilename(std::string_view path);
 
 /// Populates a game list entry struct with information from the iso/elf.
 /// Do *not* call while the system is running, it will mess with CDVD state.
@@ -77,10 +85,11 @@ bool PopulateEntryFromPath(const std::string& path, Entry* entry);
 // Game list access. It's the caller's responsibility to hold the lock while manipulating the entry in any way.
 std::unique_lock<std::recursive_mutex> GetLock();
 const Entry* GetEntryByIndex(u32 index);
-const Entry* GetEntryForPath(const char* path);
+const Entry* GetEntryForPath(std::string_view path);
 const Entry* GetEntryBySerial(std::string_view serial);
 const Entry* GetEntryBySerialAndHash(std::string_view serial, u64 hash);
-std::vector<const Entry*> GetDiscSetMembers(std::string_view disc_set_name);
+std::vector<const Entry*> GetDiscSetMembers(std::string_view disc_set_name, bool sort_by_most_recent = false);
+const Entry* GetFirstDiscSetMember(std::string_view disc_set_name);
 u32 GetEntryCount();
 
 bool IsGameListLoaded();
@@ -89,6 +98,10 @@ bool IsGameListLoaded();
 /// If invalidate_cache is set, all files will be re-scanned.
 /// If only_cache is set, no new files will be scanned, only those present in the cache.
 void Refresh(bool invalidate_cache, bool only_cache = false, ProgressCallback* progress = nullptr);
+
+/// Moves the current game list, which can be temporarily displayed in the UI until refresh completes.
+/// The caller **must** call Refresh() afterward, otherwise it will be permanently lost.
+EntryList TakeEntryList();
 
 /// Add played time for the specified serial.
 void AddPlayedTimeForSerial(const std::string& serial, std::time_t last_time, std::time_t add_time);
@@ -117,6 +130,19 @@ GetMatchingEntriesForSerial(const std::span<const std::string> serials);
 bool DownloadCovers(const std::vector<std::string>& url_templates, bool use_serial = false,
                     ProgressCallback* progress = nullptr,
                     std::function<void(const Entry*, std::string)> save_callback = {});
+
+// Custom properties support
+void SaveCustomTitleForPath(const std::string& path, const std::string& custom_title);
+void SaveCustomRegionForPath(const std::string& path, const std::optional<DiscRegion> custom_region);
+std::string GetCustomTitleForPath(const std::string_view path);
+std::optional<DiscRegion> GetCustomRegionForPath(const std::string_view path);
+
+/// The purpose of this cache is to stop us trying to constantly extract memory card icons, when we know a game
+/// doesn't have any saves yet. It caches the serial:memcard_timestamp pair, and only tries extraction when the
+/// timestamp of the memory card has changed.
+std::string GetGameIconPath(std::string_view serial, std::string_view path);
+void ReloadMemcardTimestampCache();
+
 }; // namespace GameList
 
 namespace Host {

@@ -5,6 +5,7 @@
 #include "d3d11_device.h"
 #include "d3d_common.h"
 
+#include "common/assert.h"
 #include "common/log.h"
 #include "common/string_util.h"
 
@@ -38,7 +39,7 @@ D3D11Sampler::D3D11Sampler(ComPtr<ID3D11SamplerState> ss) : m_ss(std::move(ss))
 
 D3D11Sampler::~D3D11Sampler() = default;
 
-void D3D11Sampler::SetDebugName(const std::string_view& name)
+void D3D11Sampler::SetDebugName(std::string_view name)
 {
   SetD3DDebugObjectName(m_ss.Get(), name);
 }
@@ -84,9 +85,9 @@ std::unique_ptr<GPUSampler> D3D11Device::CreateSampler(const GPUSampler::Config&
 
   ComPtr<ID3D11SamplerState> ss;
   const HRESULT hr = m_device->CreateSamplerState(&desc, ss.GetAddressOf());
-  if (FAILED(hr))
+  if (FAILED(hr)) [[unlikely]]
   {
-    Log_ErrorPrintf("CreateSamplerState() failed: %08X", hr);
+    ERROR_LOG("CreateSamplerState() failed: {:08X}", static_cast<unsigned>(hr));
     return {};
   }
 
@@ -95,19 +96,16 @@ std::unique_ptr<GPUSampler> D3D11Device::CreateSampler(const GPUSampler::Config&
 
 D3D11Texture::D3D11Texture(u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type, Format format,
                            ComPtr<ID3D11Texture2D> texture, ComPtr<ID3D11ShaderResourceView> srv,
-                           ComPtr<ID3D11View> rtv_dsv)
+                           ComPtr<ID3D11View> rtv_dsv, ComPtr<ID3D11UnorderedAccessView> uav)
   : GPUTexture(static_cast<u16>(width), static_cast<u16>(height), static_cast<u8>(layers), static_cast<u8>(levels),
                static_cast<u8>(samples), type, format),
-    m_texture(std::move(texture)), m_srv(std::move(srv)), m_rtv_dsv(std::move(rtv_dsv))
+    m_texture(std::move(texture)), m_srv(std::move(srv)), m_rtv_dsv(std::move(rtv_dsv)), m_uav(std::move(uav))
 {
 }
 
 D3D11Texture::~D3D11Texture()
 {
   D3D11Device::GetInstance().UnbindTexture(this);
-  m_rtv_dsv.Reset();
-  m_srv.Reset();
-  m_texture.Reset();
 }
 
 D3D11_TEXTURE2D_DESC D3D11Texture::GetDesc() const
@@ -129,7 +127,7 @@ void D3D11Texture::CommitClear(ID3D11DeviceContext1* context)
     else
       context->ClearDepthStencilView(GetD3DDSV(), D3D11_CLEAR_DEPTH, GetClearDepth(), 0);
   }
-  else if (IsRenderTarget())
+  else if (IsRenderTarget() || IsRWTexture())
   {
     if (m_state == GPUTexture::State::Invalidated)
       context->DiscardView(GetD3DRTV());
@@ -187,9 +185,9 @@ bool D3D11Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32
 
   D3D11_MAPPED_SUBRESOURCE sr;
   HRESULT hr = context->Map(m_texture.Get(), srnum, discard ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_READ_WRITE, 0, &sr);
-  if (FAILED(hr))
+  if (FAILED(hr)) [[unlikely]]
   {
-    Log_ErrorPrintf("Map pixels texture failed: %08X", hr);
+    ERROR_LOG("Map pixels texture failed: {:08X}", static_cast<unsigned>(hr));
     return false;
   }
 
@@ -209,7 +207,7 @@ void D3D11Texture::Unmap()
   m_mapped_subresource = 0;
 }
 
-void D3D11Texture::SetDebugName(const std::string_view& name)
+void D3D11Texture::SetDebugName(std::string_view name)
 {
   SetD3DDebugObjectName(m_texture.Get(), name);
 }
@@ -236,7 +234,7 @@ std::unique_ptr<D3D11Texture> D3D11Texture::Create(ID3D11Device* device, u32 wid
       bind_flags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
       break;
     case Type::DepthStencil:
-      bind_flags = D3D11_BIND_DEPTH_STENCIL; // | D3D11_BIND_SHADER_RESOURCE;
+      bind_flags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
       break;
     case Type::Texture:
       bind_flags = D3D11_BIND_SHADER_RESOURCE;
@@ -247,7 +245,7 @@ std::unique_ptr<D3D11Texture> D3D11Texture::Create(ID3D11Device* device, u32 wid
       cpu_access = D3D11_CPU_ACCESS_WRITE;
       break;
     case Type::RWTexture:
-      bind_flags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+      bind_flags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
       break;
     default:
       break;
@@ -267,9 +265,9 @@ std::unique_ptr<D3D11Texture> D3D11Texture::Create(ID3D11Device* device, u32 wid
   const HRESULT tex_hr = device->CreateTexture2D(&desc, initial_data ? &srd : nullptr, texture.GetAddressOf());
   if (FAILED(tex_hr))
   {
-    Log_ErrorPrintf(
-      "Create texture failed: 0x%08X (%ux%u levels:%u samples:%u format:%u bind_flags:%X initial_data:%p)", tex_hr,
-      width, height, levels, samples, static_cast<unsigned>(format), bind_flags, initial_data);
+    ERROR_LOG("Create texture failed: 0x{:08X} ({}x{} levels:{} samples:{} format:{} bind_flags:{:X} initial_data:{})",
+              static_cast<unsigned>(tex_hr), width, height, levels, samples, static_cast<unsigned>(format), bind_flags,
+              initial_data);
     return nullptr;
   }
 
@@ -288,9 +286,9 @@ std::unique_ptr<D3D11Texture> D3D11Texture::Create(ID3D11Device* device, u32 wid
         (desc.ArraySize > 1 ? D3D11_SRV_DIMENSION_TEXTURE2DARRAY : D3D11_SRV_DIMENSION_TEXTURE2D);
     const CD3D11_SHADER_RESOURCE_VIEW_DESC srv_desc(srv_dimension, fm.srv_format, 0, desc.MipLevels, 0, desc.ArraySize);
     const HRESULT hr = device->CreateShaderResourceView(texture.Get(), &srv_desc, srv.GetAddressOf());
-    if (FAILED(hr))
+    if (FAILED(hr)) [[unlikely]]
     {
-      Log_ErrorPrintf("Create SRV for texture failed: 0x%08X", hr);
+      ERROR_LOG("Create SRV for texture failed: 0x{:08X}", static_cast<unsigned>(hr));
       return nullptr;
     }
   }
@@ -303,9 +301,9 @@ std::unique_ptr<D3D11Texture> D3D11Texture::Create(ID3D11Device* device, u32 wid
     const CD3D11_RENDER_TARGET_VIEW_DESC rtv_desc(rtv_dimension, fm.rtv_format, 0, 0, desc.ArraySize);
     ComPtr<ID3D11RenderTargetView> rtv;
     const HRESULT hr = device->CreateRenderTargetView(texture.Get(), &rtv_desc, rtv.GetAddressOf());
-    if (FAILED(hr))
+    if (FAILED(hr)) [[unlikely]]
     {
-      Log_ErrorPrintf("Create RTV for texture failed: 0x%08X", hr);
+      ERROR_LOG("Create RTV for texture failed: 0x{:08X}", static_cast<unsigned>(hr));
       return nullptr;
     }
 
@@ -318,17 +316,32 @@ std::unique_ptr<D3D11Texture> D3D11Texture::Create(ID3D11Device* device, u32 wid
     const CD3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc(dsv_dimension, fm.dsv_format, 0, 0, desc.ArraySize);
     ComPtr<ID3D11DepthStencilView> dsv;
     const HRESULT hr = device->CreateDepthStencilView(texture.Get(), &dsv_desc, dsv.GetAddressOf());
-    if (FAILED(hr))
+    if (FAILED(hr)) [[unlikely]]
     {
-      Log_ErrorPrintf("Create DSV for texture failed: 0x%08X", hr);
+      ERROR_LOG("Create DSV for texture failed: 0x{:08X}", static_cast<unsigned>(hr));
       return nullptr;
     }
 
     rtv_dsv = std::move(dsv);
   }
 
+  ComPtr<ID3D11UnorderedAccessView> uav;
+  if (bind_flags & D3D11_BIND_UNORDERED_ACCESS)
+  {
+    const D3D11_UAV_DIMENSION uav_dimension =
+      (desc.ArraySize > 1 ? D3D11_UAV_DIMENSION_TEXTURE2DARRAY : D3D11_UAV_DIMENSION_TEXTURE2D);
+    const CD3D11_UNORDERED_ACCESS_VIEW_DESC uav_desc(uav_dimension, fm.srv_format, 0, 0, desc.ArraySize);
+    const HRESULT hr = device->CreateUnorderedAccessView(texture.Get(), &uav_desc, uav.GetAddressOf());
+    if (FAILED(hr)) [[unlikely]]
+    {
+      ERROR_LOG("Create UAV for texture failed: 0x{:08X}", static_cast<unsigned>(hr));
+      return nullptr;
+    }
+  }
+
   return std::unique_ptr<D3D11Texture>(new D3D11Texture(width, height, layers, levels, samples, type, format,
-                                                        std::move(texture), std::move(srv), std::move(rtv_dsv)));
+                                                        std::move(texture), std::move(srv), std::move(rtv_dsv),
+                                                        std::move(uav)));
 }
 
 D3D11TextureBuffer::D3D11TextureBuffer(Format format, u32 size_in_elements) : GPUTextureBuffer(format, size_in_elements)
@@ -351,9 +364,9 @@ bool D3D11TextureBuffer::CreateBuffer()
                                             m_size_in_elements);
   const HRESULT hr =
     D3D11Device::GetD3DDevice()->CreateShaderResourceView(m_buffer.GetD3DBuffer(), &srv_desc, m_srv.GetAddressOf());
-  if (FAILED(hr))
+  if (FAILED(hr)) [[unlikely]]
   {
-    Log_ErrorPrintf("CreateShaderResourceView() failed: %08X", hr);
+    ERROR_LOG("CreateShaderResourceView() failed: {:08X}", static_cast<unsigned>(hr));
     return false;
   }
 
@@ -376,7 +389,7 @@ void D3D11TextureBuffer::Unmap(u32 used_elements)
   m_buffer.Unmap(D3D11Device::GetD3DContext(), size);
 }
 
-void D3D11TextureBuffer::SetDebugName(const std::string_view& name)
+void D3D11TextureBuffer::SetDebugName(std::string_view name)
 {
   SetD3DDebugObjectName(m_buffer.GetD3DBuffer(), name);
 }
@@ -420,7 +433,7 @@ std::unique_ptr<D3D11DownloadTexture> D3D11DownloadTexture::Create(u32 width, u3
   HRESULT hr = D3D11Device::GetD3DDevice()->CreateTexture2D(&desc, nullptr, tex.GetAddressOf());
   if (FAILED(hr))
   {
-    Log_ErrorFmt("CreateTexture2D() failed: {:08X}", hr);
+    ERROR_LOG("CreateTexture2D() failed: {:08X}", hr);
     return {};
   }
 
@@ -470,7 +483,7 @@ bool D3D11DownloadTexture::Map(u32 x, u32 y, u32 width, u32 height)
   HRESULT hr = D3D11Device::GetD3DContext()->Map(m_texture.Get(), 0, D3D11_MAP_READ, 0, &sr);
   if (FAILED(hr))
   {
-    Log_ErrorFmt("Map() failed: {:08X}", hr);
+    ERROR_LOG("Map() failed: {:08X}", hr);
     return false;
   }
 
@@ -516,6 +529,6 @@ std::unique_ptr<GPUDownloadTexture> D3D11Device::CreateDownloadTexture(u32 width
                                                                        void* memory, size_t memory_size,
                                                                        u32 memory_stride)
 {
-  Log_ErrorPrint("D3D11 cannot import memory for download textures");
+  ERROR_LOG("D3D11 cannot import memory for download textures");
   return {};
 }

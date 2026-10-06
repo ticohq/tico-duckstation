@@ -6,25 +6,10 @@
 #include "vulkan_device.h"
 
 #include "common/assert.h"
+#include "common/error.h"
 #include "common/log.h"
 
-#ifdef __SWITCH__
-// shaderc is glslang plus SPIRV-Tools; on the Switch glslang does the
-// compiling alone (no SPIR-V optimisation pass)
-#include <SPIRV/GlslangToSpv.h>
-#include <cstring>
-#include <vector>
-#include <glslang/Public/ResourceLimits.h>
-#include <glslang/Public/ShaderLang.h>
-#else
-#include "shaderc/shaderc.hpp"
-#endif
-
 Log_SetChannel(VulkanDevice);
-
-#ifndef __SWITCH__
-static std::unique_ptr<shaderc::Compiler> s_shaderc_compiler;
-#endif
 
 VulkanShader::VulkanShader(GPUShaderStage stage, VkShaderModule mod) : GPUShader(stage), m_module(mod)
 {
@@ -35,12 +20,13 @@ VulkanShader::~VulkanShader()
   vkDestroyShaderModule(VulkanDevice::GetInstance().GetVulkanDevice(), m_module, nullptr);
 }
 
-void VulkanShader::SetDebugName(const std::string_view& name)
+void VulkanShader::SetDebugName(std::string_view name)
 {
   Vulkan::SetObjectName(VulkanDevice::GetInstance().GetVulkanDevice(), m_module, name);
 }
 
-std::unique_ptr<GPUShader> VulkanDevice::CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data)
+std::unique_ptr<GPUShader> VulkanDevice::CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data,
+                                                                Error* error)
 {
   VkShaderModule mod;
 
@@ -50,131 +36,38 @@ std::unique_ptr<GPUShader> VulkanDevice::CreateShaderFromBinary(GPUShaderStage s
   if (res != VK_SUCCESS)
   {
     LOG_VULKAN_ERROR(res, "vkCreateShaderModule() failed: ");
+    Error::SetStringFmt(error, "vkCreateShaderModule() failed: {}", Vulkan::VkResultToString(res));
     return {};
   }
 
   return std::unique_ptr<GPUShader>(new VulkanShader(stage, mod));
 }
 
-#ifdef __SWITCH__
-
-std::unique_ptr<GPUShader> VulkanDevice::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                                const char* entry_point,
-                                                                DynamicHeapArray<u8>* out_binary)
+std::unique_ptr<GPUShader> VulkanDevice::CreateShaderFromSource(GPUShaderStage stage, GPUShaderLanguage language,
+                                                                std::string_view source, const char* entry_point,
+                                                                DynamicHeapArray<u8>* out_binary, Error* error)
 {
-  static constexpr const std::array<EShLanguage, static_cast<size_t>(GPUShaderStage::MaxCount)> stage_langs = {{
-    EShLangVertex,
-    EShLangFragment,
-    EShLangGeometry,
-    EShLangCompute,
-  }};
-
-  // TODO: NOT thread safe, yet (as with shaderc).
-  static bool s_glslang_initialized = false;
-  if (!s_glslang_initialized)
+  if (language == GPUShaderLanguage::SPV)
   {
-    glslang::InitializeProcess();
-    s_glslang_initialized = true;
+    if (out_binary)
+      out_binary->assign(reinterpret_cast<const u8*>(source.data()), source.length());
+
+    return CreateShaderFromBinary(
+      stage, std::span<const u8>(reinterpret_cast<const u8*>(source.data()), source.length()), error);
   }
 
-  const EShLanguage lang = stage_langs[static_cast<size_t>(stage)];
-  glslang::TShader shader(lang);
-  const char* source_ptr = source.data();
-  const int source_length = static_cast<int>(source.length());
-  shader.setStringsWithLengths(&source_ptr, &source_length, 1);
-  shader.setEntryPoint(entry_point);
-  shader.setEnvInput(glslang::EShSourceGlsl, lang, glslang::EShClientVulkan, 100);
-  shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_0);
-  shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
-
-  const EShMessages messages = static_cast<EShMessages>(EShMsgSpvRules | EShMsgVulkanRules);
-  glslang::TProgram program;
-  if (!shader.parse(GetDefaultResources(), 100, false, messages) ||
-      (program.addShader(&shader), !program.link(messages)))
+  DynamicHeapArray<u8> local_binary;
+  DynamicHeapArray<u8>* dest_binary = out_binary ? out_binary : &local_binary;
+  if (!CompileGLSLShaderToVulkanSpv(stage, language, source, entry_point, !m_debug_device,
+                                    m_optional_extensions.vk_khr_shader_non_semantic_info, dest_binary, error))
   {
-    const std::string errors = std::string(shader.getInfoLog()) + program.getInfoLog();
-    DumpBadShader(source, errors);
-    Log_ErrorFmt("Failed to compile shader to SPIR-V:\n{}", errors);
     return {};
   }
 
-  std::vector<u32> spirv;
-  glslang::SpvOptions options;
-  options.generateDebugInfo = m_debug_device;
-  options.disableOptimizer = true;
-  glslang::GlslangToSpv(*program.getIntermediate(lang), spirv, &options);
+  AssertMsg((dest_binary->size() % 4) == 0, "Compile result should be 4 byte aligned.");
 
-  const size_t spirv_size = spirv.size() * sizeof(u32);
-  DebugAssert(spirv_size > 0);
-  if (out_binary)
-  {
-    out_binary->resize(spirv_size);
-    std::memcpy(out_binary->data(), spirv.data(), spirv_size);
-  }
-
-  return CreateShaderFromBinary(stage, std::span<const u8>(reinterpret_cast<const u8*>(spirv.data()), spirv_size));
+  return CreateShaderFromBinary(stage, dest_binary->cspan(), error);
 }
-
-#else
-
-std::unique_ptr<GPUShader> VulkanDevice::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                                const char* entry_point,
-                                                                DynamicHeapArray<u8>* out_binary)
-{
-  static constexpr const std::array<shaderc_shader_kind, static_cast<size_t>(GPUShaderStage::MaxCount)> stage_kinds = {{
-    shaderc_glsl_vertex_shader,
-    shaderc_glsl_fragment_shader,
-    shaderc_glsl_geometry_shader,
-    shaderc_glsl_compute_shader,
-  }};
-
-  // TODO: NOT thread safe, yet.
-  if (!s_shaderc_compiler)
-    s_shaderc_compiler = std::make_unique<shaderc::Compiler>();
-
-  shaderc::CompileOptions options;
-  options.SetSourceLanguage(shaderc_source_language_glsl);
-  options.SetTargetEnvironment(shaderc_target_env_vulkan, 0);
-
-  if (m_debug_device)
-  {
-    options.SetGenerateDebugInfo();
-    if (m_optional_extensions.vk_khr_shader_non_semantic_info)
-      options.SetEmitNonSemanticDebugInfo();
-
-    options.SetOptimizationLevel(shaderc_optimization_level_zero);
-  }
-  else
-  {
-    options.SetOptimizationLevel(shaderc_optimization_level_performance);
-  }
-
-  const shaderc::SpvCompilationResult result = s_shaderc_compiler->CompileGlslToSpv(
-    source.data(), source.length(), stage_kinds[static_cast<size_t>(stage)], "source", entry_point, options);
-  if (result.GetCompilationStatus() != shaderc_compilation_status_success)
-  {
-    const std::string errors = result.GetErrorMessage();
-    DumpBadShader(source, errors);
-    Log_ErrorFmt("Failed to compile shader to SPIR-V:\n{}", errors);
-    return {};
-  }
-  else if (result.GetNumWarnings() > 0)
-  {
-    Log_WarningFmt("Shader compiled with warnings:\n{}", result.GetErrorMessage());
-  }
-
-  const size_t spirv_size = std::distance(result.cbegin(), result.cend()) * sizeof(*result.cbegin());
-  DebugAssert(spirv_size > 0);
-  if (out_binary)
-  {
-    out_binary->resize(spirv_size);
-    std::copy(result.cbegin(), result.cend(), reinterpret_cast<uint32_t*>(out_binary->data()));
-  }
-
-  return CreateShaderFromBinary(stage, std::span<const u8>(reinterpret_cast<const u8*>(result.cbegin()), spirv_size));
-}
-
-#endif
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -190,12 +83,12 @@ VulkanPipeline::~VulkanPipeline()
   VulkanDevice::GetInstance().DeferPipelineDestruction(m_pipeline);
 }
 
-void VulkanPipeline::SetDebugName(const std::string_view& name)
+void VulkanPipeline::SetDebugName(std::string_view name)
 {
   Vulkan::SetObjectName(VulkanDevice::GetInstance().GetVulkanDevice(), m_pipeline, name);
 }
 
-std::unique_ptr<GPUPipeline> VulkanDevice::CreatePipeline(const GPUPipeline::GraphicsConfig& config)
+std::unique_ptr<GPUPipeline> VulkanDevice::CreatePipeline(const GPUPipeline::GraphicsConfig& config, Error* error)
 {
   static constexpr std::array<std::pair<VkPrimitiveTopology, u32>, static_cast<u32>(GPUPipeline::Primitive::MaxCount)>
     primitives = {{
@@ -314,7 +207,8 @@ std::unique_ptr<GPUPipeline> VulkanDevice::CreatePipeline(const GPUPipeline::Gra
   gpb.AddDynamicState(VK_DYNAMIC_STATE_VIEWPORT);
   gpb.AddDynamicState(VK_DYNAMIC_STATE_SCISSOR);
 
-  gpb.SetPipelineLayout(m_pipeline_layouts[static_cast<u8>(config.layout)]);
+  gpb.SetPipelineLayout(m_pipeline_layouts[static_cast<size_t>(GetPipelineLayoutType(config.render_pass_flags))]
+                                          [static_cast<size_t>(config.layout)]);
 
   if (m_optional_extensions.vk_khr_dynamic_rendering && (m_optional_extensions.vk_khr_dynamic_rendering_local_read ||
                                                          !(config.render_pass_flags & GPUPipeline::ColorFeedbackLoop)))
@@ -350,7 +244,7 @@ std::unique_ptr<GPUPipeline> VulkanDevice::CreatePipeline(const GPUPipeline::Gra
     gpb.SetRenderPass(render_pass, 0);
   }
 
-  const VkPipeline pipeline = gpb.Create(m_device, m_pipeline_cache, false);
+  const VkPipeline pipeline = gpb.Create(m_device, m_pipeline_cache, false, error);
   if (!pipeline)
     return {};
 

@@ -221,6 +221,7 @@ RC_EXPORT void RC_CCONV rc_client_get_user_game_summary(const rc_client_t* clien
 | Game                                                                        |
 \*****************************************************************************/
 
+#ifdef RC_CLIENT_SUPPORTS_HASH
 /**
  * Start loading an unidentified game.
  */
@@ -228,6 +229,7 @@ RC_EXPORT rc_client_async_handle_t* RC_CCONV rc_client_begin_identify_and_load_g
     uint32_t console_id, const char* file_path,
     const uint8_t* data, size_t data_size,
     rc_client_callback_t callback, void* callback_userdata);
+#endif
 
 /**
  * Start loading a game.
@@ -250,6 +252,11 @@ enum {
 };
 
 /**
+ * Determines if a game was successfully identified and loaded.
+ */
+RC_EXPORT int RC_CCONV rc_client_is_game_loaded(const rc_client_t* client);
+
+/**
  * Unloads the current game.
  */
 RC_EXPORT void RC_CCONV rc_client_unload_game(rc_client_t* client);
@@ -264,6 +271,7 @@ typedef struct rc_client_game_t {
 
 /**
  * Get information about the current game. Returns NULL if no game is loaded.
+ * NOTE: returns a dummy game record if an unidentified game is loaded.
  */
 RC_EXPORT const rc_client_game_t* RC_CCONV rc_client_get_game_info(const rc_client_t* client);
 
@@ -273,11 +281,19 @@ RC_EXPORT const rc_client_game_t* RC_CCONV rc_client_get_game_info(const rc_clie
  */
 RC_EXPORT int RC_CCONV rc_client_game_get_image_url(const rc_client_game_t* game, char buffer[], size_t buffer_size);
 
+#ifdef RC_CLIENT_SUPPORTS_HASH
 /**
  * Changes the active disc in a multi-disc game.
  */
 RC_EXPORT rc_client_async_handle_t* RC_CCONV rc_client_begin_change_media(rc_client_t* client, const char* file_path,
     const uint8_t* data, size_t data_size, rc_client_callback_t callback, void* callback_userdata);
+#endif
+
+/**
+ * Changes the active disc in a multi-disc game.
+ */
+RC_EXPORT rc_client_async_handle_t* RC_CCONV rc_client_begin_change_media_from_hash(rc_client_t* client, const char* hash,
+    rc_client_callback_t callback, void* callback_userdata);
 
 /*****************************************************************************\
 | Subsets                                                                     |
@@ -501,6 +517,7 @@ typedef struct rc_client_leaderboard_entry_t {
 typedef struct rc_client_leaderboard_entry_list_t {
   rc_client_leaderboard_entry_t* entries;
   uint32_t num_entries;
+  uint32_t total_entries;
   int32_t user_index;
 } rc_client_leaderboard_entry_list_t;
 
@@ -578,6 +595,12 @@ RC_EXPORT int RC_CCONV rc_client_has_rich_presence(rc_client_t* client);
  * Returns the number of characters written to buffer.
  */
 RC_EXPORT size_t RC_CCONV rc_client_get_rich_presence_message(rc_client_t* client, char buffer[], size_t buffer_size);
+
+/**
+ * Returns a list of all possible rich presence strings.
+ * The list is terminated by NULL.
+ */
+RC_EXPORT int RC_CCONV rc_client_get_rich_presence_strings(rc_client_t* client, const char** buffer, size_t buffer_size, size_t* count);
 
 /*****************************************************************************\
 | Processing                                                                  |
@@ -677,14 +700,28 @@ RC_EXPORT size_t RC_CCONV rc_client_progress_size(rc_client_t* client);
 /**
  * Serializes the runtime state into a buffer.
  * Returns RC_OK on success, or an error indicator.
+ * [deprecated] use rc_client_serialize_progress_sized instead
  */
 RC_EXPORT int RC_CCONV rc_client_serialize_progress(rc_client_t* client, uint8_t* buffer);
 
 /**
- * Deserializes the runtime state from a buffer.
+ * Serializes the runtime state into a buffer.
  * Returns RC_OK on success, or an error indicator.
  */
+RC_EXPORT int RC_CCONV rc_client_serialize_progress_sized(rc_client_t* client, uint8_t* buffer, size_t buffer_size);
+
+/**
+ * Deserializes the runtime state from a buffer.
+ * Returns RC_OK on success, or an error indicator.
+ * [deprecated] use rc_client_deserialize_progress_sized instead
+ */
 RC_EXPORT int RC_CCONV rc_client_deserialize_progress(rc_client_t* client, const uint8_t* serialized);
+
+/**
+ * Serializes the runtime state into a buffer.
+ * Returns RC_OK on success, or an error indicator.
+ */
+RC_EXPORT int RC_CCONV rc_client_deserialize_progress_sized(rc_client_t* client, const uint8_t* serialized, size_t serialized_size);
 
 RC_END_C_DECLS
 

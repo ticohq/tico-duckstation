@@ -59,7 +59,7 @@ static void FormatLogMessageAndPrintW(const char* channelName, const char* funct
                                       const T& callback);
 #endif
 
-static const char s_log_level_characters[LOGLEVEL_COUNT] = {'X', 'E', 'W', 'P', 'I', 'V', 'D', 'R', 'B', 'T'};
+static const char s_log_level_characters[LOGLEVEL_COUNT] = {'X', 'E', 'W', 'I', 'V', 'D', 'B', 'T'};
 
 static std::vector<RegisteredCallback> s_callbacks;
 static std::mutex s_callback_mutex;
@@ -154,11 +154,9 @@ ALWAYS_INLINE_RELEASE void Log::FormatLogMessageForDisplay(fmt::memory_buffer& b
     "\033[0m"sv,    // NONE
     "\033[1;31m"sv, // ERROR
     "\033[1;33m"sv, // WARNING
-    "\033[1;35m"sv, // PERF
     "\033[1;37m"sv, // INFO
     "\033[1;32m"sv, // VERBOSE
     "\033[0;37m"sv, // DEV
-    "\033[1;36m"sv, // PROFILE
     "\033[0;32m"sv, // DEBUG
     "\033[0;34m"sv, // TRACE
   };
@@ -174,7 +172,7 @@ ALWAYS_INLINE_RELEASE void Log::FormatLogMessageForDisplay(fmt::memory_buffer& b
     // find time since start of process
     const float message_time = Log::GetCurrentMessageTime();
 
-    if (level <= LOGLEVEL_PERF)
+    if (functionName)
     {
       fmt::format_to(appender, "[{:10.4f}] {}{}({}): {}{}{}", message_time, color_start, s_log_level_characters[level],
                      functionName, message, color_end, message_end);
@@ -187,7 +185,7 @@ ALWAYS_INLINE_RELEASE void Log::FormatLogMessageForDisplay(fmt::memory_buffer& b
   }
   else
   {
-    if (level <= LOGLEVEL_PERF)
+    if (functionName)
     {
       fmt::format_to(appender, "{}{}({}): {}{}{}", color_start, s_log_level_characters[level], functionName, message,
                      color_end, message_end);
@@ -235,11 +233,11 @@ ALWAYS_INLINE_RELEASE void Log::FormatLogMessageAndPrintW(const char* channelNam
 
   wmessage_buflen =
     MultiByteToWideChar(CP_UTF8, 0, buffer.data(), static_cast<int>(buffer.size()), wmessage_buf, wmessage_buflen);
-  if (wmessage_buflen <= 0)
-    return;
-
-  wmessage_buf[wmessage_buflen] = '\0';
-  callback(std::wstring_view(wmessage_buf, wmessage_buflen));
+  if (wmessage_buflen > 0) [[likely]]
+  {
+    wmessage_buf[wmessage_buflen] = '\0';
+    callback(std::wstring_view(wmessage_buf, wmessage_buflen));
+  }
 
   if (wmessage_buf != wbuf)
     std::free(wmessage_buf);
@@ -276,7 +274,7 @@ void Log::ConsoleOutputLogCallback(void* pUserParam, const char* channelName, co
                             });
 #elif !defined(__ANDROID__)
   FormatLogMessageAndPrint(channelName, functionName, level, message, s_console_output_timestamps, true, true,
-                           [level](const std::string_view& message) {
+                           [level](std::string_view message) {
                              const int outputFd = (level <= LOGLEVEL_WARNING) ? STDERR_FILENO : STDOUT_FILENO;
                              write(outputFd, message.data(), message.length());
                            });
@@ -413,15 +411,10 @@ void Log::FileOutputLogCallback(void* pUserParam, const char* channelName, const
   if (!s_file_output_enabled)
     return;
 
-  FormatLogMessageAndPrint(
-    channelName, functionName, level, message, true, false, true,
-    [](const std::string_view& message) {
-      std::fwrite(message.data(), 1, message.size(), s_file_handle.get());
-#ifdef __SWITCH__
-      // a crash on the Switch leaves no chance to flush: keep every line
-      std::fflush(s_file_handle.get());
-#endif
-    });
+  FormatLogMessageAndPrint(channelName, functionName, level, message, true, false, true, [](std::string_view message) {
+    std::fwrite(message.data(), 1, message.size(), s_file_handle.get());
+    std::fflush(s_file_handle.get());
+  });
 }
 
 void Log::SetFileOutputParams(bool enabled, const char* filename, bool timestamps /* = true */)
@@ -486,6 +479,15 @@ ALWAYS_INLINE_RELEASE bool Log::FilterTest(LOGLEVEL level, const char* channelNa
   return (level <= s_log_level && s_log_filter.find(channelName) == std::string::npos);
 }
 
+void Log::Write(const char* channelName, LOGLEVEL level, std::string_view message)
+{
+  std::unique_lock lock(s_callback_mutex);
+  if (!FilterTest(level, channelName, lock))
+    return;
+
+  ExecuteCallbacks(channelName, nullptr, level, message, lock);
+}
+
 void Log::Write(const char* channelName, const char* functionName, LOGLEVEL level, std::string_view message)
 {
   std::unique_lock lock(s_callback_mutex);
@@ -495,45 +497,16 @@ void Log::Write(const char* channelName, const char* functionName, LOGLEVEL leve
   ExecuteCallbacks(channelName, functionName, level, message, lock);
 }
 
-void Log::Writef(const char* channelName, const char* functionName, LOGLEVEL level, const char* format, ...)
-{
-  std::va_list ap;
-  va_start(ap, format);
-  Writev(channelName, functionName, level, format, ap);
-  va_end(ap);
-}
-
-void Log::Writev(const char* channelName, const char* functionName, LOGLEVEL level, const char* format, va_list ap)
+void Log::WriteFmtArgs(const char* channelName, LOGLEVEL level, fmt::string_view fmt, fmt::format_args args)
 {
   std::unique_lock lock(s_callback_mutex);
   if (!FilterTest(level, channelName, lock))
     return;
 
-  std::va_list apCopy;
-  va_copy(apCopy, ap);
+  fmt::memory_buffer buffer;
+  fmt::vformat_to(std::back_inserter(buffer), fmt, args);
 
-#ifdef _WIN32
-  u32 requiredSize = static_cast<u32>(_vscprintf(format, apCopy));
-#else
-  u32 requiredSize = std::vsnprintf(nullptr, 0, format, apCopy);
-#endif
-  va_end(apCopy);
-
-  if (requiredSize < 512)
-  {
-    char buffer[512];
-    const int len = std::vsnprintf(buffer, countof(buffer), format, ap);
-    if (len > 0)
-      ExecuteCallbacks(channelName, functionName, level, std::string_view(buffer, static_cast<size_t>(len)), lock);
-  }
-  else
-  {
-    char* buffer = new char[requiredSize + 1];
-    const int len = std::vsnprintf(buffer, requiredSize + 1, format, ap);
-    if (len > 0)
-      ExecuteCallbacks(channelName, functionName, level, std::string_view(buffer, static_cast<size_t>(len)), lock);
-    delete[] buffer;
-  }
+  ExecuteCallbacks(channelName, nullptr, level, std::string_view(buffer.data(), buffer.size()), lock);
 }
 
 void Log::WriteFmtArgs(const char* channelName, const char* functionName, LOGLEVEL level, fmt::string_view fmt,

@@ -8,8 +8,8 @@
 #include "window_info.h"
 
 #include "common/bitfield.h"
+#include "common/gsvector.h"
 #include "common/heap_array.h"
-#include "common/rectangle.h"
 #include "common/small_string.h"
 #include "common/types.h"
 
@@ -36,6 +36,14 @@ enum class RenderAPI : u32
   OpenGLES,
   Metal,
   Deko3D
+};
+
+enum class GPUVSyncMode : u8
+{
+  Disabled,
+  FIFO,
+  Mailbox,
+  Count
 };
 
 class GPUSampler
@@ -90,7 +98,7 @@ public:
   GPUSampler();
   virtual ~GPUSampler();
 
-  virtual void SetDebugName(const std::string_view& name) = 0;
+  virtual void SetDebugName(std::string_view name) = 0;
 
   static Config GetNearestConfig();
   static Config GetLinearConfig();
@@ -106,6 +114,18 @@ enum class GPUShaderStage : u8
   MaxCount
 };
 
+enum class GPUShaderLanguage : u8
+{
+  None,
+  HLSL,
+  GLSL,
+  GLSLES,
+  GLSLVK,
+  MSL,
+  SPV,
+  Count
+};
+
 class GPUShader
 {
 public:
@@ -116,7 +136,7 @@ public:
 
   ALWAYS_INLINE GPUShaderStage GetStage() const { return m_stage; }
 
-  virtual void SetDebugName(const std::string_view& name) = 0;
+  virtual void SetDebugName(std::string_view name) = 0;
 
 protected:
   GPUShaderStage m_stage;
@@ -150,6 +170,7 @@ public:
     NoRenderPassFlags = 0,
     ColorFeedbackLoop = (1 << 0),
     SampleDepthBuffer = (1 << 1),
+    BindRenderTargetsAsImages = (1 << 2),
   };
 
   enum class Primitive : u8
@@ -394,12 +415,13 @@ public:
 
     void SetTargetFormats(GPUTexture::Format color_format,
                           GPUTexture::Format depth_format_ = GPUTexture::Format::Unknown);
+    u32 GetRenderTargetCount() const;
   };
 
   GPUPipeline();
   virtual ~GPUPipeline();
 
-  virtual void SetDebugName(const std::string_view& name) = 0;
+  virtual void SetDebugName(std::string_view name) = 0;
 };
 
 class GPUTextureBuffer
@@ -425,12 +447,12 @@ public:
   virtual void* Map(u32 required_elements) = 0;
   virtual void Unmap(u32 used_elements) = 0;
 
-  virtual void SetDebugName(const std::string_view& name) = 0;
+  virtual void SetDebugName(std::string_view name) = 0;
 
 protected:
   Format m_format;
   u32 m_size_in_elements;
-  u32 m_current_position;
+  u32 m_current_position = 0;
 };
 
 class GPUDevice
@@ -451,6 +473,7 @@ public:
     FEATURE_MASK_GEOMETRY_SHADERS = (1 << 4),
     FEATURE_MASK_TEXTURE_COPY_TO_SELF = (1 << 5),
     FEATURE_MASK_MEMORY_IMPORT = (1 << 6),
+    FEATURE_MASK_RASTER_ORDER_VIEWS = (1 << 7),
   };
 
   enum class DrawBarrier : u32
@@ -478,6 +501,7 @@ public:
     bool shader_cache : 1;
     bool pipeline_cache : 1;
     bool prefer_unused_textures : 1;
+    bool raster_order_views : 1;
   };
 
   struct Statistics
@@ -491,11 +515,15 @@ public:
     u32 num_uploads;
   };
 
-  struct AdapterAndModeList
+  struct AdapterInfo
   {
-    std::vector<std::string> adapter_names;
+    std::string name;
     std::vector<std::string> fullscreen_modes;
+    u32 max_texture_size;
+    u32 max_multisamples;
+    bool supports_sample_shading;
   };
+  using AdapterInfoList = std::vector<AdapterInfo>;
 
   struct PooledTextureDeleter
   {
@@ -505,6 +533,9 @@ public:
   static constexpr u32 MAX_TEXTURE_SAMPLERS = 8;
   static constexpr u32 MIN_TEXEL_BUFFER_ELEMENTS = 4 * 1024 * 512;
   static constexpr u32 MAX_RENDER_TARGETS = 4;
+  static constexpr u32 MAX_IMAGE_RENDER_TARGETS = 2;
+  static constexpr u32 DEFAULT_CLEAR_COLOR = 0xFF000000u;
+  static constexpr u32 PIPELINE_CACHE_HASH_SIZE = 20;
   static_assert(sizeof(GPUPipeline::GraphicsConfig::color_formats) == sizeof(GPUTexture::Format) * MAX_RENDER_TARGETS);
 
   GPUDevice();
@@ -516,11 +547,17 @@ public:
   /// Returns a string representing the specified API.
   static const char* RenderAPIToString(RenderAPI api);
 
+  /// Returns a string representing the specified language.
+  static const char* ShaderLanguageToString(GPUShaderLanguage language);
+
   /// Returns a new device for the specified API.
   static std::unique_ptr<GPUDevice> CreateDeviceForAPI(RenderAPI api);
 
   /// Returns true if the render API is the same (e.g. GLES and GL).
   static bool IsSameRenderAPI(RenderAPI lhs, RenderAPI rhs);
+
+  /// Returns a list of adapters for the given API.
+  static AdapterInfoList GetAdapterListForAPI(RenderAPI api);
 
   /// Parses a fullscreen mode into its components (width * height @ refresh hz)
   static bool GetRequestedExclusiveFullscreenMode(u32* width, u32* height, float* refresh_rate);
@@ -529,7 +566,7 @@ public:
   static std::string GetFullscreenModeString(u32 width, u32 height, float refresh_rate);
 
   /// Returns the directory bad shaders are saved to.
-  static std::string GetShaderDumpPath(const std::string_view& name);
+  static std::string GetShaderDumpPath(std::string_view name);
 
   /// Dumps out a shader that failed compilation.
   static void DumpBadShader(std::string_view code, std::string_view errors);
@@ -551,12 +588,6 @@ public:
     return counts[static_cast<u8>(layout)];
   }
 
-#ifdef __APPLE__
-  // We have to define these in the base class, because they're in Objective C++.
-  static std::unique_ptr<GPUDevice> WrapNewMetalDevice();
-  static AdapterAndModeList WrapGetMetalAdapterAndModeList();
-#endif
-
   ALWAYS_INLINE const Features& GetFeatures() const { return m_features; }
   ALWAYS_INLINE u32 GetMaxTextureSize() const { return m_max_texture_size; }
   ALWAYS_INLINE u32 GetMaxMultisamples() const { return m_max_multisamples; }
@@ -574,8 +605,8 @@ public:
 
   virtual RenderAPI GetRenderAPI() const = 0;
 
-  bool Create(const std::string_view& adapter, const std::string_view& shader_cache_path, u32 shader_cache_version,
-              bool debug_device, bool vsync, bool threaded_presentation,
+  bool Create(std::string_view adapter, std::string_view shader_cache_path, u32 shader_cache_version, bool debug_device,
+              GPUVSyncMode vsync, bool allow_present_throttle, bool threaded_presentation,
               std::optional<bool> exclusive_fullscreen_control, FeatureMask disabled_features, Error* error);
   void Destroy();
 
@@ -584,12 +615,14 @@ public:
   virtual bool UpdateWindow() = 0;
 
   virtual bool SupportsExclusiveFullscreen() const;
-  virtual AdapterAndModeList GetAdapterAndModeList() = 0;
 
   /// Call when the window size changes externally to recreate any resources.
   virtual void ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale) = 0;
 
   virtual std::string GetDriverInfo() const = 0;
+
+  // Executes current command buffer, waits for its completion, and destroys all pending resources.
+  virtual void ExecuteAndWaitForGPUIdle() = 0;
 
   virtual std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                                     GPUTexture::Type type, GPUTexture::Format format,
@@ -624,9 +657,10 @@ public:
   virtual void InvalidateRenderTarget(GPUTexture* t);
 
   /// Shader abstraction.
-  std::unique_ptr<GPUShader> CreateShader(GPUShaderStage stage, const std::string_view& source,
-                                          const char* entry_point = "main");
-  virtual std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config) = 0;
+  std::unique_ptr<GPUShader> CreateShader(GPUShaderStage stage, GPUShaderLanguage language, std::string_view source,
+                                          Error* error = nullptr, const char* entry_point = "main");
+  virtual std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config,
+                                                      Error* error = nullptr) = 0;
 
   /// Debug messaging.
   virtual void PushDebugGroup(const char* name) = 0;
@@ -651,15 +685,18 @@ public:
 
   /// Drawing setup abstraction.
   virtual void SetRenderTargets(GPUTexture* const* rts, u32 num_rts, GPUTexture* ds,
-                                GPUPipeline::RenderPassFlag render_pass_flags = GPUPipeline::NoRenderPassFlags) = 0;
+                                GPUPipeline::RenderPassFlag flags = GPUPipeline::NoRenderPassFlags) = 0;
   virtual void SetPipeline(GPUPipeline* pipeline) = 0;
   virtual void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler) = 0;
   virtual void SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer) = 0;
-  virtual void SetViewport(s32 x, s32 y, s32 width, s32 height) = 0; // TODO: Rectangle
-  virtual void SetScissor(s32 x, s32 y, s32 width, s32 height) = 0;
+  virtual void SetViewport(const GSVector4i rc) = 0;
+  virtual void SetScissor(const GSVector4i rc) = 0;
   void SetRenderTarget(GPUTexture* rt, GPUTexture* ds = nullptr,
-                       GPUPipeline::RenderPassFlag render_pass_flags = GPUPipeline::NoRenderPassFlags);
+                       GPUPipeline::RenderPassFlag flags = GPUPipeline::NoRenderPassFlags);
+  void SetViewport(s32 x, s32 y, s32 width, s32 height);
+  void SetScissor(s32 x, s32 y, s32 width, s32 height);
   void SetViewportAndScissor(s32 x, s32 y, s32 width, s32 height);
+  void SetViewportAndScissor(const GSVector4i rc);
 
   // Drawing abstraction.
   virtual void Draw(u32 vertex_count, u32 base_vertex) = 0;
@@ -667,7 +704,7 @@ public:
   virtual void DrawIndexedWithBarrier(u32 index_count, u32 base_index, u32 base_vertex, DrawBarrier type) = 0;
 
   /// Returns false if the window was completely occluded.
-  virtual bool BeginPresent(bool skip_present) = 0;
+  virtual bool BeginPresent(bool skip_present, u32 clear_color = DEFAULT_CLEAR_COLOR) = 0;
   virtual void EndPresent(bool explicit_submit) = 0;
   virtual void SubmitPresent() = 0;
 
@@ -678,24 +715,22 @@ public:
   /// draws the current one's. Its textures are GPUTextures too.
   void RenderImGuiDrawData(const ImDrawData* draw_data);
 
-  ALWAYS_INLINE bool IsVSyncEnabled() const { return m_vsync_enabled; }
-  virtual void SetVSyncEnabled(bool enabled);
+  ALWAYS_INLINE GPUVSyncMode GetVSyncMode() const { return m_vsync_mode; }
+  ALWAYS_INLINE bool IsVSyncModeBlocking() const { return (m_vsync_mode == GPUVSyncMode::FIFO); }
+  virtual void SetVSyncMode(GPUVSyncMode mode, bool allow_present_throttle) = 0;
 
   ALWAYS_INLINE bool IsDebugDevice() const { return m_debug_device; }
   ALWAYS_INLINE size_t GetVRAMUsage() const { return s_total_vram_usage; }
 
   bool UpdateImGuiFontTexture();
   bool UsesLowerLeftOrigin() const;
-  static Common::Rectangle<s32> FlipToLowerLeft(const Common::Rectangle<s32>& rc, s32 target_height);
-  void SetDisplayMaxFPS(float max_fps);
+  static GSVector4i FlipToLowerLeft(GSVector4i rc, s32 target_height);
   bool ResizeTexture(std::unique_ptr<GPUTexture>* tex, u32 new_width, u32 new_height, GPUTexture::Type type,
                      GPUTexture::Format format, bool preserve = true);
-  bool ShouldSkipDisplayingFrame();
+  bool ShouldSkipPresentingFrame();
   void ThrottlePresentation();
 
   virtual bool SupportsTextureFormat(GPUTexture::Format format) const = 0;
-
-  virtual bool GetHostRefreshRate(float* refresh_rate);
 
   /// Enables/disables GPU frame timing.
   virtual bool SetGPUTimingEnabled(bool enabled);
@@ -707,29 +742,43 @@ public:
   static void ResetStatistics();
 
 protected:
-  virtual bool CreateDevice(const std::string_view& adapter, bool threaded_presentation,
+  virtual bool CreateDevice(std::string_view adapter, bool threaded_presentation,
                             std::optional<bool> exclusive_fullscreen_control, FeatureMask disabled_features,
                             Error* error) = 0;
   virtual void DestroyDevice() = 0;
 
-  std::string GetShaderCacheBaseName(const std::string_view& type) const;
-  virtual bool ReadPipelineCache(const std::string& filename);
+  std::string GetShaderCacheBaseName(std::string_view type) const;
+  virtual bool OpenPipelineCache(const std::string& filename);
+  virtual bool ReadPipelineCache(std::optional<DynamicHeapArray<u8>> data);
   virtual bool GetPipelineCacheData(DynamicHeapArray<u8>* data);
 
-  virtual std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data) = 0;
-  virtual std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                            const char* entry_point,
-                                                            DynamicHeapArray<u8>* out_binary) = 0;
+  virtual std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data,
+                                                            Error* error) = 0;
+  virtual std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, GPUShaderLanguage language,
+                                                            std::string_view source, const char* entry_point,
+                                                            DynamicHeapArray<u8>* out_binary, Error* error) = 0;
 
   bool AcquireWindow(bool recreate_window);
 
   void TrimTexturePool();
+
+  bool CompileGLSLShaderToVulkanSpv(GPUShaderStage stage, GPUShaderLanguage source_language, std::string_view source,
+                                    const char* entry_point, bool optimization, bool nonsemantic_debug_info,
+                                    DynamicHeapArray<u8>* out_binary, Error* error);
+  bool TranslateVulkanSpvToLanguage(const std::span<const u8> spirv, GPUShaderStage stage,
+                                    GPUShaderLanguage target_language, u32 target_version, std::string* output,
+                                    Error* error);
+  std::unique_ptr<GPUShader> TranspileAndCreateShaderFromSource(GPUShaderStage stage, GPUShaderLanguage source_language,
+                                                                std::string_view source, const char* entry_point,
+                                                                GPUShaderLanguage target_language, u32 target_version,
+                                                                DynamicHeapArray<u8>* out_binary, Error* error);
 
   Features m_features = {};
   u32 m_max_texture_size = 0;
   u32 m_max_multisamples = 0;
 
   WindowInfo m_window_info;
+  u64 m_last_frame_displayed_time = 0;
 
   GPUShaderCache m_shader_cache;
 
@@ -770,9 +819,15 @@ private:
 
   using TexturePool = std::deque<TexturePoolEntry>;
 
-  void OpenShaderCache(const std::string_view& base_path, u32 version);
+#ifdef __APPLE__
+  // We have to define these in the base class, because they're in Objective C++.
+  static std::unique_ptr<GPUDevice> WrapNewMetalDevice();
+  static AdapterInfoList WrapGetMetalAdapterList();
+#endif
+
+  void OpenShaderCache(std::string_view base_path, u32 version);
   void CloseShaderCache();
-  bool CreateResources();
+  bool CreateResources(Error* error);
   void DestroyResources();
 
   static bool IsTexturePoolType(GPUTexture::Type type);
@@ -787,14 +842,11 @@ private:
   size_t m_pool_vram_usage = 0;
   u32 m_texture_pool_counter = 0;
 
-  // TODO: Move out.
-  u64 m_last_frame_displayed_time = 0;
-  float m_display_frame_interval = 0.0f;
-
 protected:
   static Statistics s_stats;
 
-  bool m_vsync_enabled = false;
+  GPUVSyncMode m_vsync_mode = GPUVSyncMode::Disabled;
+  bool m_allow_present_throttle = false;
   bool m_gpu_timing_enabled = false;
   bool m_debug_device = false;
 };

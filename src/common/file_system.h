@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "heap_array.h"
 #include "types.h"
 
 #include <cstdio>
@@ -25,9 +26,10 @@ class Error;
 
 enum FILESYSTEM_FILE_ATTRIBUTES
 {
-  FILESYSTEM_FILE_ATTRIBUTE_DIRECTORY = 1,
-  FILESYSTEM_FILE_ATTRIBUTE_READ_ONLY = 2,
-  FILESYSTEM_FILE_ATTRIBUTE_COMPRESSED = 4,
+  FILESYSTEM_FILE_ATTRIBUTE_DIRECTORY = (1 << 0),
+  FILESYSTEM_FILE_ATTRIBUTE_READ_ONLY = (1 << 1),
+  FILESYSTEM_FILE_ATTRIBUTE_COMPRESSED = (1 << 2),
+  FILESYSTEM_FILE_ATTRIBUTE_LINK = (1 << 3),
 };
 
 enum FILESYSTEM_FIND_FLAGS
@@ -38,6 +40,7 @@ enum FILESYSTEM_FIND_FLAGS
   FILESYSTEM_FIND_FOLDERS = (1 << 3),
   FILESYSTEM_FIND_FILES = (1 << 4),
   FILESYSTEM_FIND_KEEP_ARRAY = (1 << 5),
+  FILESYSTEM_FIND_SORT_BY_NAME = (1 << 6),
 };
 
 struct FILESYSTEM_STAT_DATA
@@ -61,7 +64,7 @@ namespace FileSystem {
 using FindResultsArray = std::vector<FILESYSTEM_FIND_DATA>;
 
 /// Returns the display name of a filename. Usually this is the same as the path.
-std::string GetDisplayNameFromPath(const std::string_view& path);
+std::string GetDisplayNameFromPath(std::string_view path);
 
 /// Returns a list of "root directories" (i.e. root/home directories on Linux, drive letters on Windows).
 std::vector<std::string> GetRootDirectoryList();
@@ -81,12 +84,13 @@ bool FileExists(const char* path);
 
 /// Directory exists?
 bool DirectoryExists(const char* path);
+bool IsRealDirectory(const char* path);
 
 /// Directory does not contain any files?
-bool DirectoryIsEmpty(const char* path);
+bool IsDirectoryEmpty(const char* path);
 
 /// Delete file
-bool DeleteFile(const char* path);
+bool DeleteFile(const char* path, Error* error = nullptr);
 
 /// Rename file
 bool RenamePath(const char* OldPath, const char* NewPath, Error* error = nullptr);
@@ -105,9 +109,18 @@ struct FileDeleter
 using ManagedCFilePtr = std::unique_ptr<std::FILE, FileDeleter>;
 ManagedCFilePtr OpenManagedCFile(const char* filename, const char* mode, Error* error = nullptr);
 std::FILE* OpenCFile(const char* filename, const char* mode, Error* error = nullptr);
+
+/// Atomically opens a file in read/write mode, and if the file does not exist, creates it.
+/// On Windows, if retry_ms is positive, this function will retry opening the file for this
+/// number of milliseconds. NOTE: The file is opened in binary mode.
+std::FILE* OpenExistingOrCreateCFile(const char* filename, s32 retry_ms = -1, Error* error = nullptr);
+ManagedCFilePtr OpenExistingOrCreateManagedCFile(const char* filename, s32 retry_ms = -1, Error* error = nullptr);
+
 int FSeek64(std::FILE* fp, s64 offset, int whence);
+bool FSeek64(std::FILE* fp, s64 offset, int whence, Error* error);
 s64 FTell64(std::FILE* fp);
-s64 FSize64(std::FILE* fp);
+s64 FSize64(std::FILE* fp, Error* error = nullptr);
+bool FTruncate64(std::FILE* fp, s64 size, Error* error = nullptr);
 
 int OpenFDFile(const char* filename, int flags, int mode, Error* error = nullptr);
 
@@ -126,8 +139,27 @@ ManagedCFilePtr OpenManagedSharedCFile(const char* filename, const char* mode, F
                                        Error* error = nullptr);
 std::FILE* OpenSharedCFile(const char* filename, const char* mode, FileShareMode share_mode, Error* error = nullptr);
 
-/// Abstracts a POSIX file lock.
-#if !defined(_WIN32) && !defined(__SWITCH__)
+/// Atomically-updated file creation.
+class AtomicRenamedFileDeleter
+{
+public:
+  AtomicRenamedFileDeleter(std::string temp_filename, std::string final_filename);
+  ~AtomicRenamedFileDeleter();
+
+  void operator()(std::FILE* fp);
+  void discard();
+
+private:
+  std::string m_temp_filename;
+  std::string m_final_filename;
+};
+using AtomicRenamedFile = std::unique_ptr<std::FILE, AtomicRenamedFileDeleter>;
+AtomicRenamedFile CreateAtomicRenamedFile(std::string filename, const char* mode, Error* error = nullptr);
+bool WriteAtomicRenamedFile(std::string filename, const void* data, size_t data_length, Error* error = nullptr);
+void DiscardAtomicRenamedFile(AtomicRenamedFile& file);
+
+/// Abstracts a POSIX file lock (none on the Switch, which has one instance only).
+#if !defined(_WIN32)
 class POSIXLock
 {
 public:
@@ -140,12 +172,12 @@ private:
 };
 #endif
 
-std::optional<std::vector<u8>> ReadBinaryFile(const char* filename, Error* error = nullptr);
-std::optional<std::vector<u8>> ReadBinaryFile(std::FILE* fp);
+std::optional<DynamicHeapArray<u8>> ReadBinaryFile(const char* filename, Error* error = nullptr);
+std::optional<DynamicHeapArray<u8>> ReadBinaryFile(std::FILE* fp, Error* error = nullptr);
 std::optional<std::string> ReadFileToString(const char* filename, Error* error = nullptr);
-std::optional<std::string> ReadFileToString(std::FILE* fp);
-bool WriteBinaryFile(const char* filename, const void* data, size_t data_length);
-bool WriteStringToFile(const char* filename, const std::string_view& sv);
+std::optional<std::string> ReadFileToString(std::FILE* fp, Error* error = nullptr);
+bool WriteBinaryFile(const char* filename, const void* data, size_t data_length, Error* error = nullptr);
+bool WriteStringToFile(const char* filename, std::string_view sv, Error* error = nullptr);
 
 /// creates a directory in the local filesystem
 /// if the directory already exists, the return value will be true.

@@ -4,11 +4,11 @@ add_library(common
   switch_thread_report.cpp
   switch_thread_report.h
   assert.h
+  binary_reader_writer.cpp
+  binary_reader_writer.h
   bitfield.h
   bitutils.h
   build_timestamp.h
-  byte_stream.cpp
-  byte_stream.h
   crash_handler.cpp
   crash_handler.h
   dimensional_array.h
@@ -19,6 +19,12 @@ add_library(common
   fifo_queue.h
   file_system.cpp
   file_system.h
+  gsvector.cpp
+  gsvector.h
+  gsvector_formatter.h
+  gsvector_neon.h
+  gsvector_nosimd.h
+  gsvector_sse.h
   intrin.h
   hash_combine.h
   heap_array.h
@@ -39,7 +45,6 @@ add_library(common
   perf_scope.h
   progress_callback.cpp
   progress_callback.h
-  rectangle.h
   scoped_guard.h
   settings_interface.h
   sha1_digest.cpp
@@ -57,12 +62,10 @@ add_library(common
   types.h
 )
 
-if (NOT NINTENDO_SWITCH)
-  target_sources(common PRIVATE
-    dynamic_library.cpp
-    dynamic_library.h
-  )
-endif()
+target_sources(common PRIVATE
+  dynamic_library.cpp
+  dynamic_library.h
+)
 
 target_include_directories(common PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_include_directories(common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
@@ -103,8 +106,7 @@ if(APPLE)
   target_link_libraries(common PRIVATE ${COCOA_LIBRARY})
 endif()
 
-if(NOT WIN32 AND NOT ANDROID AND LIBBACKTRACE_FOUND)
-  target_compile_definitions(common PRIVATE "-DENABLE_LIBBACKTRACE=1")
+if(NOT WIN32 AND NOT ANDROID AND NOT APPLE AND NOT NINTENDO_SWITCH)
   target_link_libraries(common PRIVATE libbacktrace::libbacktrace)
 endif()
 
@@ -125,4 +127,7 @@ endif()
 # If the host size was detected, we need to set it as a macro.
 if(HOST_PAGE_SIZE)
   target_compile_definitions(common PUBLIC "-DOVERRIDE_HOST_PAGE_SIZE=${HOST_PAGE_SIZE}")
+endif()
+if(HOST_CACHE_LINE_SIZE)
+	target_compile_definitions(common PUBLIC "-DOVERRIDE_HOST_CACHE_LINE_SIZE=${HOST_CACHE_LINE_SIZE}")
 endif()

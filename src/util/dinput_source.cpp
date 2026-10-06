@@ -64,7 +64,7 @@ bool DInputSource::Initialize(SettingsInterface& si, std::unique_lock<std::mutex
   m_dinput_module = LoadLibraryW(L"dinput8");
   if (!m_dinput_module)
   {
-    Log_ErrorPrintf("Failed to load DInput module.");
+    ERROR_LOG("Failed to load DInput module.");
     return false;
   }
 
@@ -74,7 +74,7 @@ bool DInputSource::Initialize(SettingsInterface& si, std::unique_lock<std::mutex
     reinterpret_cast<PFNGETDFDIJOYSTICK>(GetProcAddress(m_dinput_module, "GetdfDIJoystick"));
   if (!create || !get_joystick_data_format)
   {
-    Log_ErrorPrintf("Failed to get DInput function pointers.");
+    ERROR_LOG("Failed to get DInput function pointers.");
     return false;
   }
 
@@ -83,7 +83,7 @@ bool DInputSource::Initialize(SettingsInterface& si, std::unique_lock<std::mutex
   m_joystick_data_format = get_joystick_data_format();
   if (FAILED(hr) || !m_joystick_data_format)
   {
-    Log_ErrorPrintf("DirectInput8Create() failed: %08X", hr);
+    ERROR_LOG("DirectInput8Create() failed: {}", static_cast<unsigned>(hr));
     return false;
   }
 
@@ -94,7 +94,7 @@ bool DInputSource::Initialize(SettingsInterface& si, std::unique_lock<std::mutex
 
   if (!toplevel_wi.has_value() || toplevel_wi->type != WindowInfo::Type::Win32)
   {
-    Log_ErrorPrintf("Missing top level window, cannot add DInput devices.");
+    ERROR_LOG("Missing top level window, cannot add DInput devices.");
     return false;
   }
 
@@ -123,7 +123,7 @@ bool DInputSource::ReloadDevices()
   std::vector<DIDEVICEINSTANCEW> devices;
   m_dinput->EnumDevices(DI8DEVCLASS_GAMECTRL, EnumCallback, &devices, DIEDFL_ATTACHEDONLY);
 
-  Log_VerbosePrintf("Enumerated %zu devices", devices.size());
+  VERBOSE_LOG("Enumerated {} devices", devices.size());
 
   bool changed = false;
   for (DIDEVICEINSTANCEW inst : devices)
@@ -139,9 +139,11 @@ bool DInputSource::ReloadDevices()
     ControllerData cd;
     cd.guid = inst.guidInstance;
     HRESULT hr = m_dinput->CreateDevice(inst.guidInstance, cd.device.GetAddressOf(), nullptr);
-    if (FAILED(hr))
+    if (FAILED(hr)) [[unlikely]]
     {
-      Log_WarningPrintf("Failed to create instance of device [%s, %s]", inst.tszProductName, inst.tszInstanceName);
+      WARNING_LOG("Failed to create instance of device [{}, {}]",
+                  StringUtil::WideStringToUTF8String(inst.tszProductName),
+                  StringUtil::WideStringToUTF8String(inst.tszInstanceName));
       continue;
     }
 
@@ -162,7 +164,10 @@ void DInputSource::Shutdown()
 {
   while (!m_controllers.empty())
   {
-    InputManager::OnInputDeviceDisconnected(GetDeviceIdentifier(static_cast<u32>(m_controllers.size() - 1)));
+    const u32 index = static_cast<u32>(m_controllers.size() - 1);
+    InputManager::OnInputDeviceDisconnected(
+      InputBindingKey{{.source_type = InputSourceType::DInput, .source_index = index}},
+      GetDeviceIdentifier(static_cast<u32>(m_controllers.size() - 1)));
     m_controllers.pop_back();
   }
 }
@@ -175,24 +180,24 @@ bool DInputSource::AddDevice(ControllerData& cd, const std::string& name)
     hr = cd.device->SetCooperativeLevel(m_toplevel_window, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
     if (FAILED(hr))
     {
-      Log_ErrorPrintf("Failed to set cooperative level for '%s'", name.c_str());
+      ERROR_LOG("Failed to set cooperative level for '{}'", name);
       return false;
     }
 
-    Log_WarningPrintf("Failed to set exclusive mode for '%s'", name.c_str());
+    WARNING_LOG("Failed to set exclusive mode for '{}'", name);
   }
 
   hr = cd.device->SetDataFormat(m_joystick_data_format);
   if (FAILED(hr))
   {
-    Log_ErrorPrintf("Failed to set data format for '%s'", name.c_str());
+    ERROR_LOG("Failed to set data format for '{}'", name);
     return false;
   }
 
   hr = cd.device->Acquire();
   if (FAILED(hr))
   {
-    Log_ErrorPrintf("Failed to acquire device '%s'", name.c_str());
+    ERROR_LOG("Failed to acquire device '{}'", name);
     return false;
   }
 
@@ -201,16 +206,16 @@ bool DInputSource::AddDevice(ControllerData& cd, const std::string& name)
   hr = cd.device->GetCapabilities(&caps);
   if (FAILED(hr))
   {
-    Log_ErrorPrintf("Failed to get capabilities for '%s'", name.c_str());
+    ERROR_LOG("Failed to get capabilities for '{}'", name);
     return false;
   }
 
   cd.num_buttons = caps.dwButtons;
 
-  static constexpr const u32 axis_offsets[] = {offsetof(DIJOYSTATE, lX),           offsetof(DIJOYSTATE, lY),
-                                               offsetof(DIJOYSTATE, lZ),           offsetof(DIJOYSTATE, lRz),
-                                               offsetof(DIJOYSTATE, lRx),          offsetof(DIJOYSTATE, lRy),
-                                               offsetof(DIJOYSTATE, rglSlider[0]), offsetof(DIJOYSTATE, rglSlider[1])};
+  static constexpr const u32 axis_offsets[] = {OFFSETOF(DIJOYSTATE, lX),           OFFSETOF(DIJOYSTATE, lY),
+                                               OFFSETOF(DIJOYSTATE, lZ),           OFFSETOF(DIJOYSTATE, lRz),
+                                               OFFSETOF(DIJOYSTATE, lRx),          OFFSETOF(DIJOYSTATE, lRy),
+                                               OFFSETOF(DIJOYSTATE, rglSlider[0]), OFFSETOF(DIJOYSTATE, rglSlider[1])};
   for (const u32 offset : axis_offsets)
   {
     // ask for 16 bits of axis range
@@ -235,14 +240,14 @@ bool DInputSource::AddDevice(ControllerData& cd, const std::string& name)
   if (hr == DI_NOEFFECT)
     cd.needs_poll = false;
   else if (hr != DI_OK)
-    Log_WarningPrintf("Polling device '%s' failed: %08X", name.c_str(), hr);
+    WARNING_LOG("Polling device '{}' failed: {:08X}", name, static_cast<unsigned>(hr));
 
   hr = cd.device->GetDeviceState(sizeof(cd.last_state), &cd.last_state);
   if (hr != DI_OK)
-    Log_WarningPrintf("GetDeviceState() for '%s' failed: %08X", name.c_str(), hr);
+    WARNING_LOG("GetDeviceState() for '{}' failed: {:08X}", name, static_cast<unsigned>(hr));
 
-  Log_InfoPrintf("%s has %u buttons, %u axes, %u hats", name.c_str(), cd.num_buttons,
-                 static_cast<u32>(cd.axis_offsets.size()), cd.num_hats);
+  INFO_LOG("{} has {} buttons, {} axes, {} hats", name, cd.num_buttons, static_cast<u32>(cd.axis_offsets.size()),
+           cd.num_hats);
 
   return (cd.num_buttons > 0 || !cd.axis_offsets.empty() || cd.num_hats > 0);
 }
@@ -265,14 +270,16 @@ void DInputSource::PollEvents()
 
       if (hr != DI_OK)
       {
-        InputManager::OnInputDeviceDisconnected(GetDeviceIdentifier(static_cast<u32>(i)));
+        InputManager::OnInputDeviceDisconnected(
+          InputBindingKey{{.source_type = InputSourceType::DInput, .source_index = static_cast<u32>(i)}},
+          GetDeviceIdentifier(static_cast<u32>(i)));
         m_controllers.erase(m_controllers.begin() + i);
         continue;
       }
     }
     else if (hr != DI_OK)
     {
-      Log_WarningPrintf("GetDeviceState() failed: %08X", hr);
+      WARNING_LOG("GetDeviceState() failed: {:08X}", static_cast<unsigned>(hr));
       i++;
       continue;
     }
@@ -307,7 +314,7 @@ std::vector<InputBindingKey> DInputSource::EnumerateMotors()
   return {};
 }
 
-bool DInputSource::GetGenericBindingMapping(const std::string_view& device, GenericInputBindingMapping* mapping)
+bool DInputSource::GetGenericBindingMapping(std::string_view device, GenericInputBindingMapping* mapping)
 {
   return {};
 }
@@ -323,8 +330,7 @@ void DInputSource::UpdateMotorState(InputBindingKey large_key, InputBindingKey s
   // not supported
 }
 
-std::optional<InputBindingKey> DInputSource::ParseKeyString(const std::string_view& device,
-                                                            const std::string_view& binding)
+std::optional<InputBindingKey> DInputSource::ParseKeyString(std::string_view device, std::string_view binding)
 {
   if (!device.starts_with("DInput-") || binding.empty())
     return std::nullopt;

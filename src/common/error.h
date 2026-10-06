@@ -32,6 +32,7 @@ public:
   ALWAYS_INLINE Type GetType() const { return m_type; }
   ALWAYS_INLINE bool IsValid() const { return (m_type != Type::None); }
   ALWAYS_INLINE const std::string& GetDescription() const { return m_description; }
+  ALWAYS_INLINE std::string TakeDescription() { return std::move(m_description); }
 
   void Clear();
 
@@ -68,6 +69,7 @@ public:
 #endif
 
   // helpers for setting
+  static void Clear(Error* errptr);
   static void SetErrno(Error* errptr, int err);
   static void SetErrno(Error* errptr, std::string_view prefix, int err);
   static void SetSocket(Error* errptr, int err);
@@ -98,26 +100,38 @@ public:
   template<typename... T>
   void AddPrefixFmt(fmt::format_string<T...> fmt, T&&... args)
   {
-    AddPrefix(TinyString::from_vformat(fmt::string_view(fmt), fmt::make_format_args(args...)));
+    TinyString str;
+    fmt::vformat_to(std::back_inserter(str), fmt, fmt::make_format_args(args...));
+    AddPrefix(str.view());
   }
 
   template<typename... T>
   void AddSuffixFmt(fmt::format_string<T...> fmt, T&&... args)
   {
-    AddSuffix(TinyString::from_vformat(fmt::string_view(fmt), fmt::make_format_args(args...)));
+    TinyString str;
+    fmt::vformat_to(std::back_inserter(str), fmt, fmt::make_format_args(args...));
+    AddSuffix(str.view());
   }
 
   template<typename... T>
   static void AddPrefixFmt(Error* errptr, fmt::format_string<T...> fmt, T&&... args)
   {
     if (errptr)
-      Error::AddPrefix(errptr, TinyString::from_vformat(fmt::string_view(fmt), fmt::make_format_args(args...)));
+    {
+      TinyString str;
+      fmt::vformat_to(std::back_inserter(str), fmt, fmt::make_format_args(args...));
+      errptr->AddPrefix(str.view());
+    }
   }
   template<typename... T>
   static void AddSuffixFmt(Error* errptr, fmt::format_string<T...> fmt, T&&... args)
   {
     if (errptr)
-      Error::AddSuffix(errptr, TinyString::from_vformat(fmt::string_view(fmt), fmt::make_format_args(args...)));
+    {
+      TinyString str;
+      fmt::vformat_to(std::back_inserter(str), fmt, fmt::make_format_args(args...));
+      errptr->AddSuffix(str.view());
+    }
   }
 
   Error& operator=(const Error& e);

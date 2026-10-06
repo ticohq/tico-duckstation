@@ -1,18 +1,18 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "mdec.h"
 #include "cpu_core.h"
 #include "dma.h"
-#include "host.h"
-#include "interrupt_controller.h"
 #include "system.h"
+#include "timing_event.h"
 
 #include "util/imgui_manager.h"
 #include "util/state_wrapper.h"
 
 #include "common/bitfield.h"
 #include "common/fifo_queue.h"
+#include "common/gsvector.h"
 #include "common/log.h"
 
 #include "imgui.h"
@@ -107,88 +107,108 @@ static bool HandleDecodeMacroblockCommand();
 static void HandleSetQuantTableCommand();
 static void HandleSetScaleCommand();
 
+static void SetScaleMatrix(const u16* values);
 static bool DecodeMonoMacroblock();
 static bool DecodeColoredMacroblock();
 static void ScheduleBlockCopyOut(TickCount ticks);
 static void CopyOutBlock(void* param, TickCount ticks, TickCount ticks_late);
 
-// from nocash spec
-static bool rl_decode_block(s16* blk, const u8* qt);
-static void IDCT(s16* blk);
-static void IDCT_New(s16* blk);
+static bool DecodeRLE_Old(s16* blk, const u8* qt);
 static void IDCT_Old(s16* blk);
-static void yuv_to_rgb(u32 xx, u32 yy, const std::array<s16, 64>& Crblk, const std::array<s16, 64>& Cbblk,
-                       const std::array<s16, 64>& Yblk);
-static void y_to_mono(const std::array<s16, 64>& Yblk);
+static void YUVToRGB_Old(u32 xx, u32 yy, const std::array<s16, 64>& Crblk, const std::array<s16, 64>& Cbblk,
+                         const std::array<s16, 64>& Yblk);
 
-static StatusRegister s_status = {};
-static bool s_enable_dma_in = false;
-static bool s_enable_dma_out = false;
+static bool DecodeRLE_New(s16* blk, const u8* qt);
+static void IDCT_New(s16* blk);
+static void YUVToRGB_New(u32 xx, u32 yy, const std::array<s16, 64>& Crblk, const std::array<s16, 64>& Cbblk,
+                         const std::array<s16, 64>& Yblk);
 
-// Even though the DMA is in words, we access the FIFO as halfwords.
-static InlineFIFOQueue<u16, DATA_IN_FIFO_SIZE / sizeof(u16)> s_data_in_fifo;
-static InlineFIFOQueue<u32, DATA_OUT_FIFO_SIZE / sizeof(u32)> s_data_out_fifo;
-static State s_state = State::Idle;
-static u32 s_remaining_halfwords = 0;
+static void YUVToMono(const std::array<s16, 64>& Yblk);
 
-static std::array<u8, 64> s_iq_uv{};
-static std::array<u8, 64> s_iq_y{};
+namespace {
+struct MDECState
+{
+  StatusRegister status = {};
+  bool enable_dma_in = false;
+  bool enable_dma_out = false;
 
-static std::array<s16, 64> s_scale_table{};
+  // Even though the DMA is in words, we access the FIFO as halfwords.
+  InlineFIFOQueue<u16, DATA_IN_FIFO_SIZE / sizeof(u16)> data_in_fifo;
+  InlineFIFOQueue<u32, DATA_OUT_FIFO_SIZE / sizeof(u32)> data_out_fifo;
+  State state = State::Idle;
+  u32 remaining_halfwords = 0;
 
-// blocks, for colour: 0 - Crblk, 1 - Cbblk, 2-5 - Y 1-4
-static std::array<std::array<s16, 64>, NUM_BLOCKS> s_blocks;
-static u32 s_current_block = 0;        // block (0-5)
-static u32 s_current_coefficient = 64; // k (in block)
-static u16 s_current_q_scale = 0;
+  std::array<u8, 64> iq_uv{};
+  std::array<u8, 64> iq_y{};
 
-alignas(16) static std::array<u32, 256> s_block_rgb{};
-static std::unique_ptr<TimingEvent> s_block_copy_out_event;
+  alignas(VECTOR_ALIGNMENT) std::array<s16, 64> scale_table{};
 
-static u32 s_total_blocks_decoded = 0;
+  // blocks, for colour: 0 - Crblk, 1 - Cbblk, 2-5 - Y 1-4
+  alignas(VECTOR_ALIGNMENT) std::array<std::array<s16, 64>, NUM_BLOCKS> blocks;
+  u32 current_block = 0;        // block (0-5)
+  u32 current_coefficient = 64; // k (in block)
+  u16 current_q_scale = 0;
+
+  alignas(16) std::array<u32, 256> block_rgb{};
+  TimingEvent block_copy_out_event{"MDEC Block Copy Out", 1, 1, &MDEC::CopyOutBlock, nullptr};
+
+  u32 total_blocks_decoded = 0;
+};
+} // namespace
+
+ALIGN_TO_CACHE_LINE static MDECState s_state;
 } // namespace MDEC
 
 void MDEC::Initialize()
 {
-  s_block_copy_out_event =
-    TimingEvents::CreateTimingEvent("MDEC Block Copy Out", 1, 1, &MDEC::CopyOutBlock, nullptr, false);
-  s_total_blocks_decoded = 0;
+  s_state.total_blocks_decoded = 0;
   Reset();
 }
 
 void MDEC::Shutdown()
 {
-  s_block_copy_out_event.reset();
+  s_state.block_copy_out_event.Deactivate();
 }
 
 void MDEC::Reset()
 {
-  s_block_copy_out_event->Deactivate();
+  s_state.block_copy_out_event.Deactivate();
   SoftReset();
 }
 
 bool MDEC::DoState(StateWrapper& sw)
 {
-  sw.Do(&s_status.bits);
-  sw.Do(&s_enable_dma_in);
-  sw.Do(&s_enable_dma_out);
-  sw.Do(&s_data_in_fifo);
-  sw.Do(&s_data_out_fifo);
-  sw.Do(&s_state);
-  sw.Do(&s_remaining_halfwords);
-  sw.Do(&s_iq_uv);
-  sw.Do(&s_iq_y);
-  sw.Do(&s_scale_table);
-  sw.Do(&s_blocks);
-  sw.Do(&s_current_block);
-  sw.Do(&s_current_coefficient);
-  sw.Do(&s_current_q_scale);
-  sw.Do(&s_block_rgb);
+  sw.Do(&s_state.status.bits);
+  sw.Do(&s_state.enable_dma_in);
+  sw.Do(&s_state.enable_dma_out);
+  sw.Do(&s_state.data_in_fifo);
+  sw.Do(&s_state.data_out_fifo);
+  sw.Do(&s_state.state);
+  sw.Do(&s_state.remaining_halfwords);
+  sw.Do(&s_state.iq_uv);
+  sw.Do(&s_state.iq_y);
+
+  if (sw.GetVersion() < 66) [[unlikely]]
+  {
+    std::array<u16, 64> old_scale_matrix;
+    sw.Do(&old_scale_matrix);
+    SetScaleMatrix(old_scale_matrix.data());
+  }
+  else
+  {
+    sw.Do(&s_state.scale_table);
+  }
+
+  sw.Do(&s_state.blocks);
+  sw.Do(&s_state.current_block);
+  sw.Do(&s_state.current_coefficient);
+  sw.Do(&s_state.current_q_scale);
+  sw.Do(&s_state.block_rgb);
 
   bool block_copy_out_pending = HasPendingBlockCopyOut();
   sw.Do(&block_copy_out_pending);
   if (sw.IsReading())
-    s_block_copy_out_event->SetState(block_copy_out_pending);
+    s_state.block_copy_out_event.SetState(block_copy_out_pending);
 
   return !sw.HasError();
 }
@@ -202,15 +222,15 @@ u32 MDEC::ReadRegister(u32 offset)
 
     case 4:
     {
-      Log_TracePrintf("MDEC status register -> 0x%08X", s_status.bits);
-      return s_status.bits;
+      TRACE_LOG("MDEC status register -> 0x{:08X}", s_state.status.bits);
+      return s_state.status.bits;
     }
 
-    default:
-    {
-      Log_ErrorPrintf("Unknown MDEC register read: 0x%08X", offset);
-      return UINT32_C(0xFFFFFFFF);
-    }
+      [[unlikely]] default:
+      {
+        ERROR_LOG("Unknown MDEC register read: 0x{:08X}", offset);
+        return UINT32_C(0xFFFFFFFF);
+      }
   }
 }
 
@@ -226,126 +246,126 @@ void MDEC::WriteRegister(u32 offset, u32 value)
 
     case 4:
     {
-      Log_DebugPrintf("MDEC control register <- 0x%08X", value);
+      DEBUG_LOG("MDEC control register <- 0x{:08X}", value);
 
       const ControlRegister cr{value};
       if (cr.reset)
         SoftReset();
 
-      s_enable_dma_in = cr.enable_dma_in;
-      s_enable_dma_out = cr.enable_dma_out;
+      s_state.enable_dma_in = cr.enable_dma_in;
+      s_state.enable_dma_out = cr.enable_dma_out;
       Execute();
       return;
     }
 
-    default:
-    {
-      Log_ErrorPrintf("Unknown MDEC register write: 0x%08X <- 0x%08X", offset, value);
-      return;
-    }
+      [[unlikely]] default:
+      {
+        ERROR_LOG("Unknown MDEC register write: 0x{:08X} <- 0x{:08X}", offset, value);
+        return;
+      }
   }
 }
 
 void MDEC::DMARead(u32* words, u32 word_count)
 {
-  if (s_data_out_fifo.GetSize() < word_count) [[unlikely]]
+  if (s_state.data_out_fifo.GetSize() < word_count) [[unlikely]]
   {
-    Log_WarningPrintf("Insufficient data in output FIFO (requested %u, have %u)", word_count,
-                      s_data_out_fifo.GetSize());
+    WARNING_LOG("Insufficient data in output FIFO (requested {}, have {})", word_count,
+                s_state.data_out_fifo.GetSize());
   }
 
-  const u32 words_to_read = std::min(word_count, s_data_out_fifo.GetSize());
+  const u32 words_to_read = std::min(word_count, s_state.data_out_fifo.GetSize());
   if (words_to_read > 0)
   {
-    s_data_out_fifo.PopRange(words, words_to_read);
+    s_state.data_out_fifo.PopRange(words, words_to_read);
     words += words_to_read;
     word_count -= words_to_read;
   }
 
-  Log_DebugPrintf("DMA read complete, %u bytes left", static_cast<u32>(s_data_out_fifo.GetSize() * sizeof(u32)));
-  if (s_data_out_fifo.IsEmpty())
+  DEBUG_LOG("DMA read complete, {} bytes left", s_state.data_out_fifo.GetSize() * sizeof(u32));
+  if (s_state.data_out_fifo.IsEmpty())
     Execute();
 }
 
 void MDEC::DMAWrite(const u32* words, u32 word_count)
 {
-  if (s_data_in_fifo.GetSpace() < (word_count * 2)) [[unlikely]]
+  if (s_state.data_in_fifo.GetSpace() < (word_count * 2)) [[unlikely]]
   {
-    Log_WarningPrintf("Input FIFO overflow (writing %u, space %u)", word_count * 2, s_data_in_fifo.GetSpace());
+    WARNING_LOG("Input FIFO overflow (writing {}, space {})", word_count * 2, s_state.data_in_fifo.GetSpace());
   }
 
-  const u32 halfwords_to_write = std::min(word_count * 2, s_data_in_fifo.GetSpace() & ~u32(2));
-  s_data_in_fifo.PushRange(reinterpret_cast<const u16*>(words), halfwords_to_write);
+  const u32 halfwords_to_write = std::min(word_count * 2, s_state.data_in_fifo.GetSpace() & ~u32(2));
+  s_state.data_in_fifo.PushRange(reinterpret_cast<const u16*>(words), halfwords_to_write);
   Execute();
 }
 
 bool MDEC::HasPendingBlockCopyOut()
 {
-  return s_block_copy_out_event->IsActive();
+  return s_state.block_copy_out_event.IsActive();
 }
 
 void MDEC::SoftReset()
 {
-  s_status.bits = 0;
-  s_enable_dma_in = false;
-  s_enable_dma_out = false;
-  s_data_in_fifo.Clear();
-  s_data_out_fifo.Clear();
-  s_state = State::Idle;
-  s_remaining_halfwords = 0;
-  s_current_block = 0;
-  s_current_coefficient = 64;
-  s_current_q_scale = 0;
-  s_block_copy_out_event->Deactivate();
+  s_state.status.bits = 0;
+  s_state.enable_dma_in = false;
+  s_state.enable_dma_out = false;
+  s_state.data_in_fifo.Clear();
+  s_state.data_out_fifo.Clear();
+  s_state.state = State::Idle;
+  s_state.remaining_halfwords = 0;
+  s_state.current_block = 0;
+  s_state.current_coefficient = 64;
+  s_state.current_q_scale = 0;
+  s_state.block_copy_out_event.Deactivate();
   UpdateStatus();
 }
 
 void MDEC::ResetDecoder()
 {
-  s_current_block = 0;
-  s_current_coefficient = 64;
-  s_current_q_scale = 0;
+  s_state.current_block = 0;
+  s_state.current_coefficient = 64;
+  s_state.current_q_scale = 0;
 }
 
 void MDEC::UpdateStatus()
 {
-  s_status.data_out_fifo_empty = s_data_out_fifo.IsEmpty();
-  s_status.data_in_fifo_full = s_data_in_fifo.IsFull();
+  s_state.status.data_out_fifo_empty = s_state.data_out_fifo.IsEmpty();
+  s_state.status.data_in_fifo_full = s_state.data_in_fifo.IsFull();
 
-  s_status.command_busy = (s_state != State::Idle);
-  s_status.parameter_words_remaining = Truncate16((s_remaining_halfwords / 2) - 1);
-  s_status.current_block = (s_current_block + 4) % NUM_BLOCKS;
+  s_state.status.command_busy = (s_state.state != State::Idle);
+  s_state.status.parameter_words_remaining = Truncate16((s_state.remaining_halfwords / 2) - 1);
+  s_state.status.current_block = (s_state.current_block + 4) % NUM_BLOCKS;
 
   // we always want data in if it's enabled
-  const bool data_in_request = s_enable_dma_in && s_data_in_fifo.GetSpace() >= (32 * 2);
-  s_status.data_in_request = data_in_request;
+  const bool data_in_request = s_state.enable_dma_in && s_state.data_in_fifo.GetSpace() >= (32 * 2);
+  s_state.status.data_in_request = data_in_request;
   DMA::SetRequest(DMA::Channel::MDECin, data_in_request);
 
   // we only want to send data out if we have some in the fifo
-  const bool data_out_request = s_enable_dma_out && !s_data_out_fifo.IsEmpty();
-  s_status.data_out_request = data_out_request;
+  const bool data_out_request = s_state.enable_dma_out && !s_state.data_out_fifo.IsEmpty();
+  s_state.status.data_out_request = data_out_request;
   DMA::SetRequest(DMA::Channel::MDECout, data_out_request);
 }
 
 u32 MDEC::ReadDataRegister()
 {
-  if (s_data_out_fifo.IsEmpty())
+  if (s_state.data_out_fifo.IsEmpty())
   {
     // Stall the CPU until we're done processing.
     if (HasPendingBlockCopyOut())
     {
-      Log_DevPrint("MDEC data out FIFO empty on read - stalling CPU");
-      CPU::AddPendingTicks(s_block_copy_out_event->GetTicksUntilNextExecution());
+      DEV_LOG("MDEC data out FIFO empty on read - stalling CPU");
+      CPU::AddPendingTicks(s_state.block_copy_out_event.GetTicksUntilNextExecution());
     }
     else
     {
-      Log_WarningPrintf("MDEC data out FIFO empty on read and no data processing");
+      WARNING_LOG("MDEC data out FIFO empty on read and no data processing");
       return UINT32_C(0xFFFFFFFF);
     }
   }
 
-  const u32 value = s_data_out_fifo.Pop();
-  if (s_data_out_fifo.IsEmpty())
+  const u32 value = s_state.data_out_fifo.Pop();
+  if (s_state.data_out_fifo.IsEmpty())
     Execute();
   else
     UpdateStatus();
@@ -355,10 +375,10 @@ u32 MDEC::ReadDataRegister()
 
 void MDEC::WriteCommandRegister(u32 value)
 {
-  Log_TracePrintf("MDEC command/data register <- 0x%08X", value);
+  TRACE_LOG("MDEC command/data register <- 0x{:08X}", value);
 
-  s_data_in_fifo.Push(Truncate16(value));
-  s_data_in_fifo.Push(Truncate16(value >> 16));
+  s_state.data_in_fifo.Push(Truncate16(value));
+  s_state.data_in_fifo.Push(Truncate16(value >> 16));
 
   Execute();
 }
@@ -367,20 +387,21 @@ void MDEC::Execute()
 {
   for (;;)
   {
-    switch (s_state)
+    switch (s_state.state)
     {
       case State::Idle:
       {
-        if (s_data_in_fifo.GetSize() < 2)
+        if (s_state.data_in_fifo.GetSize() < 2)
           goto finished;
 
         // first word
-        const CommandWord cw{ZeroExtend32(s_data_in_fifo.Peek(0)) | (ZeroExtend32(s_data_in_fifo.Peek(1)) << 16)};
-        s_status.data_output_depth = cw.data_output_depth;
-        s_status.data_output_signed = cw.data_output_signed;
-        s_status.data_output_bit15 = cw.data_output_bit15;
-        s_data_in_fifo.Remove(2);
-        s_data_out_fifo.Clear();
+        const CommandWord cw{ZeroExtend32(s_state.data_in_fifo.Peek(0)) |
+                             (ZeroExtend32(s_state.data_in_fifo.Peek(1)) << 16)};
+        s_state.status.data_output_depth = cw.data_output_depth;
+        s_state.status.data_output_signed = cw.data_output_signed;
+        s_state.status.data_output_bit15 = cw.data_output_bit15;
+        s_state.data_in_fifo.Remove(2);
+        s_state.data_out_fifo.Clear();
 
         u32 num_words;
         State new_state;
@@ -402,18 +423,17 @@ void MDEC::Execute()
             break;
 
           default:
-            Log_DevPrintf("Invalid MDEC command 0x%08X", cw.bits);
+            [[unlikely]] DEV_LOG("Invalid MDEC command 0x{:08X}", cw.bits);
             num_words = cw.parameter_word_count.GetValue();
             new_state = State::NoCommand;
             break;
         }
 
-        Log_DebugPrintf("MDEC command: 0x%08X (%u, %u words in parameter, %u expected)", cw.bits,
-                        ZeroExtend32(static_cast<u8>(cw.command.GetValue())),
-                        ZeroExtend32(cw.parameter_word_count.GetValue()), num_words);
+        DEBUG_LOG("MDEC command: 0x{:08X} ({}, {} words in parameter, {} expected)", cw.bits,
+                  static_cast<u8>(cw.command.GetValue()), cw.parameter_word_count.GetValue(), num_words);
 
-        s_remaining_halfwords = num_words * 2;
-        s_state = new_state;
+        s_state.remaining_halfwords = num_words * 2;
+        s_state.state = new_state;
         UpdateStatus();
         continue;
       }
@@ -423,15 +443,15 @@ void MDEC::Execute()
         if (HandleDecodeMacroblockCommand())
         {
           // we should be writing out now
-          DebugAssert(s_state == State::WritingMacroblock);
+          DebugAssert(s_state.state == State::WritingMacroblock);
           goto finished;
         }
 
-        if (s_remaining_halfwords == 0 && s_current_block != NUM_BLOCKS)
+        if (s_state.remaining_halfwords == 0 && s_state.current_block != NUM_BLOCKS)
         {
           // expecting data, but nothing more will be coming. bail out
           ResetDecoder();
-          s_state = State::Idle;
+          s_state.state = State::Idle;
           continue;
         }
 
@@ -446,22 +466,22 @@ void MDEC::Execute()
 
       case State::SetIqTable:
       {
-        if (s_data_in_fifo.GetSize() < s_remaining_halfwords)
+        if (s_state.data_in_fifo.GetSize() < s_state.remaining_halfwords)
           goto finished;
 
         HandleSetQuantTableCommand();
-        s_state = State::Idle;
+        s_state.state = State::Idle;
         UpdateStatus();
         continue;
       }
 
       case State::SetScaleTable:
       {
-        if (s_data_in_fifo.GetSize() < s_remaining_halfwords)
+        if (s_state.data_in_fifo.GetSize() < s_state.remaining_halfwords)
           goto finished;
 
         HandleSetScaleCommand();
-        s_state = State::Idle;
+        s_state.state = State::Idle;
         UpdateStatus();
         continue;
       }
@@ -469,13 +489,13 @@ void MDEC::Execute()
       case State::NoCommand:
       {
         // can potentially have a large amount of halfwords, so eat them as we go
-        const u32 words_to_consume = std::min(s_remaining_halfwords, s_data_in_fifo.GetSize());
-        s_data_in_fifo.Remove(words_to_consume);
-        s_remaining_halfwords -= words_to_consume;
-        if (s_remaining_halfwords == 0)
+        const u32 words_to_consume = std::min(s_state.remaining_halfwords, s_state.data_in_fifo.GetSize());
+        s_state.data_in_fifo.Remove(words_to_consume);
+        s_state.remaining_halfwords -= words_to_consume;
+        if (s_state.remaining_halfwords == 0)
           goto finished;
 
-        s_state = State::Idle;
+        s_state.state = State::Idle;
         UpdateStatus();
         continue;
       }
@@ -493,7 +513,7 @@ finished:
 
 bool MDEC::HandleDecodeMacroblockCommand()
 {
-  if (s_status.data_output_depth <= DataOutputDepth_8Bit)
+  if (s_state.status.data_output_depth <= DataOutputDepth_8Bit)
     return DecodeMonoMacroblock();
   else
     return DecodeColoredMacroblock();
@@ -502,49 +522,88 @@ bool MDEC::HandleDecodeMacroblockCommand()
 bool MDEC::DecodeMonoMacroblock()
 {
   // TODO: This should guard the output not the input
-  if (!s_data_out_fifo.IsEmpty())
+  if (!s_state.data_out_fifo.IsEmpty())
     return false;
 
-  if (!rl_decode_block(s_blocks[0].data(), s_iq_y.data()))
-    return false;
+  if (g_settings.use_old_mdec_routines) [[unlikely]]
+  {
+    if (!DecodeRLE_Old(s_state.blocks[0].data(), s_state.iq_y.data()))
+      return false;
 
-  IDCT(s_blocks[0].data());
+    IDCT_Old(s_state.blocks[0].data());
+  }
+  else
+  {
+    if (!DecodeRLE_New(s_state.blocks[0].data(), s_state.iq_y.data()))
+      return false;
 
-  Log_DebugPrintf("Decoded mono macroblock, %u words remaining", s_remaining_halfwords / 2);
+    IDCT_New(s_state.blocks[0].data());
+  }
+
+  DEBUG_LOG("Decoded mono macroblock, {} words remaining", s_state.remaining_halfwords / 2);
   ResetDecoder();
-  s_state = State::WritingMacroblock;
+  s_state.state = State::WritingMacroblock;
 
-  y_to_mono(s_blocks[0]);
+  YUVToMono(s_state.blocks[0]);
 
   ScheduleBlockCopyOut(TICKS_PER_BLOCK * 6);
 
-  s_total_blocks_decoded++;
+  s_state.total_blocks_decoded++;
   return true;
 }
 
 bool MDEC::DecodeColoredMacroblock()
 {
-  for (; s_current_block < NUM_BLOCKS; s_current_block++)
+  if (g_settings.use_old_mdec_routines) [[unlikely]]
   {
-    if (!rl_decode_block(s_blocks[s_current_block].data(), (s_current_block >= 2) ? s_iq_y.data() : s_iq_uv.data()))
+    for (; s_state.current_block < NUM_BLOCKS; s_state.current_block++)
+    {
+      if (!DecodeRLE_Old(s_state.blocks[s_state.current_block].data(),
+                         (s_state.current_block >= 2) ? s_state.iq_y.data() : s_state.iq_uv.data()))
+        return false;
+
+      IDCT_Old(s_state.blocks[s_state.current_block].data());
+    }
+
+    if (!s_state.data_out_fifo.IsEmpty())
       return false;
 
-    IDCT(s_blocks[s_current_block].data());
+    // done decoding
+    DEBUG_LOG("Decoded colored macroblock, {} words remaining", s_state.remaining_halfwords / 2);
+    ResetDecoder();
+    s_state.state = State::WritingMacroblock;
+
+    YUVToRGB_Old(0, 0, s_state.blocks[0], s_state.blocks[1], s_state.blocks[2]);
+    YUVToRGB_Old(8, 0, s_state.blocks[0], s_state.blocks[1], s_state.blocks[3]);
+    YUVToRGB_Old(0, 8, s_state.blocks[0], s_state.blocks[1], s_state.blocks[4]);
+    YUVToRGB_Old(8, 8, s_state.blocks[0], s_state.blocks[1], s_state.blocks[5]);
+  }
+  else
+  {
+    for (; s_state.current_block < NUM_BLOCKS; s_state.current_block++)
+    {
+      if (!DecodeRLE_New(s_state.blocks[s_state.current_block].data(),
+                         (s_state.current_block >= 2) ? s_state.iq_y.data() : s_state.iq_uv.data()))
+        return false;
+
+      IDCT_New(s_state.blocks[s_state.current_block].data());
+    }
+
+    if (!s_state.data_out_fifo.IsEmpty())
+      return false;
+
+    // done decoding
+    DEBUG_LOG("Decoded colored macroblock, {} words remaining", s_state.remaining_halfwords / 2);
+    ResetDecoder();
+    s_state.state = State::WritingMacroblock;
+
+    YUVToRGB_New(0, 0, s_state.blocks[0], s_state.blocks[1], s_state.blocks[2]);
+    YUVToRGB_New(8, 0, s_state.blocks[0], s_state.blocks[1], s_state.blocks[3]);
+    YUVToRGB_New(0, 8, s_state.blocks[0], s_state.blocks[1], s_state.blocks[4]);
+    YUVToRGB_New(8, 8, s_state.blocks[0], s_state.blocks[1], s_state.blocks[5]);
   }
 
-  if (!s_data_out_fifo.IsEmpty())
-    return false;
-
-  // done decoding
-  Log_DebugPrintf("Decoded colored macroblock, %u words remaining", s_remaining_halfwords / 2);
-  ResetDecoder();
-  s_state = State::WritingMacroblock;
-
-  yuv_to_rgb(0, 0, s_blocks[0], s_blocks[1], s_blocks[2]);
-  yuv_to_rgb(8, 0, s_blocks[0], s_blocks[1], s_blocks[3]);
-  yuv_to_rgb(0, 8, s_blocks[0], s_blocks[1], s_blocks[4]);
-  yuv_to_rgb(8, 8, s_blocks[0], s_blocks[1], s_blocks[5]);
-  s_total_blocks_decoded += 4;
+  s_state.total_blocks_decoded += 4;
 
   ScheduleBlockCopyOut(TICKS_PER_BLOCK * 6);
   return true;
@@ -553,21 +612,21 @@ bool MDEC::DecodeColoredMacroblock()
 void MDEC::ScheduleBlockCopyOut(TickCount ticks)
 {
   DebugAssert(!HasPendingBlockCopyOut());
-  Log_DebugPrintf("Scheduling block copy out in %d ticks", ticks);
+  DEBUG_LOG("Scheduling block copy out in {} ticks", ticks);
 
-  s_block_copy_out_event->SetIntervalAndSchedule(ticks);
+  s_state.block_copy_out_event.SetIntervalAndSchedule(ticks);
 }
 
 void MDEC::CopyOutBlock(void* param, TickCount ticks, TickCount ticks_late)
 {
-  Assert(s_state == State::WritingMacroblock);
-  s_block_copy_out_event->Deactivate();
+  Assert(s_state.state == State::WritingMacroblock);
+  s_state.block_copy_out_event.Deactivate();
 
-  switch (s_status.data_output_depth)
+  switch (s_state.status.data_output_depth)
   {
     case DataOutputDepth_4Bit:
     {
-      const u32* in_ptr = s_block_rgb.data();
+      const u32* in_ptr = s_state.block_rgb.data();
       for (u32 i = 0; i < (64 / 8); i++)
       {
         u32 value = *(in_ptr++) >> 4;
@@ -578,21 +637,21 @@ void MDEC::CopyOutBlock(void* param, TickCount ticks, TickCount ticks_late)
         value |= (*(in_ptr++) >> 4) << 20;
         value |= (*(in_ptr++) >> 4) << 24;
         value |= (*(in_ptr++) >> 4) << 28;
-        s_data_out_fifo.Push(value);
+        s_state.data_out_fifo.Push(value);
       }
     }
     break;
 
     case DataOutputDepth_8Bit:
     {
-      const u32* in_ptr = s_block_rgb.data();
+      const u32* in_ptr = s_state.block_rgb.data();
       for (u32 i = 0; i < (64 / 4); i++)
       {
         u32 value = *in_ptr++;
         value |= *in_ptr++ << 8;
         value |= *in_ptr++ << 16;
         value |= *in_ptr++ << 24;
-        s_data_out_fifo.Push(value);
+        s_state.data_out_fifo.Push(value);
       }
     }
     break;
@@ -603,31 +662,31 @@ void MDEC::CopyOutBlock(void* param, TickCount ticks, TickCount ticks_late)
       u32 index = 0;
       u32 state = 0;
       u32 rgb = 0;
-      while (index < s_block_rgb.size())
+      while (index < s_state.block_rgb.size())
       {
         switch (state)
         {
           case 0:
-            rgb = s_block_rgb[index++]; // RGB-
+            rgb = s_state.block_rgb[index++]; // RGB-
             state = 1;
             break;
           case 1:
-            rgb |= (s_block_rgb[index] & 0xFF) << 24; // RGBR
-            s_data_out_fifo.Push(rgb);
-            rgb = s_block_rgb[index] >> 8; // GB--
+            rgb |= (s_state.block_rgb[index] & 0xFF) << 24; // RGBR
+            s_state.data_out_fifo.Push(rgb);
+            rgb = s_state.block_rgb[index] >> 8; // GB--
             index++;
             state = 2;
             break;
           case 2:
-            rgb |= s_block_rgb[index] << 16; // GBRG
-            s_data_out_fifo.Push(rgb);
-            rgb = s_block_rgb[index] >> 16; // B---
+            rgb |= s_state.block_rgb[index] << 16; // GBRG
+            s_state.data_out_fifo.Push(rgb);
+            rgb = s_state.block_rgb[index] >> 16; // B---
             index++;
             state = 3;
             break;
           case 3:
-            rgb |= s_block_rgb[index] << 8; // BRGB
-            s_data_out_fifo.Push(rgb);
+            rgb |= s_state.block_rgb[index] << 8; // BRGB
+            s_state.data_out_fifo.Push(rgb);
             index++;
             state = 0;
             break;
@@ -640,44 +699,44 @@ void MDEC::CopyOutBlock(void* param, TickCount ticks, TickCount ticks_late)
     {
       if (g_settings.use_old_mdec_routines) [[unlikely]]
       {
-        const u16 a = ZeroExtend16(s_status.data_output_bit15.GetValue()) << 15;
-        for (u32 i = 0; i < static_cast<u32>(s_block_rgb.size());)
+        const u16 a = ZeroExtend16(s_state.status.data_output_bit15.GetValue()) << 15;
+        for (u32 i = 0; i < static_cast<u32>(s_state.block_rgb.size());)
         {
-          u32 color = s_block_rgb[i++];
+          u32 color = s_state.block_rgb[i++];
           u16 r = Truncate16((color >> 3) & 0x1Fu);
           u16 g = Truncate16((color >> 11) & 0x1Fu);
           u16 b = Truncate16((color >> 19) & 0x1Fu);
           const u16 color15a = r | (g << 5) | (b << 10) | (a << 15);
 
-          color = s_block_rgb[i++];
+          color = s_state.block_rgb[i++];
           r = Truncate16((color >> 3) & 0x1Fu);
           g = Truncate16((color >> 11) & 0x1Fu);
           b = Truncate16((color >> 19) & 0x1Fu);
           const u16 color15b = r | (g << 5) | (b << 10) | (a << 15);
 
-          s_data_out_fifo.Push(ZeroExtend32(color15a) | (ZeroExtend32(color15b) << 16));
+          s_state.data_out_fifo.Push(ZeroExtend32(color15a) | (ZeroExtend32(color15b) << 16));
         }
       }
       else
       {
-        const u32 a = ZeroExtend32(s_status.data_output_bit15.GetValue()) << 15;
-        for (u32 i = 0; i < static_cast<u32>(s_block_rgb.size());)
+        const u32 a = ZeroExtend32(s_state.status.data_output_bit15.GetValue()) << 15;
+        for (u32 i = 0; i < static_cast<u32>(s_state.block_rgb.size());)
         {
 #define E8TO5(color) (std::min<u32>((((color) + 4) >> 3), 0x1F))
-          u32 color = s_block_rgb[i++];
+          u32 color = s_state.block_rgb[i++];
           u32 r = E8TO5(color & 0xFFu);
           u32 g = E8TO5((color >> 8) & 0xFFu);
           u32 b = E8TO5((color >> 16) & 0xFFu);
           const u32 color15a = r | (g << 5) | (b << 10) | a;
 
-          color = s_block_rgb[i++];
+          color = s_state.block_rgb[i++];
           r = E8TO5(color & 0xFFu);
           g = E8TO5((color >> 8) & 0xFFu);
           b = E8TO5((color >> 16) & 0xFFu);
           const u32 color15b = r | (g << 5) | (b << 10) | a;
 #undef E8TO5
 
-          s_data_out_fifo.Push(color15a | (color15b << 16));
+          s_state.data_out_fifo.Push(color15a | (color15b << 16));
         }
       }
     }
@@ -687,22 +746,22 @@ void MDEC::CopyOutBlock(void* param, TickCount ticks, TickCount ticks_late)
       break;
   }
 
-  Log_DebugPrintf("Block copied out, fifo size = %u (%u bytes)", s_data_out_fifo.GetSize(),
-                  static_cast<u32>(s_data_out_fifo.GetSize() * sizeof(u32)));
+  DEBUG_LOG("Block copied out, fifo size = {} ({} bytes)", s_state.data_out_fifo.GetSize(),
+            s_state.data_out_fifo.GetSize() * sizeof(u32));
 
   // if we've copied out all blocks, command is complete
-  s_state = (s_remaining_halfwords == 0) ? State::Idle : State::DecodingMacroblock;
+  s_state.state = (s_state.remaining_halfwords == 0) ? State::Idle : State::DecodingMacroblock;
   Execute();
 }
 
-static constexpr std::array<u8, 64> zagzig = {{0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 18, 11, 4,  5,
-                                               12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6,  7,  14, 21, 28,
-                                               35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
-                                               58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63}};
-
-bool MDEC::rl_decode_block(s16* blk, const u8* qt)
+bool MDEC::DecodeRLE_Old(s16* blk, const u8* qt)
 {
-  if (s_current_coefficient == 64)
+  static constexpr std::array<u8, 64> zagzig = {{0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 18, 11, 4,  5,
+                                                 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6,  7,  14, 21, 28,
+                                                 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+                                                 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63}};
+
+  if (s_state.current_coefficient == 64)
   {
     std::fill_n(blk, 64, s16(0));
 
@@ -710,11 +769,11 @@ bool MDEC::rl_decode_block(s16* blk, const u8* qt)
     u16 n;
     for (;;)
     {
-      if (s_data_in_fifo.IsEmpty() || s_remaining_halfwords == 0)
+      if (s_state.data_in_fifo.IsEmpty() || s_state.remaining_halfwords == 0)
         return false;
 
-      n = s_data_in_fifo.Pop();
-      s_remaining_halfwords--;
+      n = s_state.data_in_fifo.Pop();
+      s_state.remaining_halfwords--;
 
       if (n == 0xFE00)
         continue;
@@ -722,88 +781,53 @@ bool MDEC::rl_decode_block(s16* blk, const u8* qt)
         break;
     }
 
-    s_current_coefficient = 0;
-    s_current_q_scale = (n >> 10) & 0x3F;
-    s32 val =
-      SignExtendN<10, s32>(static_cast<s32>(n & 0x3FF)) * static_cast<s32>(ZeroExtend32(qt[s_current_coefficient]));
+    s_state.current_coefficient = 0;
+    s_state.current_q_scale = (n >> 10) & 0x3F;
+    s32 val = SignExtendN<10, s32>(static_cast<s32>(n & 0x3FF)) *
+              static_cast<s32>(ZeroExtend32(qt[s_state.current_coefficient]));
 
-    if (s_current_q_scale == 0)
+    if (s_state.current_q_scale == 0)
       val = SignExtendN<10, s32>(static_cast<s32>(n & 0x3FF)) * 2;
 
     val = std::clamp(val, -0x400, 0x3FF);
-    if (s_current_q_scale > 0)
-      blk[zagzig[s_current_coefficient]] = static_cast<s16>(val);
+    if (s_state.current_q_scale > 0)
+      blk[zagzig[s_state.current_coefficient]] = static_cast<s16>(val);
     else
-      blk[s_current_coefficient] = static_cast<s16>(val);
+      blk[s_state.current_coefficient] = static_cast<s16>(val);
   }
 
-  while (!s_data_in_fifo.IsEmpty() && s_remaining_halfwords > 0)
+  while (!s_state.data_in_fifo.IsEmpty() && s_state.remaining_halfwords > 0)
   {
-    u16 n = s_data_in_fifo.Pop();
-    s_remaining_halfwords--;
+    u16 n = s_state.data_in_fifo.Pop();
+    s_state.remaining_halfwords--;
 
-    s_current_coefficient += ((n >> 10) & 0x3F) + 1;
-    if (s_current_coefficient < 64)
+    s_state.current_coefficient += ((n >> 10) & 0x3F) + 1;
+    if (s_state.current_coefficient < 64)
     {
-      s32 val = (SignExtendN<10, s32>(static_cast<s32>(n & 0x3FF)) *
-                   static_cast<s32>(ZeroExtend32(qt[s_current_coefficient])) * static_cast<s32>(s_current_q_scale) +
-                 4) /
-                8;
+      s32 val =
+        (SignExtendN<10, s32>(static_cast<s32>(n & 0x3FF)) *
+           static_cast<s32>(ZeroExtend32(qt[s_state.current_coefficient])) * static_cast<s32>(s_state.current_q_scale) +
+         4) /
+        8;
 
-      if (s_current_q_scale == 0)
+      if (s_state.current_q_scale == 0)
         val = SignExtendN<10, s32>(static_cast<s32>(n & 0x3FF)) * 2;
 
       val = std::clamp(val, -0x400, 0x3FF);
-      if (s_current_q_scale > 0)
-        blk[zagzig[s_current_coefficient]] = static_cast<s16>(val);
+      if (s_state.current_q_scale > 0)
+        blk[zagzig[s_state.current_coefficient]] = static_cast<s16>(val);
       else
-        blk[s_current_coefficient] = static_cast<s16>(val);
+        blk[s_state.current_coefficient] = static_cast<s16>(val);
     }
 
-    if (s_current_coefficient >= 63)
+    if (s_state.current_coefficient >= 63)
     {
-      s_current_coefficient = 64;
+      s_state.current_coefficient = 64;
       return true;
     }
   }
 
   return false;
-}
-
-void MDEC::IDCT(s16* blk)
-{
-  // people have made texture packs using the old conversion routines.. best to just leave them be.
-  if (g_settings.use_old_mdec_routines) [[unlikely]]
-    IDCT_Old(blk);
-  else
-    IDCT_New(blk);
-}
-
-void MDEC::IDCT_New(s16* blk)
-{
-  std::array<s32, 64> temp;
-  for (u32 x = 0; x < 8; x++)
-  {
-    for (u32 y = 0; y < 8; y++)
-    {
-      // TODO: We could alter zigzag and invert scale_table to get these in row-major order,
-      // in which case we could do optimize this to a vector multiply.
-      s32 sum = 0;
-      for (u32 z = 0; z < 8; z++)
-        sum += s32(blk[y + z * 8]) * s32(s_scale_table[x + z * 8] / 8);
-      temp[x + y * 8] = static_cast<s32>((sum + 0xfff) / 0x2000);
-    }
-  }
-  for (u32 x = 0; x < 8; x++)
-  {
-    for (u32 y = 0; y < 8; y++)
-    {
-      s32 sum = 0;
-      for (u32 z = 0; z < 8; z++)
-        sum += temp[y + z * 8] * s32(s_scale_table[x + z * 8] / 8);
-      blk[x + y * 8] = static_cast<s16>(std::clamp<s32>((sum + 0xfff) / 0x2000, -128, 127));
-    }
-  }
 }
 
 void MDEC::IDCT_Old(s16* blk)
@@ -815,7 +839,7 @@ void MDEC::IDCT_Old(s16* blk)
     {
       s64 sum = 0;
       for (u32 u = 0; u < 8; u++)
-        sum += s32(blk[u * 8 + x]) * s32(s_scale_table[u * 8 + y]);
+        sum += s32(blk[u * 8 + x]) * s32(s_state.scale_table[y * 8 + u]);
       temp_buffer[x + y * 8] = sum;
     }
   }
@@ -825,7 +849,7 @@ void MDEC::IDCT_Old(s16* blk)
     {
       s64 sum = 0;
       for (u32 u = 0; u < 8; u++)
-        sum += s64(temp_buffer[u + y * 8]) * s32(s_scale_table[u * 8 + x]);
+        sum += s64(temp_buffer[u + y * 8]) * s32(s_state.scale_table[x * 8 + u]);
 
       blk[x + y * 8] =
         static_cast<s16>(std::clamp<s32>(SignExtendN<9, s32>((sum >> 32) + ((sum >> 31) & 1)), -128, 127));
@@ -833,10 +857,10 @@ void MDEC::IDCT_Old(s16* blk)
   }
 }
 
-void MDEC::yuv_to_rgb(u32 xx, u32 yy, const std::array<s16, 64>& Crblk, const std::array<s16, 64>& Cbblk,
-                      const std::array<s16, 64>& Yblk)
+void MDEC::YUVToRGB_Old(u32 xx, u32 yy, const std::array<s16, 64>& Crblk, const std::array<s16, 64>& Cbblk,
+                        const std::array<s16, 64>& Yblk)
 {
-  const s16 addval = s_status.data_output_signed ? 0 : 0x80;
+  const s16 addval = s_state.status.data_output_signed ? 0 : 0x80;
   for (u32 y = 0; y < 8; y++)
   {
     for (u32 x = 0; x < 8; x++)
@@ -853,58 +877,187 @@ void MDEC::yuv_to_rgb(u32 xx, u32 yy, const std::array<s16, 64>& Crblk, const st
       G = static_cast<s16>(std::clamp(static_cast<int>(Y) + G, -128, 127)) + addval;
       B = static_cast<s16>(std::clamp(static_cast<int>(Y) + B, -128, 127)) + addval;
 
-      s_block_rgb[(x + xx) + ((y + yy) * 16)] = ZeroExtend32(static_cast<u16>(R)) |
-                                                (ZeroExtend32(static_cast<u16>(G)) << 8) |
-                                                (ZeroExtend32(static_cast<u16>(B)) << 16);
+      s_state.block_rgb[(x + xx) + ((y + yy) * 16)] = ZeroExtend32(static_cast<u16>(R)) |
+                                                      (ZeroExtend32(static_cast<u16>(G)) << 8) |
+                                                      (ZeroExtend32(static_cast<u16>(B)) << 16);
     }
   }
 }
 
-void MDEC::y_to_mono(const std::array<s16, 64>& Yblk)
+bool MDEC::DecodeRLE_New(s16* blk, const u8* qt)
 {
-  for (u32 i = 0; i < 64; i++)
+  // Swapped to row-major so we can vectorize the IDCT.
+  static constexpr std::array<u8, 64> zigzag = {{0,  8,  1,  2,  9,  16, 24, 17, 10, 3,  4,  11, 18, 25, 32, 40,
+                                                 33, 26, 19, 12, 5,  6,  13, 20, 27, 34, 41, 48, 56, 49, 42, 35,
+                                                 28, 21, 14, 7,  15, 22, 29, 36, 43, 50, 57, 58, 51, 44, 37, 30,
+                                                 23, 31, 38, 45, 52, 59, 60, 53, 46, 39, 47, 54, 61, 62, 55, 63}};
+
+  if (s_state.current_coefficient == 64)
   {
-    s16 Y = Yblk[i];
-    Y = SignExtendN<10, s16>(Y);
-    Y = std::clamp<s16>(Y, -128, 127);
-    Y += 128;
-    s_block_rgb[i] = static_cast<u32>(Y) & 0xFF;
+    std::fill_n(blk, 64, s16(0));
+
+    // skip padding at start
+    u16 n;
+    for (;;)
+    {
+      if (s_state.data_in_fifo.IsEmpty() || s_state.remaining_halfwords == 0)
+        return false;
+
+      n = s_state.data_in_fifo.Pop();
+      s_state.remaining_halfwords--;
+
+      if (n == 0xFE00)
+        continue;
+      else
+        break;
+    }
+
+    s_state.current_coefficient = 0;
+    s_state.current_q_scale = n >> 10;
+
+    // Store the DCT blocks with an additional 4 bits of precision.
+    const s32 val = SignExtendN<10, s32>(static_cast<s32>(n));
+    const s32 coeff =
+      (s_state.current_q_scale == 0) ? (val << 5) : (((val * qt[0]) << 4) + (val ? ((val < 0) ? 8 : -8) : 0));
+    blk[zigzag[0]] = static_cast<s16>(std::clamp(coeff, -0x4000, 0x3FFF));
   }
+
+  while (!s_state.data_in_fifo.IsEmpty() && s_state.remaining_halfwords > 0)
+  {
+    u16 n = s_state.data_in_fifo.Pop();
+    s_state.remaining_halfwords--;
+
+    s_state.current_coefficient += ((n >> 10) + 1);
+    if (s_state.current_coefficient < 64)
+    {
+      const s32 val = SignExtendN<10, s32>(n);
+      const s32 scq = static_cast<s32>(s_state.current_q_scale * qt[s_state.current_coefficient]);
+      const s32 coeff = (scq == 0) ? (val << 5) : ((((val * scq) >> 3) << 4) + (val ? ((val < 0) ? 8 : -8) : 0));
+      blk[zigzag[s_state.current_coefficient]] = static_cast<s16>(std::clamp(coeff, -0x4000, 0x3FFF));
+    }
+
+    if (s_state.current_coefficient >= 63)
+    {
+      s_state.current_coefficient = 64;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static s16 IDCTRow(const s16* blk, const s16* idct_matrix)
+{
+  // IDCT matrix is -32768..32767, block is -16384..16383. 4 adds can happen without overflow.
+  GSVector4i sum = GSVector4i::load<false>(blk).madd_s16(GSVector4i::load<true>(idct_matrix)).addp_s32();
+  return static_cast<s16>(((static_cast<s64>(sum.extract32<0>()) + static_cast<s64>(sum.extract32<1>())) + 0x20000) >>
+                          18);
+}
+
+void MDEC::IDCT_New(s16* blk)
+{
+  alignas(VECTOR_ALIGNMENT) std::array<s16, 64> temp;
+  for (u32 x = 0; x < 8; x++)
+  {
+    for (u32 y = 0; y < 8; y++)
+      temp[y * 8 + x] = IDCTRow(&blk[x * 8], &s_state.scale_table[y * 8]);
+  }
+  for (u32 x = 0; x < 8; x++)
+  {
+    for (u32 y = 0; y < 8; y++)
+    {
+      const s32 sum = IDCTRow(&temp[x * 8], &s_state.scale_table[y * 8]);
+      blk[x * 8 + y] = static_cast<s16>(std::clamp(SignExtendN<9, s32>(sum), -128, 127));
+    }
+  }
+}
+
+void MDEC::YUVToRGB_New(u32 xx, u32 yy, const std::array<s16, 64>& Crblk, const std::array<s16, 64>& Cbblk,
+                        const std::array<s16, 64>& Yblk)
+{
+  const GSVector4i addval = s_state.status.data_output_signed ? GSVector4i::cxpr(0) : GSVector4i::cxpr(0x80808080);
+  for (u32 y = 0; y < 8; y++)
+  {
+    const GSVector4i Cr = GSVector4i::loadl(&Crblk[(xx / 2) + ((y + yy) / 2) * 8]).s16to32();
+    const GSVector4i Cb = GSVector4i::loadl(&Cbblk[(xx / 2) + ((y + yy) / 2) * 8]).s16to32();
+    const GSVector4i Y = GSVector4i::load<true>(&Yblk[y * 8]);
+
+    // BT.601 YUV->RGB coefficients, rounding formula from Mednafen.
+    // r = clamp(sext9(Y + (((359 * Cr) + 0x80) >> 8)), -128, 127) + addval;
+    // g = clamp(sext9(Y + ((((-88 * Cb) & ~0x1F) + ((-183 * Cr) & ~0x07) + 0x80) >> 8)), -128, 127) + addval
+    // b = clamp(sext9<9, s32>(Y + (((454 * Cb) + 0x80) >> 8)), -128, 127) + addval
+
+    // Need to do the multiply as 32-bit, since 127 * 359 is greater than INT16_MAX.
+    // upl16(self) = interleave XYZW0000 -> XXYYZZWW.
+    const GSVector4i Crmul = Cr.mul32l(GSVector4i::cxpr(359)).add16(GSVector4i::cxpr(0x80)).sra32<8>().ps32();
+    const GSVector4i Cbmul = Cb.mul32l(GSVector4i::cxpr(454)).add16(GSVector4i::cxpr(0x80)).sra32<8>().ps32();
+    const GSVector4i CrCbmul = (Cb.mul32l(GSVector4i::cxpr(-88)) & GSVector4i::cxpr(~0x1F))
+                                 .add32(Cr.mul32l(GSVector4i::cxpr(-183)) & GSVector4i::cxpr(~0x07))
+                                 .add32(GSVector4i::cxpr(0x80))
+                                 .sra32<8>()
+                                 .ps32();
+    const GSVector4i r = Crmul.upl16(Crmul).add16(Y).sll16<7>().sra16<7>().ps16().add8(addval);
+    const GSVector4i g = CrCbmul.upl16(CrCbmul).add16(Y).sll16<7>().sra16<7>().ps16().add8(addval);
+    const GSVector4i b = Cbmul.upl16(Cbmul).add16(Y).sll16<7>().sra16<7>().ps16().add8(addval);
+    const GSVector4i rg = r.upl8(g);
+    const GSVector4i b0 = b.upl8();
+    const GSVector4i rgblow = rg.upl16(b0);
+    const GSVector4i rgbhigh = rg.uph16(b0);
+
+    u32* const out_row = &s_state.block_rgb[xx + ((y + yy) * 16)];
+    GSVector4i::store<false>(&out_row[0], rgblow);
+    GSVector4i::store<false>(&out_row[4], rgbhigh);
+  }
+}
+
+void MDEC::YUVToMono(const std::array<s16, 64>& Yblk)
+{
+  const s32 addval = s_state.status.data_output_signed ? 0 : 0x80;
+  for (u32 i = 0; i < 64; i++)
+    s_state.block_rgb[i] = static_cast<u32>(std::clamp(SignExtendN<9, s32>(Yblk[i]), -128, 127) + addval);
 }
 
 void MDEC::HandleSetQuantTableCommand()
 {
-  DebugAssert(s_remaining_halfwords >= 32);
+  DebugAssert(s_state.remaining_halfwords >= 32);
 
   // TODO: Remove extra copies..
   std::array<u16, 32> packed_data;
-  s_data_in_fifo.PopRange(packed_data.data(), static_cast<u32>(packed_data.size()));
-  s_remaining_halfwords -= 32;
-  std::memcpy(s_iq_y.data(), packed_data.data(), s_iq_y.size());
+  s_state.data_in_fifo.PopRange(packed_data.data(), static_cast<u32>(packed_data.size()));
+  s_state.remaining_halfwords -= 32;
+  std::memcpy(s_state.iq_y.data(), packed_data.data(), s_state.iq_y.size());
 
-  if (s_remaining_halfwords > 0)
+  if (s_state.remaining_halfwords > 0)
   {
-    DebugAssert(s_remaining_halfwords >= 32);
+    DebugAssert(s_state.remaining_halfwords >= 32);
 
-    s_data_in_fifo.PopRange(packed_data.data(), static_cast<u32>(packed_data.size()));
-    std::memcpy(s_iq_uv.data(), packed_data.data(), s_iq_uv.size());
+    s_state.data_in_fifo.PopRange(packed_data.data(), static_cast<u32>(packed_data.size()));
+    std::memcpy(s_state.iq_uv.data(), packed_data.data(), s_state.iq_uv.size());
   }
 }
 
 void MDEC::HandleSetScaleCommand()
 {
-  DebugAssert(s_remaining_halfwords == 64);
+  DebugAssert(s_state.remaining_halfwords == 64);
 
-  // TODO: Remove extra copies..
   std::array<u16, 64> packed_data;
-  s_data_in_fifo.PopRange(packed_data.data(), static_cast<u32>(packed_data.size()));
-  s_remaining_halfwords -= 32;
-  std::memcpy(s_scale_table.data(), packed_data.data(), s_scale_table.size() * sizeof(s16));
+  s_state.data_in_fifo.PopRange(packed_data.data(), static_cast<u32>(packed_data.size()));
+  s_state.remaining_halfwords -= 32;
+  SetScaleMatrix(packed_data.data());
+}
+
+void MDEC::SetScaleMatrix(const u16* values)
+{
+  for (u32 y = 0; y < 8; y++)
+  {
+    for (u32 x = 0; x < 8; x++)
+      s_state.scale_table[y * 8 + x] = values[x * 8 + y];
+  }
 }
 
 void MDEC::DrawDebugStateWindow()
 {
-  const float framebuffer_scale = Host::GetOSDScale();
+  const float framebuffer_scale = ImGuiManager::GetGlobalScale();
 
   ImGui::SetNextWindowSize(ImVec2(300.0f * framebuffer_scale, 350.0f * framebuffer_scale), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("MDEC State", nullptr))
@@ -918,26 +1071,27 @@ void MDEC::DrawDebugStateWindow()
   static constexpr std::array<const char*, 4> output_depths = {{"4-bit", "8-bit", "24-bit", "15-bit"}};
   static constexpr std::array<const char*, 7> block_names = {{"Crblk", "Cbblk", "Y1", "Y2", "Y3", "Y4", "Output"}};
 
-  ImGui::Text("Blocks Decoded: %u", s_total_blocks_decoded);
-  ImGui::Text("Data-In FIFO Size: %u (%u bytes)", s_data_in_fifo.GetSize(), s_data_in_fifo.GetSize() * 4);
-  ImGui::Text("Data-Out FIFO Size: %u (%u bytes)", s_data_out_fifo.GetSize(), s_data_out_fifo.GetSize() * 4);
-  ImGui::Text("DMA Enable: %s%s", s_enable_dma_in ? "In " : "", s_enable_dma_out ? "Out" : "");
-  ImGui::Text("Current State: %s", state_names[static_cast<u8>(s_state)]);
-  ImGui::Text("Current Block: %s", block_names[s_current_block]);
-  ImGui::Text("Current Coefficient: %u", s_current_coefficient);
+  ImGui::Text("Blocks Decoded: %u", s_state.total_blocks_decoded);
+  ImGui::Text("Data-In FIFO Size: %u (%u bytes)", s_state.data_in_fifo.GetSize(), s_state.data_in_fifo.GetSize() * 4);
+  ImGui::Text("Data-Out FIFO Size: %u (%u bytes)", s_state.data_out_fifo.GetSize(),
+              s_state.data_out_fifo.GetSize() * 4);
+  ImGui::Text("DMA Enable: %s%s", s_state.enable_dma_in ? "In " : "", s_state.enable_dma_out ? "Out" : "");
+  ImGui::Text("Current State: %s", state_names[static_cast<u8>(s_state.state)]);
+  ImGui::Text("Current Block: %s", block_names[s_state.current_block]);
+  ImGui::Text("Current Coefficient: %u", s_state.current_coefficient);
 
   if (ImGui::CollapsingHeader("Status", ImGuiTreeNodeFlags_DefaultOpen))
   {
-    ImGui::Text("Data-Out FIFO Empty: %s", s_status.data_out_fifo_empty ? "Yes" : "No");
-    ImGui::Text("Data-In FIFO Full: %s", s_status.data_in_fifo_full ? "Yes" : "No");
-    ImGui::Text("Command Busy: %s", s_status.command_busy ? "Yes" : "No");
-    ImGui::Text("Data-In Request: %s", s_status.data_in_request ? "Yes" : "No");
-    ImGui::Text("Output Depth: %s", output_depths[static_cast<u8>(s_status.data_output_depth.GetValue())]);
-    ImGui::Text("Output Signed: %s", s_status.data_output_signed ? "Yes" : "No");
-    ImGui::Text("Output Bit 15: %u", ZeroExtend32(s_status.data_output_bit15.GetValue()));
-    ImGui::Text("Current Block: %u", ZeroExtend32(s_status.current_block.GetValue()));
+    ImGui::Text("Data-Out FIFO Empty: %s", s_state.status.data_out_fifo_empty ? "Yes" : "No");
+    ImGui::Text("Data-In FIFO Full: %s", s_state.status.data_in_fifo_full ? "Yes" : "No");
+    ImGui::Text("Command Busy: %s", s_state.status.command_busy ? "Yes" : "No");
+    ImGui::Text("Data-In Request: %s", s_state.status.data_in_request ? "Yes" : "No");
+    ImGui::Text("Output Depth: %s", output_depths[static_cast<u8>(s_state.status.data_output_depth.GetValue())]);
+    ImGui::Text("Output Signed: %s", s_state.status.data_output_signed ? "Yes" : "No");
+    ImGui::Text("Output Bit 15: %u", ZeroExtend32(s_state.status.data_output_bit15.GetValue()));
+    ImGui::Text("Current Block: %u", ZeroExtend32(s_state.status.current_block.GetValue()));
     ImGui::Text("Parameter Words Remaining: %d",
-                static_cast<s32>(SignExtend32(s_status.parameter_words_remaining.GetValue())));
+                static_cast<s32>(SignExtend32(s_state.status.parameter_words_remaining.GetValue())));
   }
 
   ImGui::End();

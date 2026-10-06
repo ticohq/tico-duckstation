@@ -1,162 +1,21 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "cd_image.h"
 #include "cd_subchannel_replacement.h"
+
 #include "common/assert.h"
 #include "common/error.h"
 #include "common/file_system.h"
 #include "common/log.h"
+#include "common/path.h"
+
+#include "libchdr/cdrom.h"
+
 #include <array>
-#include <cerrno>
 #include <map>
+
 Log_SetChannel(CDImageEcm);
-
-// unecm.c by Neill Corlett (c) 2002, GPL licensed
-
-/* LUTs used for computing ECC/EDC */
-
-static constexpr std::array<u8, 256> ComputeECCFLUT()
-{
-  std::array<u8, 256> ecc_lut{};
-  for (u32 i = 0; i < 256; i++)
-  {
-    u32 j = (i << 1) ^ (i & 0x80 ? 0x11D : 0);
-    ecc_lut[i] = static_cast<u8>(j);
-  }
-  return ecc_lut;
-}
-
-static constexpr std::array<u8, 256> ComputeECCBLUT()
-{
-  std::array<u8, 256> ecc_lut{};
-  for (u32 i = 0; i < 256; i++)
-  {
-    u32 j = (i << 1) ^ (i & 0x80 ? 0x11D : 0);
-    ecc_lut[i ^ j] = static_cast<u8>(i);
-  }
-  return ecc_lut;
-}
-
-static constexpr std::array<u32, 256> ComputeEDCLUT()
-{
-  std::array<u32, 256> edc_lut{};
-  for (u32 i = 0; i < 256; i++)
-  {
-    u32 edc = i;
-    for (u32 k = 0; k < 8; k++)
-      edc = (edc >> 1) ^ (edc & 1 ? 0xD8018001 : 0);
-    edc_lut[i] = edc;
-  }
-  return edc_lut;
-}
-
-static constexpr std::array<u8, 256> ecc_f_lut = ComputeECCFLUT();
-static constexpr std::array<u8, 256> ecc_b_lut = ComputeECCBLUT();
-static constexpr std::array<u32, 256> edc_lut = ComputeEDCLUT();
-
-/***************************************************************************/
-/*
-** Compute EDC for a block
-*/
-static u32 edc_partial_computeblock(u32 edc, const u8* src, u16 size)
-{
-  while (size--)
-    edc = (edc >> 8) ^ edc_lut[(edc ^ (*src++)) & 0xFF];
-  return edc;
-}
-
-static void edc_computeblock(const u8* src, u16 size, u8* dest)
-{
-  u32 edc = edc_partial_computeblock(0, src, size);
-  dest[0] = (edc >> 0) & 0xFF;
-  dest[1] = (edc >> 8) & 0xFF;
-  dest[2] = (edc >> 16) & 0xFF;
-  dest[3] = (edc >> 24) & 0xFF;
-}
-
-/***************************************************************************/
-/*
-** Compute ECC for a block (can do either P or Q)
-*/
-static void ecc_computeblock(u8* src, u32 major_count, u32 minor_count, u32 major_mult, u32 minor_inc, u8* dest)
-{
-  u32 size = major_count * minor_count;
-  u32 major, minor;
-  for (major = 0; major < major_count; major++)
-  {
-    u32 index = (major >> 1) * major_mult + (major & 1);
-    u8 ecc_a = 0;
-    u8 ecc_b = 0;
-    for (minor = 0; minor < minor_count; minor++)
-    {
-      u8 temp = src[index];
-      index += minor_inc;
-      if (index >= size)
-        index -= size;
-      ecc_a ^= temp;
-      ecc_b ^= temp;
-      ecc_a = ecc_f_lut[ecc_a];
-    }
-    ecc_a = ecc_b_lut[ecc_f_lut[ecc_a] ^ ecc_b];
-    dest[major] = ecc_a;
-    dest[major + major_count] = ecc_a ^ ecc_b;
-  }
-}
-
-/*
-** Generate ECC P and Q codes for a block
-*/
-static void ecc_generate(u8* sector, int zeroaddress)
-{
-  u8 address[4], i;
-  /* Save the address and zero it out */
-  if (zeroaddress)
-    for (i = 0; i < 4; i++)
-    {
-      address[i] = sector[12 + i];
-      sector[12 + i] = 0;
-    }
-  /* Compute ECC P code */
-  ecc_computeblock(sector + 0xC, 86, 24, 2, 86, sector + 0x81C);
-  /* Compute ECC Q code */
-  ecc_computeblock(sector + 0xC, 52, 43, 86, 88, sector + 0x8C8);
-  /* Restore the address */
-  if (zeroaddress)
-    for (i = 0; i < 4; i++)
-      sector[12 + i] = address[i];
-}
-
-/***************************************************************************/
-/*
-** Generate ECC/EDC information for a sector (must be 2352 = 0x930 bytes)
-** Returns 0 on success
-*/
-static void eccedc_generate(u8* sector, int type)
-{
-  switch (type)
-  {
-    case 1: /* Mode 1 */
-      /* Compute EDC */
-      edc_computeblock(sector + 0x00, 0x810, sector + 0x810);
-      /* Write out zero bytes */
-      for (u32 i = 0; i < 8; i++)
-        sector[0x814 + i] = 0;
-      /* Generate ECC P/Q codes */
-      ecc_generate(sector, 0);
-      break;
-    case 2: /* Mode 2 form 1 */
-      /* Compute EDC */
-      edc_computeblock(sector + 0x10, 0x808, sector + 0x818);
-      /* Generate ECC P/Q codes */
-      ecc_generate(sector, 1);
-      break;
-    case 3: /* Mode 2 form 2 */
-      /* Compute EDC */
-      edc_computeblock(sector + 0x10, 0x91C, sector + 0x92C);
-      break;
-  }
-}
 
 namespace {
 
@@ -232,13 +91,10 @@ CDImageEcm::~CDImageEcm()
 bool CDImageEcm::Open(const char* filename, Error* error)
 {
   m_filename = filename;
-  m_fp = FileSystem::OpenCFile(filename, "rb");
+  m_fp = FileSystem::OpenSharedCFile(filename, "rb", FileSystem::FileShareMode::DenyWrite, error);
   if (!m_fp)
   {
-    Log_ErrorPrintf("Failed to open binfile '%s': errno %d", filename, errno);
-    if (error)
-      error->SetErrno(errno);
-
+    Error::AddPrefixFmt(error, "Failed to open binfile '{}': ", Path::GetFileName(filename));
     return false;
   }
 
@@ -246,7 +102,7 @@ bool CDImageEcm::Open(const char* filename, Error* error)
   if (FileSystem::FSeek64(m_fp, 0, SEEK_END) != 0 || (file_size = FileSystem::FTell64(m_fp)) <= 0 ||
       FileSystem::FSeek64(m_fp, 0, SEEK_SET) != 0)
   {
-    Log_ErrorPrintf("Get file size failed: errno %d", errno);
+    ERROR_LOG("Get file size failed: errno {}", errno);
     if (error)
       error->SetErrno(errno);
 
@@ -257,8 +113,8 @@ bool CDImageEcm::Open(const char* filename, Error* error)
   if (std::fread(header, sizeof(header), 1, m_fp) != 1 || header[0] != 'E' || header[1] != 'C' || header[2] != 'M' ||
       header[3] != 0)
   {
-    Log_ErrorPrintf("Failed to read/invalid header");
-    Error::SetString(error, "Failed to read/invalid header");
+    ERROR_LOG("Failed to read/invalid header");
+    Error::SetStringView(error, "Failed to read/invalid header");
     return false;
   }
 
@@ -271,8 +127,8 @@ bool CDImageEcm::Open(const char* filename, Error* error)
     int bits = std::fgetc(m_fp);
     if (bits == EOF)
     {
-      Log_ErrorPrintf("Unexpected EOF after %zu chunks", m_data_map.size());
-      Error::SetString(error, fmt::format("Unexpected EOF after {} chunks", m_data_map.size()));
+      ERROR_LOG("Unexpected EOF after {} chunks", m_data_map.size());
+      Error::SetStringFmt(error, "Unexpected EOF after {} chunks", m_data_map.size());
       return false;
     }
 
@@ -285,8 +141,8 @@ bool CDImageEcm::Open(const char* filename, Error* error)
       bits = std::fgetc(m_fp);
       if (bits == EOF)
       {
-        Log_ErrorPrintf("Unexpected EOF after %zu chunks", m_data_map.size());
-        Error::SetString(error, fmt::format("Unexpected EOF after {} chunks", m_data_map.size()));
+        ERROR_LOG("Unexpected EOF after {} chunks", m_data_map.size());
+        Error::SetStringFmt(error, "Unexpected EOF after {} chunks", m_data_map.size());
         return false;
       }
 
@@ -303,8 +159,8 @@ bool CDImageEcm::Open(const char* filename, Error* error)
 
     if (count >= 0x80000000u)
     {
-      Log_ErrorPrintf("Corrupted header after %zu chunks", m_data_map.size());
-      Error::SetString(error, fmt::format("Corrupted header after {} chunks", m_data_map.size()));
+      ERROR_LOG("Corrupted header after {} chunks", m_data_map.size());
+      Error::SetStringFmt(error, "Corrupted header after {} chunks", m_data_map.size());
       return false;
     }
 
@@ -320,8 +176,8 @@ bool CDImageEcm::Open(const char* filename, Error* error)
 
         if (static_cast<s64>(file_offset) > file_size)
         {
-          Log_ErrorPrintf("Out of file bounds after %zu chunks", m_data_map.size());
-          Error::SetString(error, fmt::format("Out of file bounds after {} chunks", m_data_map.size()));
+          ERROR_LOG("Out of file bounds after {} chunks", m_data_map.size());
+          Error::SetStringFmt(error, "Out of file bounds after {} chunks", m_data_map.size());
         }
       }
     }
@@ -337,31 +193,30 @@ bool CDImageEcm::Open(const char* filename, Error* error)
 
         if (static_cast<s64>(file_offset) > file_size)
         {
-          Log_ErrorPrintf("Out of file bounds after %zu chunks", m_data_map.size());
-          Error::SetString(error, fmt::format("Out of file bounds after {} chunks", m_data_map.size()));
+          ERROR_LOG("Out of file bounds after {} chunks", m_data_map.size());
+          Error::SetStringFmt(error, "Out of file bounds after {} chunks", m_data_map.size());
         }
       }
     }
 
     if (std::fseek(m_fp, file_offset, SEEK_SET) != 0)
     {
-      Log_ErrorPrintf("Failed to seek to offset %u after %zu chunks", file_offset, m_data_map.size());
-      Error::SetString(error,
-                       fmt::format("Failed to seek to offset {} after {} chunks", file_offset, m_data_map.size()));
+      ERROR_LOG("Failed to seek to offset {} after {} chunks", file_offset, m_data_map.size());
+      Error::SetStringFmt(error, "Failed to seek to offset {} after {} chunks", file_offset, m_data_map.size());
       return false;
     }
   }
 
   if (m_data_map.empty())
   {
-    Log_ErrorPrintf("No data in image '%s'", filename);
-    Error::SetString(error, fmt::format("No data in image '{}'", filename));
+    ERROR_LOG("No data in image '{}'", filename);
+    Error::SetStringFmt(error, "No data in image '{}'", filename);
     return false;
   }
 
   m_lba_count = disc_offset / RAW_SECTOR_SIZE;
   if ((disc_offset % RAW_SECTOR_SIZE) != 0)
-    Log_WarningPrintf("ECM image is misaligned with offset %u", disc_offset);
+    WARNING_LOG("ECM image is misaligned with offset {}", disc_offset);
   if (m_lba_count == 0)
     return false;
 
@@ -460,7 +315,8 @@ bool CDImageEcm::ReadChunks(u32 disc_offset, u32 size)
           if (std::fread(sector + 0x00C, 0x003, 1, m_fp) != 1 || std::fread(sector + 0x010, 0x800, 1, m_fp) != 1)
             return false;
 
-          eccedc_generate(sector, 1);
+          edc_set(&sector[2064], edc_compute(sector, 2064));
+          ecc_generate(sector);
           skip = 0;
         }
         break;
@@ -476,7 +332,8 @@ bool CDImageEcm::ReadChunks(u32 disc_offset, u32 size)
           sector[0x12] = sector[0x16];
           sector[0x13] = sector[0x17];
 
-          eccedc_generate(sector, 2);
+          edc_set(&sector[2072], edc_compute(&sector[16], 2056));
+          ecc_generate(sector);
           skip = 0x10;
         }
         break;
@@ -492,7 +349,7 @@ bool CDImageEcm::ReadChunks(u32 disc_offset, u32 size)
           sector[0x12] = sector[0x16];
           sector[0x13] = sector[0x17];
 
-          eccedc_generate(sector, 3);
+          edc_set(&sector[2348], edc_compute(&sector[16], 2332));
           skip = 0x10;
         }
         break;

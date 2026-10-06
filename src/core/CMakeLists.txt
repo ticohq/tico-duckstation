@@ -40,8 +40,8 @@ add_library(core
   game_database.h
   game_list.cpp
   game_list.h
-  gdb_protocol.cpp
-  gdb_protocol.h
+  gdb_server.cpp
+  gdb_server.h
   gpu.cpp
   gpu.h
   gpu_backend.cpp
@@ -73,12 +73,15 @@ add_library(core
   imgui_overlays.h
   interrupt_controller.cpp
   interrupt_controller.h
+  justifier.cpp
+  justifier.h
   mdec.cpp
   mdec.h
   memory_card.cpp
   memory_card.h
   memory_card_image.cpp
   memory_card_image.h
+  mips_encoder.h
   multitap.cpp
   multitap.h
   negcon.cpp
@@ -89,12 +92,12 @@ add_library(core
   pad.h
   pcdrv.cpp
   pcdrv.h
+  pine_server.cpp
+  pine_server.h
   playstation_mouse.cpp
   playstation_mouse.h
   psf_loader.cpp
   psf_loader.h
-  resources.cpp
-  resources.h
   save_state_version.h
   settings.cpp
   settings.h
@@ -132,8 +135,12 @@ set(NEWREC_SOURCES
 target_precompile_headers(core PRIVATE "pch.h")
 target_include_directories(core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_include_directories(core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
-target_link_libraries(core PUBLIC Threads::Threads common util ZLIB::ZLIB)
-target_link_libraries(core PRIVATE xxhash imgui rapidyaml rcheevos)
+target_link_libraries(core PUBLIC Threads::Threads common util)
+target_link_libraries(core PRIVATE xxhash imgui rapidyaml rcheevos ZLIB::ZLIB Zstd::Zstd)
+if(NOT NINTENDO_SWITCH)
+  # cpuinfo has no Horizon backend; the Switch's CPU is known
+  target_link_libraries(core PRIVATE cpuinfo::cpuinfo)
+endif()
 
 if(CPU_ARCH_X64)
   target_compile_definitions(core PUBLIC "ENABLE_RECOMPILER=1" "ENABLE_NEWREC=1" "ENABLE_MMAP_FASTMEM=1")
@@ -178,11 +185,6 @@ if(CPU_ARCH_RISCV64)
   message(STATUS "Building RISC-V 64-bit recompiler.")
 endif()
 
-if(NOT ANDROID AND NOT NINTENDO_SWITCH)
-  target_compile_definitions(core PUBLIC -DENABLE_DISCORD_PRESENCE=1)
-  target_link_libraries(core PRIVATE discord-rpc)
-endif()
-
 # Copy the provided data directory to the output directory. Borrowed from PCSX2.
 function(add_resources target path basedir)
 	get_filename_component(dir ${path} DIRECTORY)
@@ -205,6 +207,13 @@ endfunction()
 function(add_core_resources target)
   add_util_resources(${target})
 
+  if(APPLE)
+    # Copy discord-rpc into the bundle
+    get_target_property(DISCORD_RPC_LIBRARY DiscordRPC::discord-rpc IMPORTED_LOCATION_RELEASE)
+    target_sources(${target} PRIVATE "${DISCORD_RPC_LIBRARY}")
+    set_source_files_properties("${DISCORD_RPC_LIBRARY}" PROPERTIES MACOSX_PACKAGE_LOCATION Frameworks)
+  endif()
+
   file(GLOB_RECURSE RESOURCE_FILES ${CMAKE_SOURCE_DIR}/data/resources/*)
   foreach(path IN LISTS RESOURCE_FILES)
     get_filename_component(file ${path} NAME)
@@ -213,4 +222,8 @@ function(add_core_resources target)
     endif()
     add_resources(${target} ${path} ${CMAKE_SOURCE_DIR}/data/resources/)
   endforeach()
+  if(ALLOW_INSTALL)
+    install_imported_dep_library(cpuinfo::cpuinfo)
+    install(DIRECTORY "$<TARGET_FILE_DIR:${target}>/resources" DESTINATION "${CMAKE_INSTALL_PREFIX}")
+  endif()
 endfunction()

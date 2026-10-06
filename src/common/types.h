@@ -46,9 +46,15 @@ char (&__countof_ArraySizeHelper(T (&array)[N]))[N];
 #endif
 #endif
 
-// offsetof macro
-#ifndef offsetof
-#define offsetof(st, m) ((size_t)((char*)&((st*)(0))->m - (char*)0))
+// offsetof macro. Need to use __builtin_offsetof(), otherwise it doesn't work in constant expressions.
+#if defined(__clang__) || defined(__GNUC__)
+#define OFFSETOF(st, m) __builtin_offsetof(st, m)
+#else
+#ifdef offsetof
+#define OFFSETOF(st, m) offsetof(st, m)
+#else
+#define OFFSETOF(st, m) ((size_t)((char*)&((st*)(0))->m - (char*)0))
+#endif
 #endif
 
 #ifdef __GNUC__
@@ -186,11 +192,14 @@ static constexpr u32 HOST_PAGE_SHIFT = 12;
 #endif
 
 // Host cache line sizes.
-#if defined(__APPLE__) && defined(__aarch64__)
+#if defined(OVERRIDE_HOST_CACHE_LINE_SIZE)
+static constexpr u32 HOST_CACHE_LINE_SIZE = OVERRIDE_HOST_CACHE_LINE_SIZE;
+#elif defined(__APPLE__) && defined(__aarch64__)
 static constexpr u32 HOST_CACHE_LINE_SIZE = 128; // Apple Silicon uses 128b cache lines.
 #else
 static constexpr u32 HOST_CACHE_LINE_SIZE = 64; // Everything else is 64b.
 #endif
+#define ALIGN_TO_CACHE_LINE alignas(HOST_CACHE_LINE_SIZE)
 
 // Enum class bitwise operators
 #define IMPLEMENT_ENUM_CLASS_BITWISE_OPERATORS(type_)                                                                  \

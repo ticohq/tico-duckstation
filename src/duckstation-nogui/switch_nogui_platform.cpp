@@ -3,6 +3,7 @@
 
 #include "core/host.h"
 
+#include "util/page_fault_handler.h"
 #include "util/switch_exception_frame.h"
 
 #include <switch.h>
@@ -53,7 +54,7 @@ alignas(16) uint8_t switch_exception_stack_top[0x8000];
 
 void switch_exception_handler(Result reason, ExceptionFrameA64* frame, u64 fp)
 {
-  if (Common::PageFaultHandler::PageFaultHandler(frame))
+  if (PageFaultHandler::HandleSwitchException(frame))
     return;
   HandleFault(frame->pc, frame->lr, fp, frame->far, reason);
 }
@@ -101,7 +102,7 @@ bool SwitchNoGUIPlatform::Initialize()
   return true;
 }
 
-void SwitchNoGUIPlatform::ReportError(const std::string_view& title, const std::string_view& message)
+void SwitchNoGUIPlatform::ReportError(std::string_view title, std::string_view message)
 {
   // The title is usually just error which is not that informative
   // so we append the first line of the message
@@ -119,7 +120,7 @@ void SwitchNoGUIPlatform::ReportError(const std::string_view& title, const std::
   errorApplicationShow(&errapp);
 }
 
-bool SwitchNoGUIPlatform::ConfirmMessage(const std::string_view& title, const std::string_view& message)
+bool SwitchNoGUIPlatform::ConfirmMessage(std::string_view title, std::string_view message)
 {
   return true;
 }
@@ -168,7 +169,7 @@ void SwitchNoGUIPlatform::SetPlatformWindowTitle(std::string title)
 {
 }
 
-std::optional<u32> SwitchNoGUIPlatform::ConvertHostKeyboardStringToCode(const std::string_view& str)
+std::optional<u32> SwitchNoGUIPlatform::ConvertHostKeyboardStringToCode(std::string_view str)
 {
   return std::nullopt;
 }
@@ -229,12 +230,12 @@ bool SwitchNoGUIPlatform::RequestRenderWindowSize(s32 new_window_width, s32 new_
   return false;
 }
 
-bool SwitchNoGUIPlatform::OpenURL(const std::string_view& url)
+bool SwitchNoGUIPlatform::OpenURL(std::string_view url)
 {
   return false;
 }
 
-bool SwitchNoGUIPlatform::CopyTextToClipboard(const std::string_view& text)
+bool SwitchNoGUIPlatform::CopyTextToClipboard(std::string_view text)
 {
   return false;
 }

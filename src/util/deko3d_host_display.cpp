@@ -16,6 +16,7 @@
 #include <array>
 #include <switch.h>
 #include <tuple>
+#include "fmt/printf.h"
 Log_SetChannel(Deko3DHostDisplay);
 
 Deko3DHostDisplay::Deko3DHostDisplay() = default;
@@ -63,14 +64,14 @@ bool Deko3DHostDisplay::CreateDevice(const WindowInfo& wi, bool vsync)
   WindowInfo local_wi(wi);
   if (!Deko3D::Context::Create(&local_wi))
   {
-    Log_ErrorPrintf("Failed to create deko3D context");
+    ERROR_LOG("{}", fmt::sprintf("Failed to create deko3D context"));
     m_window_info = {};
     return false;
   }
   m_swap_chain = Deko3D::SwapChain::Create(local_wi);
   if (!m_swap_chain)
   {
-    Log_ErrorPrintf("Failed to create swapchain");
+    ERROR_LOG("{}", fmt::sprintf("Failed to create swapchain"));
   }
 
   m_window_info = m_swap_chain ? m_swap_chain->GetWindowInfo() : local_wi;
@@ -179,14 +180,14 @@ bool Deko3DHostDisplay::SetPostProcessingChain(const std::string_view& config)
 
     if (!g_deko3d_shader_cache->GetVertexShader(vs, stage.vertex_shader, stage.vertex_shader_memory))
     {
-      Log_InfoPrintf("Failed to compile post-processing program, disabling.");
+      INFO_LOG("{}", fmt::sprintf("Failed to compile post-processing program, disabling."));
       DestroyPostProcessingStages();
       m_post_processing_chain.ClearStages();
       return false;
     }
     if (!g_deko3d_shader_cache->GetFragmentShader(ps, stage.fragment_shader, stage.fragment_shader_memory))
     {
-      Log_InfoPrintf("Failed to compile post-processing program, disabling.");
+      INFO_LOG("{}", fmt::sprintf("Failed to compile post-processing program, disabling."));
       DestroyPostProcessingStages();
       m_post_processing_chain.ClearStages();
       return false;

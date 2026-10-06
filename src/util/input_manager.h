@@ -27,12 +27,11 @@ enum class InputSourceType : u32
 #ifdef _WIN32
   DInput,
   XInput,
-  RawInput,
 #endif
-#ifdef ENABLE_SDL2
+#ifndef __ANDROID__
   SDL,
-#endif
-#ifdef __ANDROID__
+  RawInput,
+#else
   Android,
 #endif
 #ifdef __SWITCH__
@@ -178,12 +177,12 @@ namespace InputManager {
 static constexpr double VIBRATION_UPDATE_INTERVAL_SECONDS = 0.5; // 500ms
 
 /// Maximum number of host mouse devices.
-static constexpr u32 MAX_POINTER_DEVICES = 1;
+static constexpr u32 MAX_POINTER_DEVICES = 8;
 static constexpr u32 MAX_POINTER_BUTTONS = 3;
 
 /// Maximum number of software cursors. We allocate an extra two for controllers with
 /// positioning data from the controller instead of a mouse.
-static constexpr u32 MAX_SOFTWARE_CURSORS = MAX_POINTER_BUTTONS + 2;
+static constexpr u32 MAX_SOFTWARE_CURSORS = MAX_POINTER_DEVICES + 2;
 
 /// Number of macro buttons per controller.
 static constexpr u32 NUM_MACRO_BUTTONS_PER_CONTROLLER = 4;
@@ -198,16 +197,16 @@ const char* InputSourceToString(InputSourceType clazz);
 bool GetInputSourceDefaultEnabled(InputSourceType type);
 
 /// Parses an input class string.
-std::optional<InputSourceType> ParseInputSourceString(const std::string_view& str);
+std::optional<InputSourceType> ParseInputSourceString(std::string_view str);
 
 /// Parses a pointer device string, i.e. tells you which pointer is specified.
-std::optional<u32> GetIndexFromPointerBinding(const std::string_view& str);
+std::optional<u32> GetIndexFromPointerBinding(std::string_view str);
 
 /// Returns the device name for a pointer index (e.g. Pointer-0).
 std::string GetPointerDeviceName(u32 pointer_index);
 
 /// Converts a key code from a human-readable string to an identifier.
-std::optional<u32> ConvertHostKeyboardStringToCode(const std::string_view& str);
+std::optional<u32> ConvertHostKeyboardStringToCode(std::string_view str);
 
 /// Converts a key code from an identifier to a human-readable string.
 std::optional<std::string> ConvertHostKeyboardCodeToString(u32 code);
@@ -229,7 +228,7 @@ InputBindingKey MakePointerAxisKey(u32 index, InputPointerAxis axis);
 InputBindingKey MakeSensorAxisKey(InputSubclass sensor, u32 axis);
 
 /// Parses an input binding key string.
-std::optional<InputBindingKey> ParseInputBindingKey(const std::string_view& binding);
+std::optional<InputBindingKey> ParseInputBindingKey(std::string_view binding);
 
 /// Converts a input key to a string.
 std::string ConvertInputBindingKeyToString(InputBindingInfo::Type binding_type, InputBindingKey key);
@@ -251,13 +250,13 @@ std::vector<std::pair<std::string, std::string>> EnumerateDevices();
 std::vector<InputBindingKey> EnumerateMotors();
 
 /// Retrieves bindings that match the generic bindings for the specified device.
-GenericInputBindingMapping GetGenericBindingMapping(const std::string_view& device);
+GenericInputBindingMapping GetGenericBindingMapping(std::string_view device);
 
 /// Returns true if the specified input source is enabled.
 bool IsInputSourceEnabled(SettingsInterface& si, InputSourceType type);
 
 /// Re-parses the config and registers all hotkey and pad bindings.
-void ReloadBindings(SettingsInterface& si, SettingsInterface& binding_si);
+void ReloadBindings(SettingsInterface& si, SettingsInterface& hotkey_binding_si);
 
 /// Re-parses the sources part of the config and initializes any backends.
 void ReloadSources(SettingsInterface& si, std::unique_lock<std::mutex>& settings_lock);
@@ -281,10 +280,10 @@ bool HasAnyBindingsForKey(InputBindingKey key);
 bool HasAnyBindingsForSource(InputBindingKey key);
 
 /// Parses a string binding into its components. Use with external AddBinding().
-bool ParseBindingAndGetSource(const std::string_view& binding, InputBindingKey* key, InputSource** source);
+bool ParseBindingAndGetSource(std::string_view binding, InputBindingKey* key, InputSource** source);
 
 /// Externally adds a fixed binding. Be sure to call *after* ReloadBindings() otherwise it will be lost.
-void AddBinding(const std::string_view& binding, const InputEventHandler& handler);
+void AddBinding(std::string_view binding, const InputEventHandler& handler);
 
 /// Adds an external vibration binding.
 void AddVibrationBinding(u32 pad_index, const InputBindingKey* motor_0_binding, InputSource* motor_0_source,
@@ -315,6 +314,9 @@ void SetPadVibrationIntensity(u32 pad_index, float large_or_single_motor_intensi
 /// The pad vibration state will internally remain, so that when emulation is unpaused, the effect resumes.
 void PauseVibration();
 
+/// Returns the number of currently-connected pointer devices.
+u32 GetPointerCount();
+
 /// Reads absolute pointer position.
 std::pair<float, float> GetPointerAbsolutePosition(u32 index);
 
@@ -326,6 +328,7 @@ void UpdatePointerAbsolutePosition(u32 index, float x, float y);
 void UpdatePointerRelativeDelta(u32 index, InputPointerAxis axis, float d, bool raw_input = false);
 
 /// Updates host mouse mode (relative/cursor hiding).
+void UpdateRelativeMouseMode();
 void UpdateHostMouseMode();
 
 /// Sets the state of the specified macro button.
@@ -333,6 +336,9 @@ void SetMacroButtonState(u32 pad, u32 index, bool state);
 
 /// Returns true if the raw input source is being used.
 bool IsUsingRawInput();
+
+/// Updates InputManager's view of the window size, used for clamping raw input coordinates.
+void SetDisplayWindowSize(float width, float height);
 
 /// Restores default configuration.
 void SetDefaultSourceConfig(SettingsInterface& si);
@@ -352,10 +358,10 @@ bool MapController(SettingsInterface& si, u32 controller,
 std::vector<std::string> GetInputProfileNames();
 
 /// Called when a new input device is connected.
-void OnInputDeviceConnected(const std::string_view& identifier, const std::string_view& device_name);
+void OnInputDeviceConnected(std::string_view identifier, std::string_view device_name);
 
 /// Called when an input device is disconnected.
-void OnInputDeviceDisconnected(const std::string_view& identifier);
+void OnInputDeviceDisconnected(InputBindingKey key, std::string_view identifier);
 } // namespace InputManager
 
 namespace Host {
@@ -363,10 +369,10 @@ namespace Host {
 void AddFixedInputBindings(SettingsInterface& si);
 
 /// Called when a new input device is connected.
-void OnInputDeviceConnected(const std::string_view& identifier, const std::string_view& device_name);
+void OnInputDeviceConnected(std::string_view identifier, std::string_view device_name);
 
 /// Called when an input device is disconnected.
-void OnInputDeviceDisconnected(const std::string_view& identifier);
+void OnInputDeviceDisconnected(InputBindingKey key, std::string_view identifier);
 
 /// Enables "relative" mouse mode, locking the cursor position and returning relative coordinates.
 void SetMouseMode(bool relative, bool hide_cursor);

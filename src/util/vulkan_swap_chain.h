@@ -9,6 +9,7 @@
 
 #include "common/types.h"
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -16,6 +17,11 @@
 class VulkanSwapChain
 {
 public:
+  // We don't actually need +1 semaphores, or, more than one really.
+  // But, the validation layer gets cranky if we don't fence wait before the next image acquire.
+  // So, add an additional semaphore to ensure that we're never acquiring before fence waiting.
+  static constexpr u32 NUM_SEMAPHORES = 4; // Should be command buffers + 1
+
   ~VulkanSwapChain();
 
   // Creates a vulkan-renderable surface for the specified window handle.
@@ -25,8 +31,12 @@ public:
   static void DestroyVulkanSurface(VkInstance instance, WindowInfo* wi, VkSurfaceKHR surface);
 
   // Create a new swap chain from a pre-existing surface.
-  static std::unique_ptr<VulkanSwapChain> Create(const WindowInfo& wi, VkSurfaceKHR surface, bool vsync,
+  static std::unique_ptr<VulkanSwapChain> Create(const WindowInfo& wi, VkSurfaceKHR surface,
+                                                 VkPresentModeKHR present_mode,
                                                  std::optional<bool> exclusive_fullscreen_control);
+
+  // Determines present mode to use.
+  static bool SelectPresentMode(VkSurfaceKHR surface, GPUVSyncMode* vsync_mode, VkPresentModeKHR* present_mode);
 
   ALWAYS_INLINE VkSurfaceKHR GetSurface() const { return m_surface; }
   ALWAYS_INLINE VkSwapchainKHR GetSwapChain() const { return m_swap_chain; }
@@ -60,27 +70,24 @@ public:
   }
 
   // Returns true if the current present mode is synchronizing (adaptive or hard).
-  ALWAYS_INLINE bool IsPresentModeSynchronizing() const
-  {
-    return (m_actual_present_mode == VK_PRESENT_MODE_FIFO_KHR ||
-            m_actual_present_mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR);
-  }
+  ALWAYS_INLINE bool IsPresentModeSynchronizing() const { return (m_present_mode == VK_PRESENT_MODE_FIFO_KHR); }
+  ALWAYS_INLINE VkPresentModeKHR GetPresentMode() const { return m_present_mode; }
 
   VkResult AcquireNextImage();
   void ReleaseCurrentImage();
+  void ResetImageAcquireResult();
 
   bool RecreateSurface(const WindowInfo& new_wi);
   bool ResizeSwapChain(u32 new_width = 0, u32 new_height = 0, float new_scale = 1.0f);
 
   // Change vsync enabled state. This may fail as it causes a swapchain recreation.
-  bool SetVSyncEnabled(bool enabled);
+  bool SetPresentMode(VkPresentModeKHR present_mode);
 
 private:
-  VulkanSwapChain(const WindowInfo& wi, VkSurfaceKHR surface, bool vsync,
+  VulkanSwapChain(const WindowInfo& wi, VkSurfaceKHR surface, VkPresentModeKHR present_mode,
                   std::optional<bool> exclusive_fullscreen_control);
 
   static std::optional<VkSurfaceFormatKHR> SelectSurfaceFormat(VkSurfaceKHR surface);
-  static std::optional<VkPresentModeKHR> SelectPresentMode(VkSurfaceKHR surface, VkPresentModeKHR requested_mode);
 
   bool CreateSwapChain();
   void DestroySwapChain();
@@ -108,14 +115,14 @@ private:
   VkSwapchainKHR m_swap_chain = VK_NULL_HANDLE;
 
   std::vector<Image> m_images;
-  std::vector<ImageSemaphores> m_semaphores;
+  std::array<ImageSemaphores, NUM_SEMAPHORES> m_semaphores = {};
 
-  VkFormat m_format = VK_FORMAT_UNDEFINED;
-  VkPresentModeKHR m_actual_present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
   u32 m_current_image = 0;
   u32 m_current_semaphore = 0;
 
+  VkFormat m_format = VK_FORMAT_UNDEFINED;
+  VkPresentModeKHR m_present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+
   std::optional<VkResult> m_image_acquire_result;
   std::optional<bool> m_exclusive_fullscreen_control;
-  bool m_vsync_enabled = false;
 };

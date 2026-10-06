@@ -27,7 +27,7 @@
 #ifdef __SWITCH__
 #include "tico/TicoDuckBridge.h"
 
-#include "rapidjson/document.h"
+#include <json.hpp>
 #endif
 
 #include "imgui.h"
@@ -35,7 +35,6 @@
 #include "imgui_stdlib.h"
 
 #include "common/assert.h"
-#include "common/byte_stream.h"
 #include "common/crash_handler.h"
 #include "common/error.h"
 #include "common/file_system.h"
@@ -55,6 +54,7 @@
 
 #ifdef __SWITCH__
 #include <switch.h>
+#include "fmt/printf.h"
 #endif
 
 Log_SetChannel(NoGUIHost);
@@ -71,7 +71,7 @@ std::unique_ptr<NoGUIPlatform> g_nogui_window;
 namespace NoGUIHost {
 
 namespace {
-class AsyncOpProgressCallback final : public BaseProgressCallback
+class AsyncOpProgressCallback final : public ProgressCallback
 {
 public:
   AsyncOpProgressCallback(std::string name);
@@ -83,19 +83,19 @@ public:
   void PopState() override;
 
   void SetCancellable(bool cancellable) override;
-  void SetTitle(const char* title) override;
-  void SetStatusText(const char* text) override;
+  void SetTitle(std::string_view title) override;
+  void SetStatusText(std::string_view text) override;
   void SetProgressRange(u32 range) override;
   void SetProgressValue(u32 value) override;
 
-  void DisplayError(const char* message) override;
-  void DisplayWarning(const char* message) override;
-  void DisplayInformation(const char* message) override;
-  void DisplayDebugMessage(const char* message) override;
+  void DisplayError(std::string_view message) override;
+  void DisplayWarning(std::string_view message) override;
+  void DisplayInformation(std::string_view message) override;
+  void DisplayDebugMessage(std::string_view message) override;
 
-  void ModalError(const char* message) override;
-  bool ModalConfirmation(const char* message) override;
-  void ModalInformation(const char* message) override;
+  void ModalError(std::string_view message) override;
+  bool ModalConfirmation(std::string_view message) override;
+  void ModalInformation(std::string_view message) override;
 
   void SetCancelled();
 
@@ -220,11 +220,11 @@ static void RepairSwitchControllerConfig(SettingsInterface& si)
   if (ControllerSectionHasSwitchBindings(si, section.c_str(), controller))
     return;
 
-  std::string type =
-    si.GetStringValue(section.c_str(), "Type", Settings::GetControllerTypeName(Settings::DEFAULT_CONTROLLER_1_TYPE));
-  if (type.empty() || type == Settings::GetControllerTypeName(ControllerType::None))
+  const char* const default_type = Controller::GetControllerInfo(Settings::DEFAULT_CONTROLLER_1_TYPE)->name;
+  std::string type = si.GetStringValue(section.c_str(), "Type", default_type);
+  if (type.empty() || type == Controller::GetControllerInfo(ControllerType::None)->name)
   {
-    type = Settings::GetControllerTypeName(Settings::DEFAULT_CONTROLLER_1_TYPE);
+    type = default_type;
     si.SetStringValue(section.c_str(), "Type", type.c_str());
   }
 
@@ -234,7 +234,7 @@ static void RepairSwitchControllerConfig(SettingsInterface& si)
     si.SetBoolValue(section.c_str(), "ForceAnalogOnReset", true);
     si.SetBoolValue(section.c_str(), "AnalogDPadInDigitalMode", true);
     si.Save();
-    Log_InfoPrint("Repaired missing Switch controller bindings for Controller0.");
+    INFO_LOG("{}", "Repaired missing Switch controller bindings for Controller0.");
   }
 }
 
@@ -525,20 +525,20 @@ static void ApplyTicoAchievementSettings(SettingsInterface& si)
 static void ApplyTicoGenericSettings(SettingsInterface& si, const std::string& text)
 {
   static constexpr std::string_view prefix = "duckstation_";
-  rapidjson::Document doc;
-  doc.Parse<rapidjson::kParseCommentsFlag | rapidjson::kParseTrailingCommasFlag>(text.c_str(), text.size());
-  if (doc.HasParseError() || !doc.IsObject())
+  // jsonc: comments allowed
+  const nlohmann::json doc = nlohmann::json::parse(text, nullptr, false, true);
+  if (doc.is_discarded() || !doc.is_object())
   {
-    Log_WarningPrint("tico config is not valid JSON; its settings are not applied");
+    WARNING_LOG("{}", "tico config is not valid JSON; its settings are not applied");
     return;
   }
 
-  for (auto it = doc.MemberBegin(); it != doc.MemberEnd(); ++it)
+  for (auto it = doc.begin(); it != doc.end(); ++it)
   {
-    const std::string_view name(it->name.GetString(), it->name.GetStringLength());
-    if (name.size() <= prefix.size() || name.substr(0, prefix.size()) != prefix)
+    const std::string& name = it.key();
+    if (name.size() <= prefix.size() || std::string_view(name).substr(0, prefix.size()) != prefix)
       continue;
-    const std::string_view rest = name.substr(prefix.size());
+    const std::string_view rest = std::string_view(name).substr(prefix.size());
     const size_t split = rest.find('_');
     if (split == std::string_view::npos || split == 0 || split + 1 >= rest.size())
       continue;
@@ -546,14 +546,14 @@ static void ApplyTicoGenericSettings(SettingsInterface& si, const std::string& t
     const std::string key(rest.substr(split + 1));
 
     std::string value;
-    if (it->value.IsString())
-      value.assign(it->value.GetString(), it->value.GetStringLength());
-    else if (it->value.IsBool())
-      value = it->value.GetBool() ? "true" : "false";
-    else if (it->value.IsInt64())
-      value = std::to_string(it->value.GetInt64());
-    else if (it->value.IsNumber())
-      value = std::to_string(it->value.GetDouble());
+    if (it->is_string())
+      value = it->get<std::string>();
+    else if (it->is_boolean())
+      value = it->get<bool>() ? "true" : "false";
+    else if (it->is_number_integer())
+      value = std::to_string(it->get<s64>());
+    else if (it->is_number())
+      value = std::to_string(it->get<double>());
     else
       continue;
 
@@ -665,7 +665,7 @@ static void ApplyTicoCoreSettings(SettingsInterface& si)
   ApplyTicoControllerInt(si, text, "duckstation_Controller2_VibrationBias", 1, "VibrationBias");
 
   si.Save();
-  Log_InfoPrint("Applied Tico DuckStation settings from sdmc:/tico/config/cores/duckstation.jsonc.");
+  INFO_LOG("{}", "Applied Tico DuckStation settings from sdmc:/tico/config/cores/duckstation.jsonc.");
 }
 
 void NoGUIHost::ReloadTicoSettings()
@@ -699,7 +699,7 @@ static bool TrimAutobootFilenameToExistingPath(SystemBootParameters& autoboot)
 
     if (FileSystem::FileExists(candidate.c_str()))
     {
-      Log_WarningFmt("Trimmed Switch launch argument '{}' to existing content path '{}'.", autoboot.filename,
+      WARNING_LOG("Trimmed Switch launch argument '{}' to existing content path '{}'.", autoboot.filename,
                      candidate);
       autoboot.filename = std::move(candidate);
       return true;
@@ -719,9 +719,9 @@ bool NoGUIHost::SetCriticalFolders()
   SetDataDirectory();
 
   // logging of directories in case something goes wrong super early
-  Log_DevPrintf("AppRoot Directory: %s", EmuFolders::AppRoot.c_str());
-  Log_DevPrintf("DataRoot Directory: %s", EmuFolders::DataRoot.c_str());
-  Log_DevPrintf("Resources Directory: %s", EmuFolders::Resources.c_str());
+  DEV_LOG("{}", fmt::sprintf("AppRoot Directory: %s", EmuFolders::AppRoot.c_str()));
+  DEV_LOG("{}", fmt::sprintf("DataRoot Directory: %s", EmuFolders::DataRoot.c_str()));
+  DEV_LOG("{}", fmt::sprintf("Resources Directory: %s", EmuFolders::Resources.c_str()));
 
   // Write crash dumps to the data directory, since that'll be accessible for certain.
   CrashHandler::SetWriteDirectory(EmuFolders::DataRoot);
@@ -746,7 +746,7 @@ bool NoGUIHost::ShouldUsePortableMode()
 void NoGUIHost::SetAppRoot()
 {
   const std::string program_path = FileSystem::GetProgramPath();
-  Log_InfoPrintf("Program Path: %s", program_path.c_str());
+  INFO_LOG("{}", fmt::sprintf("Program Path: %s", program_path.c_str()));
 
   EmuFolders::AppRoot = Path::Canonicalize(Path::GetDirectory(program_path));
 }
@@ -812,11 +812,11 @@ bool NoGUIHost::InitializeConfig(std::string settings_filename)
       FileSystem::DeleteFile(old_ini);
   }
   settings_filename.clear();
-  Log_InfoPrint("Settings come from tico's duckstation.jsonc (no settings.ini).");
+  INFO_LOG("{}", "Settings come from tico's duckstation.jsonc (no settings.ini).");
 #else
   if (settings_filename.empty())
     settings_filename = Path::Combine(EmuFolders::DataRoot, "settings.ini");
-  Log_InfoPrintf("Loading config from %s.", settings_filename.c_str());
+  INFO_LOG("{}", fmt::sprintf("Loading config from %s.", settings_filename.c_str()));
 #endif
 
   s_base_settings_interface = std::make_unique<INISettingsInterface>(std::move(settings_filename));
@@ -876,45 +876,45 @@ void NoGUIHost::SetDefaultSettings(SettingsInterface& si, bool system, bool cont
   g_nogui_window->SetDefaultConfig(si);
 }
 
-void Host::ReportFatalError(const std::string_view& title, const std::string_view& message)
+void Host::ReportFatalError(std::string_view title, std::string_view message)
 {
-  Log_ErrorPrintf("ReportFatalError: %.*s", static_cast<int>(message.size()), message.data());
+  ERROR_LOG("{}", fmt::sprintf("ReportFatalError: %.*s", static_cast<int>(message.size()), message.data()));
   abort();
 }
 
-void Host::ReportErrorAsync(const std::string_view& title, const std::string_view& message)
+void Host::ReportErrorAsync(std::string_view title, std::string_view message)
 {
   if (!title.empty() && !message.empty())
   {
-    Log_ErrorPrintf("ReportErrorAsync: %.*s: %.*s", static_cast<int>(title.size()), title.data(),
-                    static_cast<int>(message.size()), message.data());
+    ERROR_LOG("{}", fmt::sprintf("ReportErrorAsync: %.*s: %.*s", static_cast<int>(title.size()), title.data(),
+                    static_cast<int>(message.size()), message.data()));
   }
   else if (!message.empty())
   {
-    Log_ErrorPrintf("ReportErrorAsync: %.*s", static_cast<int>(message.size()), message.data());
+    ERROR_LOG("{}", fmt::sprintf("ReportErrorAsync: %.*s", static_cast<int>(message.size()), message.data()));
   }
 
   g_nogui_window->ReportError(title, message);
 }
 
-bool Host::ConfirmMessage(const std::string_view& title, const std::string_view& message)
+bool Host::ConfirmMessage(std::string_view title, std::string_view message)
 {
   if (!title.empty() && !message.empty())
   {
-    Log_ErrorPrintf("ConfirmMessage: %.*s: %.*s", static_cast<int>(title.size()), title.data(),
-                    static_cast<int>(message.size()), message.data());
+    ERROR_LOG("{}", fmt::sprintf("ConfirmMessage: %.*s: %.*s", static_cast<int>(title.size()), title.data(),
+                    static_cast<int>(message.size()), message.data()));
   }
   else if (!message.empty())
   {
-    Log_ErrorPrintf("ConfirmMessage: %.*s", static_cast<int>(message.size()), message.data());
+    ERROR_LOG("{}", fmt::sprintf("ConfirmMessage: %.*s", static_cast<int>(message.size()), message.data()));
   }
 
   return g_nogui_window->ConfirmMessage(title, message);
 }
 
-void Host::ReportDebuggerMessage(const std::string_view& message)
+void Host::ReportDebuggerMessage(std::string_view message)
 {
-  Log_ErrorPrintf("ReportDebuggerMessage: %.*s", static_cast<int>(message.size()), message.data());
+  ERROR_LOG("{}", fmt::sprintf("ReportDebuggerMessage: %.*s", static_cast<int>(message.size()), message.data()));
 }
 
 std::span<const std::pair<const char*, const char*>> Host::GetAvailableLanguageList()
@@ -931,19 +931,19 @@ void Host::AddFixedInputBindings(SettingsInterface& si)
 {
 }
 
-void Host::OnInputDeviceConnected(const std::string_view& identifier, const std::string_view& device_name)
+void Host::OnInputDeviceConnected(std::string_view identifier, std::string_view device_name)
 {
   Host::AddKeyedOSDMessage(fmt::format("InputDeviceConnected-{}", identifier),
                            fmt::format("Input device {0} ({1}) connected.", device_name, identifier), 10.0f);
 }
 
-void Host::OnInputDeviceDisconnected(const std::string_view& identifier)
+void Host::OnInputDeviceDisconnected(InputBindingKey key, std::string_view identifier)
 {
   Host::AddKeyedOSDMessage(fmt::format("InputDeviceConnected-{}", identifier),
                            fmt::format("Input device {} disconnected.", identifier), 10.0f);
 }
 
-s32 Host::Internal::GetTranslatedStringImpl(const std::string_view& context, const std::string_view& msg, char* tbuf,
+s32 Host::Internal::GetTranslatedStringImpl(std::string_view context, std::string_view msg, char* tbuf,
                                             size_t tbuf_space)
 {
   if (msg.size() > tbuf_space)
@@ -953,6 +953,19 @@ s32 Host::Internal::GetTranslatedStringImpl(const std::string_view& context, con
 
   std::memcpy(tbuf, msg.data(), msg.size());
   return static_cast<s32>(msg.size());
+}
+
+std::string Host::TranslatePluralToString(const char* context, const char* msg, const char* disambiguation, int count)
+{
+  // no translations: the English text, with %n as the count
+  const std::string count_str = std::to_string(count);
+  std::string ret(msg);
+  for (std::string::size_type pos = ret.find("%n"); pos != std::string::npos; pos = ret.find("%n", pos))
+  {
+    ret.replace(pos, 2, count_str);
+    pos += count_str.size();
+  }
+  return ret;
 }
 
 ALWAYS_INLINE std::string NoGUIHost::GetResourcePath(std::string_view filename, bool allow_override)
@@ -967,12 +980,12 @@ bool Host::ResourceFileExists(std::string_view filename, bool allow_override)
   return FileSystem::FileExists(path.c_str());
 }
 
-std::optional<std::vector<u8>> Host::ReadResourceFile(std::string_view filename, bool allow_override)
+std::optional<DynamicHeapArray<u8>> Host::ReadResourceFile(std::string_view filename, bool allow_override)
 {
   const std::string path = NoGUIHost::GetResourcePath(filename, allow_override);
-  std::optional<std::vector<u8>> ret(FileSystem::ReadBinaryFile(path.c_str()));
+  std::optional<DynamicHeapArray<u8>> ret(FileSystem::ReadBinaryFile(path.c_str()));
   if (!ret.has_value())
-    Log_ErrorFmt("Failed to read resource file '{}'", filename);
+    ERROR_LOG("Failed to read resource file '{}'", filename);
   return ret;
 }
 
@@ -981,7 +994,7 @@ std::optional<std::string> Host::ReadResourceFileToString(std::string_view filen
   const std::string path = NoGUIHost::GetResourcePath(filename, allow_override);
   std::optional<std::string> ret(FileSystem::ReadFileToString(path.c_str()));
   if (!ret.has_value())
-    Log_ErrorFmt("Failed to read resource file to string '{}'", filename);
+    ERROR_LOG("Failed to read resource file to string '{}'", filename);
   return ret;
 }
 
@@ -991,7 +1004,7 @@ std::optional<std::time_t> Host::GetResourceFileTimestamp(std::string_view filen
   FILESYSTEM_STAT_DATA sd;
   if (!FileSystem::StatFile(path.c_str(), &sd))
   {
-    Log_ErrorFmt("Failed to stat resource file '{}'", filename);
+    ERROR_LOG("Failed to stat resource file '{}'", filename);
     return std::nullopt;
   }
 
@@ -1036,7 +1049,7 @@ void NoGUIHost::SaveSettings()
 #endif
   auto lock = Host::GetSettingsLock();
   if (!s_base_settings_interface->Save())
-    Log_ErrorPrintf("Failed to save settings.");
+    ERROR_LOG("{}", fmt::sprintf("Failed to save settings."));
 }
 
 bool NoGUIHost::InBatchMode()
@@ -1067,7 +1080,7 @@ void NoGUIHost::ProcessPlatformWindowResize(s32 width, s32 height, float scale)
 {
   Host::RunOnCPUThread([width, height, scale]() {
     g_gpu_device->ResizeWindow(width, height, scale);
-    ImGuiManager::WindowResized();
+    ImGuiManager::WindowResized(static_cast<float>(width), static_cast<float>(height));
     System::HostDisplayResized();
   });
 }
@@ -1237,15 +1250,17 @@ void NoGUIHost::CPUThreadEntryPoint()
   Threading::SetNameOfCurrentThread("CPU Thread");
 
   // input source setup must happen on emu thread
-  if (!System::Internal::ProcessStartup())
+  Error startup_error;
+  if (!System::Internal::ProcessStartup(&startup_error))
   {
+    g_nogui_window->ReportError("Error", startup_error.GetDescription());
     g_nogui_window->QuitMessageLoop();
     return;
   }
 
   // Switch is launched by Tico and should only expose the Tico overlay, not DuckStation's fullscreen UI.
   const bool display_ready =
-    Host::CreateGPUDevice(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer))
+    Host::CreateGPUDevice(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer), &startup_error)
 #ifndef __SWITCH__
     && FullscreenUI::Initialize()
 #endif
@@ -1273,7 +1288,7 @@ void NoGUIHost::CPUThreadEntryPoint()
   }
   else
   {
-    g_nogui_window->ReportError("Error", "Failed to open host display.");
+    g_nogui_window->ReportError("Error", fmt::format("Failed to open host display: {}", startup_error.GetDescription()));
   }
 
   // finish any events off (e.g. shutdown system with save)
@@ -1306,7 +1321,7 @@ void NoGUIHost::CPUThreadMainLoop()
     Host::PumpMessagesOnCPUThread();
     System::Internal::IdlePollUpdate();
     System::PresentDisplay(false, false);
-    if (!g_gpu_device->IsVSyncEnabled())
+    if (!g_gpu_device->IsVSyncModeBlocking())
       g_gpu_device->ThrottlePresentation();
   }
 }
@@ -1381,7 +1396,15 @@ void Host::OnIdleStateChanged()
 {
 }
 
-void Host::BeginPresentFrame()
+void Host::FrameDone()
+{
+}
+
+void Host::OnMediaCaptureStarted()
+{
+}
+
+void Host::OnMediaCaptureStopped()
 {
 }
 
@@ -1390,12 +1413,12 @@ void Host::RequestResizeHostDisplay(s32 width, s32 height)
   g_nogui_window->RequestRenderWindowSize(width, height);
 }
 
-void Host::OpenURL(const std::string_view& url)
+void Host::OpenURL(std::string_view url)
 {
   g_nogui_window->OpenURL(url);
 }
 
-bool Host::CopyTextToClipboard(const std::string_view& text)
+bool Host::CopyTextToClipboard(std::string_view text)
 {
   return g_nogui_window->CopyTextToClipboard(text);
 }
@@ -1407,8 +1430,8 @@ void Host::OnPerformanceCountersUpdated()
 
 void Host::OnGameChanged(const std::string& disc_path, const std::string& game_serial, const std::string& game_name)
 {
-  Log_VerbosePrintf("Host::OnGameChanged(\"%s\", \"%s\", \"%s\")", disc_path.c_str(), game_serial.c_str(),
-                    game_name.c_str());
+  VERBOSE_LOG("{}", fmt::sprintf("Host::OnGameChanged(\"%s\", \"%s\", \"%s\")", disc_path.c_str(), game_serial.c_str(),
+                    game_name.c_str()));
   NoGUIHost::UpdateWindowTitle(game_name);
 }
 
@@ -1422,7 +1445,7 @@ void Host::OnAchievementsLoginRequested(Achievements::LoginRequestReason reason)
 
 void Host::OnAchievementsLoginSuccess(const char* username, u32 points, u32 sc_points, u32 unread_messages)
 {
-  Log_InfoFmt("RetroAchievements login success for '{}'.", username ? username : "");
+  INFO_LOG("RetroAchievements login success for '{}'.", username ? username : "");
 }
 
 void Host::OnAchievementsRefreshed()
@@ -1565,7 +1588,7 @@ void Host::RequestSystemShutdown(bool allow_confirm, bool save_state)
   }
 }
 
-std::optional<u32> InputManager::ConvertHostKeyboardStringToCode(const std::string_view& str)
+std::optional<u32> InputManager::ConvertHostKeyboardStringToCode(std::string_view str)
 {
   return g_nogui_window->ConvertHostKeyboardStringToCode(str);
 }
@@ -1697,33 +1720,33 @@ bool NoGUIHost::ParseCommandLineParametersAndInitializeConfig(int argc, char* ar
       }
       else if (CHECK_ARG("-batch"))
       {
-        Log_InfoPrintf("Command Line: Using batch mode.");
+        INFO_LOG("{}", fmt::sprintf("Command Line: Using batch mode."));
         s_batch_mode = true;
         continue;
       }
       else if (CHECK_ARG("-bios"))
       {
-        Log_InfoPrintf("Command Line: Starting BIOS.");
+        INFO_LOG("{}", fmt::sprintf("Command Line: Starting BIOS."));
         AutoBoot(autoboot);
         starting_bios = true;
         continue;
       }
       else if (CHECK_ARG("-fastboot"))
       {
-        Log_InfoPrintf("Command Line: Forcing fast boot.");
+        INFO_LOG("{}", fmt::sprintf("Command Line: Forcing fast boot."));
         AutoBoot(autoboot)->override_fast_boot = true;
         continue;
       }
       else if (CHECK_ARG("-slowboot"))
       {
-        Log_InfoPrintf("Command Line: Forcing slow boot.");
+        INFO_LOG("{}", fmt::sprintf("Command Line: Forcing slow boot."));
         AutoBoot(autoboot)->override_fast_boot = false;
         continue;
       }
       else if (CHECK_ARG("-resume"))
       {
         state_index = -1;
-        Log_InfoPrintf("Command Line: Loading resume state.");
+        INFO_LOG("{}", fmt::sprintf("Command Line: Loading resume state."));
         continue;
       }
       else if (CHECK_ARG_PARAM("-state"))
@@ -1731,48 +1754,48 @@ bool NoGUIHost::ParseCommandLineParametersAndInitializeConfig(int argc, char* ar
         state_index = StringUtil::FromChars<s32>(argv[++i]);
         if (!state_index.has_value())
         {
-          Log_ErrorPrintf("Invalid state index");
+          ERROR_LOG("{}", fmt::sprintf("Invalid state index"));
           return false;
         }
 
-        Log_InfoPrintf("Command Line: Loading state index: %d", state_index.value());
+        INFO_LOG("{}", fmt::sprintf("Command Line: Loading state index: %d", state_index.value()));
         continue;
       }
       else if (CHECK_ARG_PARAM("-statefile"))
       {
         AutoBoot(autoboot)->save_state = argv[++i];
-        Log_InfoPrintf("Command Line: Loading state file: '%s'", autoboot->save_state.c_str());
+        INFO_LOG("{}", fmt::sprintf("Command Line: Loading state file: '%s'", autoboot->save_state.c_str()));
         continue;
       }
       else if (CHECK_ARG_PARAM("-exe"))
       {
         AutoBoot(autoboot)->override_exe = argv[++i];
-        Log_InfoPrintf("Command Line: Overriding EXE file: '%s'", autoboot->override_exe.c_str());
+        INFO_LOG("{}", fmt::sprintf("Command Line: Overriding EXE file: '%s'", autoboot->override_exe.c_str()));
         continue;
       }
       else if (CHECK_ARG("-fullscreen"))
       {
-        Log_InfoPrintf("Command Line: Using fullscreen.");
+        INFO_LOG("{}", fmt::sprintf("Command Line: Using fullscreen."));
         AutoBoot(autoboot)->override_fullscreen = true;
         // s_start_fullscreen_ui_fullscreen = true;
         continue;
       }
       else if (CHECK_ARG("-nofullscreen"))
       {
-        Log_InfoPrintf("Command Line: Not using fullscreen.");
+        INFO_LOG("{}", fmt::sprintf("Command Line: Not using fullscreen."));
         AutoBoot(autoboot)->override_fullscreen = false;
         continue;
       }
       else if (CHECK_ARG("-portable"))
       {
-        Log_InfoPrintf("Command Line: Using portable mode.");
+        INFO_LOG("{}", fmt::sprintf("Command Line: Using portable mode."));
         EmuFolders::DataRoot = EmuFolders::AppRoot;
         continue;
       }
       else if (CHECK_ARG_PARAM("-settings"))
       {
         settings_filename = argv[++i];
-        Log_InfoPrintf("Command Line: Overriding settings filename: %s", settings_filename.c_str());
+        INFO_LOG("{}", fmt::sprintf("Command Line: Overriding settings filename: %s", settings_filename.c_str()));
         continue;
       }
       else if (CHECK_ARG("-earlyconsole"))
@@ -1810,7 +1833,7 @@ bool NoGUIHost::ParseCommandLineParametersAndInitializeConfig(int argc, char* ar
 
 #ifdef __SWITCH__
   for (int i = 0; i < argc; i++)
-    Log_InfoFmt("Switch launch argv[{}]='{}'", i, argv[i] ? argv[i] : "");
+    INFO_LOG("Switch launch argv[{}]='{}'", i, argv[i] ? argv[i] : "");
 
   if (autoboot)
     TrimAutobootFilenameToExistingPath(*autoboot);
@@ -1859,7 +1882,7 @@ bool NoGUIHost::ParseCommandLineParametersAndInitializeConfig(int argc, char* ar
 }
 
 NoGUIHost::AsyncOpProgressCallback::AsyncOpProgressCallback(std::string name)
-  : BaseProgressCallback(), m_name(std::move(name))
+  : ProgressCallback(), m_name(std::move(name))
 {
   ImGuiFullscreen::OpenBackgroundProgressDialog(m_name.c_str(), "", 0, 100, 0);
 }
@@ -1871,29 +1894,29 @@ NoGUIHost::AsyncOpProgressCallback::~AsyncOpProgressCallback()
 
 void NoGUIHost::AsyncOpProgressCallback::PushState()
 {
-  BaseProgressCallback::PushState();
+  ProgressCallback::PushState();
 }
 
 void NoGUIHost::AsyncOpProgressCallback::PopState()
 {
-  BaseProgressCallback::PopState();
+  ProgressCallback::PopState();
   Redraw(true);
 }
 
 void NoGUIHost::AsyncOpProgressCallback::SetCancellable(bool cancellable)
 {
-  BaseProgressCallback::SetCancellable(cancellable);
+  ProgressCallback::SetCancellable(cancellable);
   Redraw(true);
 }
 
-void NoGUIHost::AsyncOpProgressCallback::SetTitle(const char* title)
+void NoGUIHost::AsyncOpProgressCallback::SetTitle(std::string_view title)
 {
   // todo?
 }
 
-void NoGUIHost::AsyncOpProgressCallback::SetStatusText(const char* text)
+void NoGUIHost::AsyncOpProgressCallback::SetStatusText(std::string_view text)
 {
-  BaseProgressCallback::SetStatusText(text);
+  ProgressCallback::SetStatusText(text);
   Redraw(true);
 }
 
@@ -1901,7 +1924,7 @@ void NoGUIHost::AsyncOpProgressCallback::SetProgressRange(u32 range)
 {
   u32 last_range = m_progress_range;
 
-  BaseProgressCallback::SetProgressRange(range);
+  ProgressCallback::SetProgressRange(range);
 
   if (m_progress_range != last_range)
     Redraw(false);
@@ -1911,7 +1934,7 @@ void NoGUIHost::AsyncOpProgressCallback::SetProgressValue(u32 value)
 {
   u32 lastValue = m_progress_value;
 
-  BaseProgressCallback::SetProgressValue(value);
+  ProgressCallback::SetProgressValue(value);
 
   if (m_progress_value != lastValue)
     Redraw(false);
@@ -1928,41 +1951,41 @@ void NoGUIHost::AsyncOpProgressCallback::Redraw(bool force)
   ImGuiFullscreen::UpdateBackgroundProgressDialog(m_name.c_str(), m_status_text, 0, 100, percent);
 }
 
-void NoGUIHost::AsyncOpProgressCallback::DisplayError(const char* message)
+void NoGUIHost::AsyncOpProgressCallback::DisplayError(std::string_view message)
 {
-  Log_ErrorPrint(message);
+  ERROR_LOG("{}", message);
   Host::ReportErrorAsync("Error", message);
 }
 
-void NoGUIHost::AsyncOpProgressCallback::DisplayWarning(const char* message)
+void NoGUIHost::AsyncOpProgressCallback::DisplayWarning(std::string_view message)
 {
-  Log_WarningPrint(message);
+  WARNING_LOG("{}", message);
 }
 
-void NoGUIHost::AsyncOpProgressCallback::DisplayInformation(const char* message)
+void NoGUIHost::AsyncOpProgressCallback::DisplayInformation(std::string_view message)
 {
-  Log_InfoPrint(message);
+  INFO_LOG("{}", message);
 }
 
-void NoGUIHost::AsyncOpProgressCallback::DisplayDebugMessage(const char* message)
+void NoGUIHost::AsyncOpProgressCallback::DisplayDebugMessage(std::string_view message)
 {
-  Log_DebugPrint(message);
+  DEBUG_LOG("{}", message);
 }
 
-void NoGUIHost::AsyncOpProgressCallback::ModalError(const char* message)
+void NoGUIHost::AsyncOpProgressCallback::ModalError(std::string_view message)
 {
-  Log_ErrorPrint(message);
+  ERROR_LOG("{}", message);
   Host::ReportErrorAsync("Error", message);
 }
 
-bool NoGUIHost::AsyncOpProgressCallback::ModalConfirmation(const char* message)
+bool NoGUIHost::AsyncOpProgressCallback::ModalConfirmation(std::string_view message)
 {
   return false;
 }
 
-void NoGUIHost::AsyncOpProgressCallback::ModalInformation(const char* message)
+void NoGUIHost::AsyncOpProgressCallback::ModalInformation(std::string_view message)
 {
-  Log_InfoPrint(message);
+  INFO_LOG("{}", message);
 }
 
 void NoGUIHost::AsyncOpProgressCallback::SetCancelled()
@@ -2036,7 +2059,7 @@ int main(int argc, char* argv[])
   FileSystem::CreateDirectory("sdmc:/tico/debug", false);
   Log::SetLogLevel(LOGLEVEL_INFO);
   Log::SetFileOutputParams(true, "sdmc:/tico/debug/duckstation.txt", true);
-  Log_InfoPrint("tico-duckstation debug log");
+  INFO_LOG("{}", "tico-duckstation debug log");
 #endif
 
   socketInitializeDefault();
@@ -2052,7 +2075,7 @@ int main(int argc, char* argv[])
     NoGUIHost::InitializeEarlyConsole();
 #endif
 
-  CrashHandler::Install();
+  CrashHandler::Install(nullptr);
 
   g_nogui_window = NoGUIHost::CreatePlatform();
   if (!g_nogui_window)

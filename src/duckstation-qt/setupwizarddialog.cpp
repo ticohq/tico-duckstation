@@ -44,9 +44,8 @@ bool SetupWizardDialog::canShowNextPage()
       {
         if (QMessageBox::question(
               this, tr("Warning"),
-              tr("No BIOS images were found. DuckStation <strong>will not</strong> be able to run games without a "
-                 "BIOS image.<br><br>Are you sure you wish to continue without selecting a BIOS image?")) !=
-            QMessageBox::Yes)
+              tr("No BIOS images were found. DuckStation WILL NOT be able to run games without a BIOS image.\n\nAre "
+                 "you sure you wish to continue without selecting a BIOS image?")) != QMessageBox::Yes)
         {
           return false;
         }
@@ -186,8 +185,7 @@ void SetupWizardDialog::setupLanguagePage()
                                                InterfaceSettingsWidget::DEFAULT_THEME_NAME, "InterfaceSettingsWidget");
   connect(m_ui.theme, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SetupWizardDialog::themeChanged);
 
-  for (const auto& [language, code] : Host::GetAvailableLanguageList())
-    m_ui.language->addItem(QString::fromUtf8(language), QString::fromLatin1(code));
+  InterfaceSettingsWidget::populateLanguageDropdown(m_ui.language);
   SettingWidgetBinder::BindWidgetToStringSetting(nullptr, m_ui.language, "Main", "Language",
                                                  QtHost::GetDefaultLanguage());
   connect(m_ui.language, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -199,13 +197,13 @@ void SetupWizardDialog::setupLanguagePage()
 void SetupWizardDialog::themeChanged()
 {
   // Main window gets recreated at the end here anyway, so it's fine to just yolo it.
-  MainWindow::updateApplicationTheme();
+  QtHost::UpdateApplicationTheme();
 }
 
 void SetupWizardDialog::languageChanged()
 {
   // Skip the recreation, since we don't have many dynamic UI elements.
-  QtHost::InstallTranslator(this);
+  QtHost::UpdateApplicationLanguage(this);
   m_ui.retranslateUi(this);
   setupControllerPage(false);
 }
@@ -213,8 +211,9 @@ void SetupWizardDialog::languageChanged()
 void SetupWizardDialog::setupBIOSPage()
 {
   SettingWidgetBinder::BindWidgetToFolderSetting(nullptr, m_ui.biosSearchDirectory, m_ui.browseBiosSearchDirectory,
-                                                 m_ui.openBiosSearchDirectory, m_ui.resetBiosSearchDirectory, "BIOS",
-                                                 "SearchDirectory", Path::Combine(EmuFolders::DataRoot, "bios"));
+                                                 tr("Select BIOS Directory"), m_ui.openBiosSearchDirectory,
+                                                 m_ui.resetBiosSearchDirectory, "BIOS", "SearchDirectory",
+                                                 Path::Combine(EmuFolders::DataRoot, "bios"));
 
   refreshBiosList();
 
@@ -224,7 +223,7 @@ void SetupWizardDialog::setupBIOSPage()
 
 void SetupWizardDialog::refreshBiosList()
 {
-  auto list = BIOSSettingsWidget::getList(m_ui.biosSearchDirectory->text().toUtf8().constData());
+  auto list = BIOS::FindBIOSImagesInDirectory(m_ui.biosSearchDirectory->text().toUtf8().constData());
   BIOSSettingsWidget::populateDropDownForRegion(ConsoleRegion::NTSC_U, m_ui.imageNTSCU, list, false);
   BIOSSettingsWidget::populateDropDownForRegion(ConsoleRegion::NTSC_J, m_ui.imageNTSCJ, list, false);
   BIOSSettingsWidget::populateDropDownForRegion(ConsoleRegion::PAL, m_ui.imagePAL, list, false);
@@ -251,6 +250,8 @@ void SetupWizardDialog::setupGameListPage()
           &SetupWizardDialog::onAddSearchDirectoryButtonClicked);
   connect(m_ui.removeSearchDirectoryButton, &QPushButton::clicked, this,
           &SetupWizardDialog::onRemoveSearchDirectoryButtonClicked);
+  connect(m_ui.searchDirectoryList, &QTableWidget::itemSelectionChanged, this,
+          &SetupWizardDialog::onSearchDirectoryListSelectionChanged);
 
   refreshDirectoryList();
 }
@@ -314,6 +315,11 @@ void SetupWizardDialog::onRemoveSearchDirectoryButtonClicked()
   refreshDirectoryList();
 }
 
+void SetupWizardDialog::onSearchDirectoryListSelectionChanged()
+{
+  m_ui.removeSearchDirectoryButton->setEnabled(!m_ui.searchDirectoryList->selectedItems().isEmpty());
+}
+
 void SetupWizardDialog::addPathToTable(const std::string& path, bool recursive)
 {
   const int row = m_ui.searchDirectoryList->rowCount();
@@ -359,6 +365,7 @@ void SetupWizardDialog::refreshDirectoryList()
     addPathToTable(entry, true);
 
   m_ui.searchDirectoryList->sortByColumn(0, Qt::AscendingOrder);
+  m_ui.removeSearchDirectoryButton->setEnabled(false);
 }
 
 void SetupWizardDialog::resizeDirectoryListColumns()
@@ -433,16 +440,22 @@ void SetupWizardDialog::setupControllerPage(bool initial)
   }
 }
 
+void SetupWizardDialog::updateStylesheets()
+{
+}
+
 void SetupWizardDialog::openAutomaticMappingMenu(u32 port, QLabel* update_label)
 {
   QMenu menu(this);
   bool added = false;
 
-  for (const QPair<QString, QString>& dev : m_device_list)
+  for (const auto& [identifier, device_name] : m_device_list)
   {
     // we set it as data, because the device list could get invalidated while the menu is up
-    QAction* action = menu.addAction(QStringLiteral("%1 (%2)").arg(dev.first).arg(dev.second));
-    action->setData(dev.first);
+    const QString qidentifier = QString::fromStdString(identifier);
+    QAction* action =
+      menu.addAction(QStringLiteral("%1 (%2)").arg(qidentifier).arg(QString::fromStdString(device_name)));
+    action->setData(qidentifier);
     connect(action, &QAction::triggered, this, [this, port, update_label, action]() {
       doDeviceAutomaticBinding(port, update_label, action->data().toString());
     });
@@ -485,17 +498,17 @@ void SetupWizardDialog::doDeviceAutomaticBinding(u32 port, QLabel* update_label,
   update_label->setText(device);
 }
 
-void SetupWizardDialog::onInputDevicesEnumerated(const QList<QPair<QString, QString>>& devices)
+void SetupWizardDialog::onInputDevicesEnumerated(const std::vector<std::pair<std::string, std::string>>& devices)
 {
   m_device_list = devices;
 }
 
-void SetupWizardDialog::onInputDeviceConnected(const QString& identifier, const QString& device_name)
+void SetupWizardDialog::onInputDeviceConnected(const std::string& identifier, const std::string& device_name)
 {
   m_device_list.emplace_back(identifier, device_name);
 }
 
-void SetupWizardDialog::onInputDeviceDisconnected(const QString& identifier)
+void SetupWizardDialog::onInputDeviceDisconnected(const std::string& identifier)
 {
   for (auto iter = m_device_list.begin(); iter != m_device_list.end(); ++iter)
   {

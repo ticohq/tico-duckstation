@@ -2,6 +2,7 @@
 #include "common/file_system.h"
 #include "common/assert.h"
 #include "common/log.h"
+#include "fmt/printf.h"
 Log_SetChannel(SwitchControllerInterface);
 
 SwitchControllerInterface::SwitchControllerInterface() = default;
@@ -51,12 +52,12 @@ void SwitchControllerInterface::PollEvents()
     {
       if (connected)
       {
-        Log_InfoPrintf("Controller %d connected", i);
+        INFO_LOG("{}", fmt::sprintf("Controller %d connected", i));
         OnControllerConnected(i);
       }
       else
       {
-        Log_InfoPrintf("Controller %d disconnected", i);
+        INFO_LOG("{}", fmt::sprintf("Controller %d disconnected", i));
         OnControllerDisconnected(i);
       }
       m_controllers[i].connected = connected;
@@ -93,8 +94,8 @@ void SwitchControllerInterface::HandleButtons(int controller_id, u64 mask, bool 
     unsigned button = __builtin_ctzll(mask);
     mask &= ~(1ULL << button);
 
-    Log_DebugPrintf("controller %d button %d %s", controller_id, button,
-                pressed ? "pressed" : "released");
+    DEBUG_LOG("{}", fmt::sprintf("controller %d button %d %s", controller_id, button,
+                pressed ? "pressed" : "released"));
 
     ControllerData& controller = m_controllers[controller_id];
 
@@ -154,7 +155,7 @@ void SwitchControllerInterface::HandleButtons(int controller_id, u64 mask, bool 
 
 void SwitchControllerInterface::HandleAxis(int controller_id, int axis_number, float value)
 {
-  Log_DebugPrintf("controller %d axis %d %f", controller_id, axis_number, value);
+  DEBUG_LOG("{}", fmt::sprintf("controller %d axis %d %f", controller_id, axis_number, value));
 
   if (DoEventHook(Hook::Type::Axis, controller_id, axis_number, value, true))
     return;
@@ -297,6 +298,6 @@ bool SwitchControllerInterface::SetControllerDeadzone(int controller_index, floa
     return false;
 
   m_controllers[controller_index].deadzone = std::clamp(std::abs(size), 0.01f, 0.99f);
-  Log_InfoPrintf("Controller %d deadzone size set to %f", controller_index, m_controllers[controller_index].deadzone);
+  INFO_LOG("{}", fmt::sprintf("Controller %d deadzone size set to %f", controller_index, m_controllers[controller_index].deadzone));
   return true;
 }

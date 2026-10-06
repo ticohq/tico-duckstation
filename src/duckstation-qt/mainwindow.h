@@ -33,6 +33,8 @@ class CheatManagerWindow;
 class DebuggerWindow;
 class MemoryScannerWindow;
 
+struct SystemBootParameters;
+
 class GPUDevice;
 namespace Achievements {
 enum class LoginRequestReason;
@@ -76,9 +78,6 @@ public:
   explicit MainWindow();
   ~MainWindow();
 
-  /// Sets application theme according to settings.
-  static void updateApplicationTheme();
-
   /// Performs update check if enabled in settings.
   void startupUpdateCheck();
 
@@ -100,11 +99,15 @@ public:
   /// Accessors for child windows.
   CheatManagerWindow* getCheatManagerWindow() const { return m_cheat_manager_window; }
 
+  /// Opens the editor for a specific input profile.
+  void openInputProfileEditor(const std::string_view name);
+
 public Q_SLOTS:
   /// Updates debug menu visibility (hides if disabled).
   void updateDebugMenuVisibility();
 
   void refreshGameList(bool invalidate_cache);
+  void refreshGameListModel();
   void cancelGameListRefresh();
 
   void runOnUIThread(const std::function<void()>& func);
@@ -121,6 +124,7 @@ public Q_SLOTS:
 private Q_SLOTS:
   void reportError(const QString& title, const QString& message);
   bool confirmMessage(const QString& title, const QString& message);
+  void onStatusMessage(const QString& message);
 
   std::optional<WindowInfo> acquireRenderWindow(bool recreate_window, bool fullscreen, bool render_to_main,
                                                 bool surfaceless, bool use_main_window_pos);
@@ -136,9 +140,9 @@ private Q_SLOTS:
   void onSystemPaused();
   void onSystemResumed();
   void onRunningGameChanged(const QString& filename, const QString& game_serial, const QString& game_title);
+  void onMediaCaptureStarted();
+  void onMediaCaptureStopped();
   void onAchievementsLoginRequested(Achievements::LoginRequestReason reason);
-  void onAchievementsLoginSucceeded(const QString& display_name, quint32 points, quint32 sc_points,
-                                    quint32 unread_messages);
   void onAchievementsChallengeModeChanged(bool enabled);
   void onApplicationStateChanged(Qt::ApplicationState state);
 
@@ -172,6 +176,7 @@ private Q_SLOTS:
   void onToolsMemoryCardEditorTriggered();
   void onToolsMemoryScannerTriggered();
   void onToolsCoverDownloaderTriggered();
+  void onToolsMediaCaptureToggled(bool checked);
   void onToolsOpenDataDirectoryTriggered();
   void onSettingsTriggeredFromToolbar();
 
@@ -200,9 +205,6 @@ protected:
 #endif
 
 private:
-  static void setStyleFromSettings();
-  static void setIconThemeFromSettings();
-
   /// Initializes the window. Call once at startup.
   void initialize();
 
@@ -237,21 +239,21 @@ private:
   void updateDisplayWidgetCursor();
   void updateDisplayRelatedActions(bool has_surface, bool render_to_main, bool fullscreen);
 
-  SettingsWindow* getSettingsDialog();
+  SettingsWindow* getSettingsWindow();
   void doSettings(const char* category = nullptr);
 
+  ControllerSettingsWindow* getControllerSettingsWindow();
   void doControllerSettings(ControllerSettingsWindow::Category category = ControllerSettingsWindow::Category::Count);
 
   void updateDebugMenuCPUExecutionMode();
   void updateDebugMenuGPURenderer();
   void updateDebugMenuCropMode();
-  void updateMenuSelectedTheme();
   std::string getDeviceDiscPath(const QString& title);
   void setGameListEntryCoverImage(const GameList::Entry* entry);
   void clearGameListEntryPlayTime(const GameList::Entry* entry);
-  void setTheme(const QString& theme);
   void updateTheme();
   void reloadThemeSpecificImages();
+  void onSettingsThemeChanged();
   void destroySubWindows();
 
   void registerForDeviceNotifications();
@@ -269,6 +271,9 @@ private:
   /// Fills menu with the current cheat options.
   void populateCheatsMenu(QMenu* menu);
 
+  const GameList::Entry* resolveDiscSetEntry(const GameList::Entry* entry,
+                                             std::unique_lock<std::recursive_mutex>& lock);
+  std::shared_ptr<SystemBootParameters> getSystemBootParameters(std::string file);
   std::optional<bool> promptForResumeState(const std::string& save_state_path);
   void startFile(std::string path, std::optional<std::string> save_path, std::optional<bool> fast_boot);
   void startFileOrChangeDisc(const QString& path);

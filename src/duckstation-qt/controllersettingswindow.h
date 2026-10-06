@@ -17,6 +17,10 @@
 
 #include <array>
 #include <string>
+#include <utility>
+#include <vector>
+
+class Error;
 
 class ControllerGlobalSettingsWidget;
 class ControllerBindingWidget;
@@ -42,19 +46,32 @@ public:
     MAX_PORTS = 8
   };
 
-  ControllerSettingsWindow();
+  ControllerSettingsWindow(SettingsInterface* game_sif = nullptr, QWidget* parent = nullptr);
   ~ControllerSettingsWindow();
+
+  static void editControllerSettingsForGame(QWidget* parent, SettingsInterface* sif);
 
   ALWAYS_INLINE HotkeySettingsWidget* getHotkeySettingsWidget() const { return m_hotkey_settings; }
 
-  ALWAYS_INLINE const QList<QPair<QString, QString>>& getDeviceList() const { return m_device_list; }
+  ALWAYS_INLINE const std::vector<std::pair<std::string, std::string>>& getDeviceList() const { return m_device_list; }
   ALWAYS_INLINE const QStringList& getVibrationMotors() const { return m_vibration_motors; }
 
-  ALWAYS_INLINE bool isEditingGlobalSettings() const { return m_profile_name.isEmpty(); }
+  ALWAYS_INLINE bool isEditingGlobalSettings() const
+  {
+    return (m_profile_name.isEmpty() && !m_editing_settings_interface);
+  }
+  ALWAYS_INLINE bool isEditingGameSettings() const
+  {
+    return (m_profile_name.isEmpty() && m_editing_settings_interface);
+  }
   ALWAYS_INLINE bool isEditingProfile() const { return !m_profile_name.isEmpty(); }
-  ALWAYS_INLINE SettingsInterface* getProfileSettingsInterface() { return m_profile_interface.get(); }
+  ALWAYS_INLINE SettingsInterface* getEditingSettingsInterface() { return m_editing_settings_interface; }
+
+  Category getCurrentCategory() const;
 
   void updateListDescription(u32 global_slot, ControllerBindingWidget* widget);
+
+  void switchProfile(const std::string_view name);
 
   // Helper functions for updating setting values globally or in the profile.
   bool getBoolValue(const char* section, const char* key, bool default_value) const;
@@ -64,8 +81,10 @@ public:
   void setIntValue(const char* section, const char* key, s32 value);
   void setStringValue(const char* section, const char* key, const char* value);
   void clearSettingValue(const char* section, const char* key);
+  void saveAndReloadGameSettings();
 
 Q_SIGNALS:
+  void windowClosed();
   void inputProfileSwitched();
 
 public Q_SLOTS:
@@ -75,32 +94,39 @@ private Q_SLOTS:
   void onCategoryCurrentRowChanged(int row);
   void onCurrentProfileChanged(int index);
   void onNewProfileClicked();
-  void onLoadProfileClicked();
+  void onApplyProfileClicked();
   void onDeleteProfileClicked();
   void onRestoreDefaultsClicked();
+  void onCopyGlobalSettingsClicked();
+  void onRestoreDefaultsForGameClicked();
 
-  void onInputDevicesEnumerated(const QList<QPair<QString, QString>>& devices);
-  void onInputDeviceConnected(const QString& identifier, const QString& device_name);
-  void onInputDeviceDisconnected(const QString& identifier);
+  void onInputDevicesEnumerated(const std::vector<std::pair<std::string, std::string>>& devices);
+  void onInputDeviceConnected(const std::string& identifier, const std::string& device_name);
+  void onInputDeviceDisconnected(const std::string& identifier);
   void onVibrationMotorsEnumerated(const QList<InputBindingKey>& motors);
 
   void createWidgets();
 
+protected:
+  void closeEvent(QCloseEvent* event) override;
+
 private:
+  int getHotkeyCategoryIndex() const;
   void refreshProfileList();
-  void switchProfile(const QString& name);
 
   std::array<bool, 2> getEnabledMultitaps() const;
 
   Ui::ControllerSettingsWindow m_ui;
 
+  SettingsInterface* m_editing_settings_interface = nullptr;
+
   ControllerGlobalSettingsWidget* m_global_settings = nullptr;
   std::array<ControllerBindingWidget*, MAX_PORTS> m_port_bindings{};
   HotkeySettingsWidget* m_hotkey_settings = nullptr;
 
-  QList<QPair<QString, QString>> m_device_list;
+  std::vector<std::pair<std::string, std::string>> m_device_list;
   QStringList m_vibration_motors;
 
   QString m_profile_name;
-  std::unique_ptr<SettingsInterface> m_profile_interface;
+  std::unique_ptr<SettingsInterface> m_profile_settings_interface;
 };

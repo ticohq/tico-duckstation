@@ -29,8 +29,7 @@ bool CDImageHasher::ReadIndex(CDImage* image, u8 track, u8 index, MD5Digest* dig
 
   if (!image->Seek(index_start))
   {
-    progress_callback->DisplayFormattedModalError("Failed to seek to sector %u for track %u index %u", index_start,
-                                                  track, index);
+    progress_callback->FormatModalError("Failed to seek to sector {} for track {} index {}", index_start, track, index);
     return false;
   }
 
@@ -42,11 +41,11 @@ bool CDImageHasher::ReadIndex(CDImage* image, u8 track, u8 index, MD5Digest* dig
 
     if (!image->ReadRawSector(sector.data(), nullptr))
     {
-      progress_callback->DisplayFormattedModalError("Failed to read sector %u from image", image->GetPositionOnDisc());
+      progress_callback->FormatModalError("Failed to read sector {} from image", image->GetPositionOnDisc());
       return false;
     }
 
-    digest->Update(sector.data(), static_cast<u32>(sector.size()));
+    digest->Update(sector);
   }
 
   progress_callback->SetProgressValue(index_length);
@@ -95,7 +94,7 @@ std::string CDImageHasher::HashToString(const Hash& hash)
                      hash[11], hash[12], hash[13], hash[14], hash[15]);
 }
 
-std::optional<CDImageHasher::Hash> CDImageHasher::HashFromString(const std::string_view& str)
+std::optional<CDImageHasher::Hash> CDImageHasher::HashFromString(std::string_view str)
 {
   auto decoded = StringUtil::DecodeHex(str);
   if (decoded && decoded->size() == std::tuple_size_v<Hash>)
@@ -127,7 +126,7 @@ bool CDImageHasher::GetImageHash(CDImage* image, Hash* out_hash,
   }
 
   progress_callback->SetProgressValue(image->GetTrackCount());
-  digest.Final(out_hash->data());
+  digest.Final(*out_hash);
   return true;
 }
 
@@ -138,6 +137,6 @@ bool CDImageHasher::GetTrackHash(CDImage* image, u8 track, Hash* out_hash,
   if (!ReadTrack(image, track, &digest, progress_callback))
     return false;
 
-  digest.Final(out_hash->data());
+  digest.Final(*out_hash);
   return true;
 }

@@ -18,10 +18,11 @@ public:
 
   const std::string& GetFileName() const { return m_filename; }
 
-  bool Load();
+  bool Load(Error* error = nullptr);
   bool Save(Error* error = nullptr) override;
 
   void Clear() override;
+  bool IsEmpty() override;
 
   bool GetIntValue(const char* section, const char* key, s32* value) const override;
   bool GetUIntValue(const char* section, const char* key, u32* value) const override;
@@ -40,6 +41,8 @@ public:
   bool ContainsValue(const char* section, const char* key) const override;
   void DeleteValue(const char* section, const char* key) override;
   void ClearSection(const char* section) override;
+  void RemoveSection(const char* section) override;
+  void RemoveEmptySections() override;
 
   std::vector<std::string> GetStringList(const char* section, const char* key) const override;
   void SetStringList(const char* section, const char* key, const std::vector<std::string>& items) override;

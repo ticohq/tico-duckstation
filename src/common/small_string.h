@@ -144,6 +144,9 @@ public:
   // returns the number of instances of the specified character
   u32 count(char ch) const;
 
+  // replaces search string with replacement, returns the number of replacements made
+  u32 replace(const char* search, const char* replacement);
+
   // removes characters from string
   void erase(s32 offset, s32 count = std::numeric_limits<s32>::max());
 
@@ -176,13 +179,24 @@ public:
   ALWAYS_INLINE const char* end_ptr() const { return m_buffer + m_length; }
 
   // STL adapters
+  ALWAYS_INLINE char& front() { return m_buffer[0]; }
+  ALWAYS_INLINE const char& front() const { return m_buffer[0]; }
+  ALWAYS_INLINE char& back() { return m_buffer[m_length - 1]; }
+  ALWAYS_INLINE const char& back() const { return m_buffer[m_length - 1]; }
   ALWAYS_INLINE void push_back(value_type&& val) { append(val); }
+  ALWAYS_INLINE void pop_back() { erase(-1); }
 
   // returns a string view for this string
   std::string_view view() const;
 
   // returns a substring view for this string
   std::string_view substr(s32 offset, s32 count) const;
+
+#ifdef _WIN32
+  // wide string adapters, win32 only
+  void assign(const std::wstring_view wstr);
+  std::wstring wstring() const;
+#endif
 
   // accessor operators
   ALWAYS_INLINE operator const char*() const { return c_str(); }

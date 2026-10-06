@@ -1,50 +1,23 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
-#include "assert.h"
 #include "string_util.h"
+#include "assert.h"
 
 #include <cctype>
 #include <codecvt>
 #include <cstdio>
 #include <sstream>
 
+#ifndef __APPLE__
+#include <malloc.h> // alloca
+#else
+#include <alloca.h>
+#endif
+
 #ifdef _WIN32
 #include "windows_headers.h"
 #endif
-
-std::string StringUtil::StdStringFromFormat(const char* format, ...)
-{
-  std::va_list ap;
-  va_start(ap, format);
-  std::string ret = StdStringFromFormatV(format, ap);
-  va_end(ap);
-  return ret;
-}
-
-std::string StringUtil::StdStringFromFormatV(const char* format, std::va_list ap)
-{
-  std::va_list ap_copy;
-  va_copy(ap_copy, ap);
-
-#ifdef _WIN32
-  int len = _vscprintf(format, ap_copy);
-#else
-  int len = std::vsnprintf(nullptr, 0, format, ap_copy);
-#endif
-  va_end(ap_copy);
-
-  std::string ret;
-
-  // If an encoding error occurs, len is -1. Which we definitely don't want to resize to.
-  if (len > 0)
-  {
-    ret.resize(len);
-    std::vsnprintf(ret.data(), ret.size() + 1, format, ap);
-  }
-
-  return ret;
-}
 
 bool StringUtil::WildcardMatch(const char* subject, const char* mask, bool case_sensitive /*= true*/)
 {
@@ -155,6 +128,12 @@ std::size_t StringUtil::Strlcpy(char* dst, const char* src, std::size_t size)
     dst[size - 1] = '\0';
   }
   return len;
+}
+
+std::size_t StringUtil::Strnlen(const char* str, std::size_t max_size)
+{
+  const char* loc = static_cast<const char*>(std::memchr(str, 0, max_size));
+  return loc ? static_cast<size_t>(loc - str) : max_size;
 }
 
 std::size_t StringUtil::Strlcpy(char* dst, const std::string_view src, std::size_t size)
@@ -306,6 +285,22 @@ void StringUtil::ReplaceAll(std::string* subject, const std::string_view search,
   }
 }
 
+std::string StringUtil::ReplaceAll(const std::string_view subject, const char search, const char replacement)
+{
+  std::string ret(subject);
+  ReplaceAll(&ret, search, replacement);
+  return ret;
+}
+
+void StringUtil::ReplaceAll(std::string* subject, const char search, const char replacement)
+{
+  for (size_t i = 0; i < subject->length(); i++)
+  {
+    const char ch = (*subject)[i];
+    (*subject)[i] = (ch == search) ? replacement : ch;
+  }
+}
+
 bool StringUtil::ParseAssignmentString(const std::string_view str, std::string_view* key, std::string_view* value)
 {
   const std::string_view::size_type pos = str.find('=');
@@ -393,7 +388,7 @@ size_t StringUtil::DecodeUTF8(const void* bytes, size_t length, char32_t* ch)
   }
 
 invalid:
-  *ch = 0xFFFFFFFFu;
+  *ch = UNICODE_REPLACEMENT_CHARACTER; // unicode replacement character
   return 1;
 }
 
@@ -436,6 +431,96 @@ void StringUtil::EllipsiseInPlace(std::string& str, u32 max_length, const char* 
 
     str.append(ellipsis);
   }
+}
+
+std::optional<size_t> StringUtil::BytePatternSearch(const std::span<const u8> bytes, const std::string_view pattern)
+{
+  // Parse the pattern into a bytemask.
+  size_t pattern_length = 0;
+  bool hinibble = true;
+  for (size_t i = 0; i < pattern.size(); i++)
+  {
+    if ((pattern[i] >= '0' && pattern[i] <= '9') || (pattern[i] >= 'a' && pattern[i] <= 'f') ||
+        (pattern[i] >= 'A' && pattern[i] <= 'F') || pattern[i] == '?')
+    {
+      hinibble ^= true;
+      if (hinibble)
+        pattern_length++;
+    }
+    else if (pattern[i] == ' ' || pattern[i] == '\r' || pattern[i] == '\n')
+    {
+      continue;
+    }
+    else
+    {
+      break;
+    }
+  }
+  if (pattern_length == 0)
+    return std::nullopt;
+
+  const bool allocate_on_heap = (pattern_length >= 512);
+  u8* match_bytes = allocate_on_heap ? static_cast<u8*>(alloca(pattern_length * 2)) : new u8[pattern_length * 2];
+  u8* match_masks = match_bytes + pattern_length;
+
+  hinibble = true;
+  u8 match_byte = 0;
+  u8 match_mask = 0;
+  for (size_t i = 0, match_len = 0; i < pattern.size(); i++)
+  {
+    u8 nibble = 0, nibble_mask = 0xF;
+    if (pattern[i] >= '0' && pattern[i] <= '9')
+      nibble = pattern[i] - '0';
+    else if (pattern[i] >= 'a' && pattern[i] <= 'f')
+      nibble = pattern[i] - 'a' + 0xa;
+    else if (pattern[i] >= 'A' && pattern[i] <= 'F')
+      nibble = pattern[i] - 'A' + 0xa;
+    else if (pattern[i] == '?')
+      nibble_mask = 0;
+    else if (pattern[i] == ' ' || pattern[i] == '\r' || pattern[i] == '\n')
+      continue;
+    else
+      break;
+
+    hinibble ^= true;
+    if (hinibble)
+    {
+      match_bytes[match_len] = nibble | (match_byte << 4);
+      match_masks[match_len] = nibble_mask | (match_mask << 4);
+      match_len++;
+    }
+    else
+    {
+      match_byte = nibble;
+      match_mask = nibble_mask;
+    }
+  }
+  if (pattern_length == 0)
+    return std::nullopt;
+
+  std::optional<size_t> ret;
+  const size_t max_search_offset = bytes.size() - pattern_length;
+  for (size_t offset = 0; offset < max_search_offset; offset++)
+  {
+    const u8* start = bytes.data() + offset;
+    for (size_t match_offset = 0;;)
+    {
+      if ((start[match_offset] & match_masks[match_offset]) != match_bytes[match_offset])
+        break;
+
+      match_offset++;
+      if (match_offset == pattern_length)
+      {
+        // found it!
+        ret = offset;
+      }
+    }
+  }
+
+  if (allocate_on_heap)
+    delete[] match_bytes;
+
+  return ret;
 }
 
 size_t StringUtil::DecodeUTF8(const std::string_view str, size_t offset, char32_t* ch)

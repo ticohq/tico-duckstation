@@ -1,19 +1,34 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com> and contributors.
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com> and contributors.
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "input_manager.h"
 #include "platform_misc.h"
 
+#include "common/error.h"
 #include "common/log.h"
+#include "common/path.h"
 #include "common/scoped_guard.h"
 #include "common/small_string.h"
 
 #include <cinttypes>
+#include <dbus/dbus.h>
+#include <signal.h>
 #include <spawn.h>
 #include <unistd.h>
-#include <dbus/dbus.h>
 
 Log_SetChannel(PlatformMisc);
+
+bool PlatformMisc::InitializeSocketSupport(Error* error)
+{
+  // Ignore SIGPIPE, we handle errors ourselves.
+  if (signal(SIGPIPE, SIG_IGN) == SIG_ERR)
+  {
+    Error::SetErrno(error, "signal(SIGPIPE, SIG_IGN) failed: ", errno);
+    return false;
+  }
+
+  return true;
+}
 
 static bool SetScreensaverInhibitDBus(const bool inhibit_requested, const char* program_name, const char* reason)
 {
@@ -29,7 +44,7 @@ static bool SetScreensaverInhibitDBus(const bool inhibit_requested, const char* 
   ScopedGuard cleanup = [&]() {
     if (dbus_error_is_set(&error))
     {
-      Log_ErrorPrintf("SetScreensaverInhibitDBus error: %s", error.message);
+      ERROR_LOG("SetScreensaverInhibitDBus error: {}", error.message);
       dbus_error_free(&error);
     }
     if (message)
@@ -102,7 +117,7 @@ void PlatformMisc::SuspendScreensaver()
 
   if (!SetScreensaverInhibit(true))
   {
-    Log_ErrorPrintf("Failed to suspend screensaver.");
+    ERROR_LOG("Failed to suspend screensaver.");
     return;
   }
 
@@ -115,9 +130,15 @@ void PlatformMisc::ResumeScreensaver()
     return;
 
   if (!SetScreensaverInhibit(false))
-    Log_ErrorPrint("Failed to resume screensaver.");
+    ERROR_LOG("Failed to resume screensaver.");
 
   s_screensaver_suspended = false;
+}
+
+size_t PlatformMisc::GetRuntimePageSize()
+{
+  int res = sysconf(_SC_PAGESIZE);
+  return (res > 0) ? static_cast<size_t>(res) : 0;
 }
 
 bool PlatformMisc::PlaySoundAsync(const char* path)
@@ -130,7 +151,29 @@ bool PlatformMisc::PlaySoundAsync(const char* path)
 
   // Since we set SA_NOCLDWAIT in Qt, we don't need to wait here.
   int res = posix_spawnp(&pid, cmdname, nullptr, nullptr, const_cast<char**>(argv), environ);
-  return (res == 0);
+  if (res == 0)
+    return true;
+
+  // Try gst-play-1.0.
+  const char* gst_play_cmdname = "gst-play-1.0";
+  const char* gst_play_argv[] = {cmdname, path, nullptr};
+  res = posix_spawnp(&pid, gst_play_cmdname, nullptr, nullptr, const_cast<char**>(gst_play_argv), environ);
+  if (res == 0)
+    return true;
+
+  // gst-launch? Bit messier for sure.
+  TinyString location_str = TinyString::from_format("location={}", path);
+  TinyString parse_str = TinyString::from_format("{}parse", Path::GetExtension(path));
+  const char* gst_launch_cmdname = "gst-launch-1.0";
+  const char* gst_launch_argv[] = {gst_launch_cmdname, "filesrc", location_str.c_str(), "!",
+                                   parse_str.c_str(),  "!",       "alsasink",           nullptr};
+  res = posix_spawnp(&pid, gst_launch_cmdname, nullptr, nullptr, const_cast<char**>(gst_launch_argv), environ);
+  if (res == 0)
+    return true;
+
+  ERROR_LOG("Failed to play sound effect {}. Make sure you have aplay, gst-play-1.0, or gst-launch-1.0 available.",
+            path);
+  return false;
 #else
   return false;
 #endif

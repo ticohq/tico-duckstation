@@ -8,6 +8,7 @@
 #include "gpu_device.h"
 #include "gpu_texture.h"
 
+#include "common/dimensional_array.h"
 #include "common/windows_headers.h"
 
 #include <array>
@@ -64,11 +65,11 @@ public:
   bool UpdateWindow() override;
   void ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale) override;
 
-  static AdapterAndModeList StaticGetAdapterAndModeList();
-  AdapterAndModeList GetAdapterAndModeList() override;
   void DestroySurface() override;
 
   std::string GetDriverInfo() const override;
+
+  void ExecuteAndWaitForGPUIdle() override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                             GPUTexture::Type type, GPUTexture::Format format,
@@ -90,10 +91,12 @@ public:
   void ClearDepth(GPUTexture* t, float d) override;
   void InvalidateRenderTarget(GPUTexture* t) override;
 
-  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data) override;
-  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                    const char* entry_point, DynamicHeapArray<u8>* out_binary) override;
-  std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config) override;
+  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data,
+                                                    Error* error) override;
+  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, GPUShaderLanguage language,
+                                                    std::string_view source, const char* entry_point,
+                                                    DynamicHeapArray<u8>* out_binary, Error* error) override;
+  std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config, Error* error) override;
 
   void PushDebugGroup(const char* name) override;
   void PopDebugGroup() override;
@@ -108,20 +111,22 @@ public:
   void* MapUniformBuffer(u32 size) override;
   void UnmapUniformBuffer(u32 size) override;
   void SetRenderTargets(GPUTexture* const* rts, u32 num_rts, GPUTexture* ds,
-                        GPUPipeline::RenderPassFlag feedback_loop = GPUPipeline::NoRenderPassFlags) override;
+                        GPUPipeline::RenderPassFlag flags = GPUPipeline::NoRenderPassFlags) override;
   void SetPipeline(GPUPipeline* pipeline) override;
   void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler) override;
   void SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer) override;
-  void SetViewport(s32 x, s32 y, s32 width, s32 height) override;
-  void SetScissor(s32 x, s32 y, s32 width, s32 height) override;
+  void SetViewport(const GSVector4i rc) override;
+  void SetScissor(const GSVector4i rc) override;
   void Draw(u32 vertex_count, u32 base_vertex) override;
   void DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex) override;
   void DrawIndexedWithBarrier(u32 index_count, u32 base_index, u32 base_vertex, DrawBarrier type) override;
 
+  void SetVSyncMode(GPUVSyncMode mode, bool allow_present_throttle) override;
+
   bool SetGPUTimingEnabled(bool enabled) override;
   float GetAndResetAccumulatedGPUTime() override;
 
-  bool BeginPresent(bool skip_present) override;
+  bool BeginPresent(bool skip_present, u32 clear_color) override;
   void EndPresent(bool explicit_present) override;
   void SubmitPresent() override;
 
@@ -151,8 +156,8 @@ public:
   ID3D12GraphicsCommandList4* GetInitCommandList();
 
   // Root signature access.
-  ComPtr<ID3DBlob> SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* desc);
-  ComPtr<ID3D12RootSignature> CreateRootSignature(const D3D12_ROOT_SIGNATURE_DESC* desc);
+  ComPtr<ID3DBlob> SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* desc, Error* error);
+  ComPtr<ID3D12RootSignature> CreateRootSignature(const D3D12_ROOT_SIGNATURE_DESC* desc, Error* error);
 
   /// Fence value for current command list.
   u64 GetCurrentFenceValue() const { return m_current_fence_value; }
@@ -172,20 +177,20 @@ public:
 
   /// Ends any render pass, executes the command buffer, and invalidates cached state.
   void SubmitCommandList(bool wait_for_completion);
-  void SubmitCommandList(bool wait_for_completion, const char* reason, ...);
-  void SubmitCommandListAndRestartRenderPass(const char* reason);
+  void SubmitCommandList(bool wait_for_completion, const std::string_view reason);
+  void SubmitCommandListAndRestartRenderPass(const std::string_view reason);
 
   void UnbindPipeline(D3D12Pipeline* pl);
   void UnbindTexture(D3D12Texture* tex);
   void UnbindTextureBuffer(D3D12TextureBuffer* buf);
 
 protected:
-  bool CreateDevice(const std::string_view& adapter, bool threaded_presentation,
+  bool CreateDevice(std::string_view adapter, bool threaded_presentation,
                     std::optional<bool> exclusive_fullscreen_control, FeatureMask disabled_features,
                     Error* error) override;
   void DestroyDevice() override;
 
-  bool ReadPipelineCache(const std::string& filename) override;
+  bool ReadPipelineCache(std::optional<DynamicHeapArray<u8>> data) override;
   bool GetPipelineCacheData(DynamicHeapArray<u8>* data) override;
 
 private:
@@ -196,9 +201,11 @@ private:
     DIRTY_FLAG_CONSTANT_BUFFER = (1 << 2),
     DIRTY_FLAG_TEXTURES = (1 << 3),
     DIRTY_FLAG_SAMPLERS = (1 << 3),
+    DIRTY_FLAG_RT_UAVS = (1 << 4),
 
-    ALL_DIRTY_STATE = DIRTY_FLAG_INITIAL | DIRTY_FLAG_PIPELINE_LAYOUT | DIRTY_FLAG_CONSTANT_BUFFER |
-                      DIRTY_FLAG_TEXTURES | DIRTY_FLAG_SAMPLERS,
+    LAYOUT_DEPENDENT_DIRTY_STATE = DIRTY_FLAG_PIPELINE_LAYOUT | DIRTY_FLAG_CONSTANT_BUFFER | DIRTY_FLAG_TEXTURES |
+                                   DIRTY_FLAG_SAMPLERS | DIRTY_FLAG_RT_UAVS,
+    ALL_DIRTY_STATE = DIRTY_FLAG_INITIAL | (LAYOUT_DEPENDENT_DIRTY_STATE & ~DIRTY_FLAG_RT_UAVS),
   };
 
   struct CommandList
@@ -216,22 +223,21 @@ private:
 
   using SamplerMap = std::unordered_map<u64, D3D12DescriptorHandle>;
 
-  static void GetAdapterAndModeList(AdapterAndModeList* ret, IDXGIFactory5* factory);
-
   void SetFeatures(FeatureMask disabled_features);
 
-  bool CreateSwapChain();
-  bool CreateSwapChainRTV();
+  u32 GetSwapChainBufferCount() const;
+  bool CreateSwapChain(Error* error);
+  bool CreateSwapChainRTV(Error* error);
   void DestroySwapChainRTVs();
   void DestroySwapChain();
 
-  bool CreateCommandLists();
+  bool CreateCommandLists(Error* error);
   void DestroyCommandLists();
-  bool CreateRootSignatures();
+  bool CreateRootSignatures(Error* error);
   void DestroyRootSignatures();
-  bool CreateBuffers();
+  bool CreateBuffers(Error* error);
   void DestroyBuffers();
-  bool CreateDescriptorHeaps();
+  bool CreateDescriptorHeaps(Error* error);
   void DestroyDescriptorHeaps();
   bool CreateTimestampQuery();
   void DestroyTimestampQuery();
@@ -261,6 +267,7 @@ private:
   void SetInitialPipelineState();
   void PreDrawCheck();
 
+  bool IsUsingROVRootSignature() const;
   void UpdateRootSignature();
   template<GPUPipeline::Layout layout>
   bool UpdateParametersForLayout(u32 dirty);
@@ -269,7 +276,7 @@ private:
   // Ends a render pass if we're currently in one.
   // When Bind() is next called, the pass will be restarted.
   void BeginRenderPass();
-  void BeginSwapChainRenderPass();
+  void BeginSwapChainRenderPass(u32 clear_color);
   void EndRenderPass();
   bool InRenderPass();
 
@@ -300,6 +307,7 @@ private:
   D3D12DescriptorHeapManager m_dsv_heap_manager;
   D3D12DescriptorHeapManager m_sampler_heap_manager;
   D3D12DescriptorHandle m_null_srv_descriptor;
+  D3D12DescriptorHandle m_null_uav_descriptor;
   D3D12DescriptorHandle m_point_sampler;
 
   ComPtr<ID3D12QueryHeap> m_timestamp_query_heap;
@@ -311,7 +319,8 @@ private:
   std::deque<std::pair<u64, std::pair<D3D12MA::Allocation*, ID3D12Object*>>> m_cleanup_resources;
   std::deque<std::pair<u64, std::pair<D3D12DescriptorHeapManager*, D3D12DescriptorHandle>>> m_cleanup_descriptors;
 
-  std::array<ComPtr<ID3D12RootSignature>, static_cast<u8>(GPUPipeline::Layout::MaxCount)> m_root_signatures = {};
+  DimensionalArray<ComPtr<ID3D12RootSignature>, static_cast<u8>(GPUPipeline::Layout::MaxCount), 2> m_root_signatures =
+    {};
 
   D3D12StreamBuffer m_vertex_buffer;
   D3D12StreamBuffer m_index_buffer;
@@ -329,7 +338,8 @@ private:
 
   D3D12Pipeline* m_current_pipeline = nullptr;
   D3D12_PRIMITIVE_TOPOLOGY m_current_topology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
-  u32 m_num_current_render_targets = 0;
+  u8 m_num_current_render_targets = 0;
+  GPUPipeline::RenderPassFlag m_current_render_pass_flags = GPUPipeline::NoRenderPassFlags;
   std::array<D3D12Texture*, MAX_RENDER_TARGETS> m_current_render_targets = {};
   D3D12Texture* m_current_depth_target = nullptr;
   u32 m_current_vertex_stride = 0;
@@ -339,6 +349,6 @@ private:
   std::array<D3D12Texture*, MAX_TEXTURE_SAMPLERS> m_current_textures = {};
   std::array<D3D12DescriptorHandle, MAX_TEXTURE_SAMPLERS> m_current_samplers = {};
   D3D12TextureBuffer* m_current_texture_buffer = nullptr;
-  Common::Rectangle<s32> m_current_viewport{0, 0, 1, 1};
-  Common::Rectangle<s32> m_current_scissor{0, 0, 1, 1};
+  GSVector4i m_current_viewport = GSVector4i::cxpr(0, 0, 1, 1);
+  GSVector4i m_current_scissor = {};
 };

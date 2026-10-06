@@ -1,12 +1,16 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "consolesettingswidget.h"
-#include "core/system.h"
 #include "qtutils.h"
 #include "settingswindow.h"
 #include "settingwidgetbinder.h"
+
+#include "core/game_database.h"
+#include "core/system.h"
+
 #include "util/cd_image.h"
+
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPushButton>
 
@@ -52,7 +56,17 @@ ConsoleSettingsWidget::ConsoleSettingsWidget(SettingsWindow* dialog, QWidget* pa
                                               Settings::DEFAULT_CDROM_READAHEAD_SECTORS);
   SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.cdromLoadImageToRAM, "CDROM", "LoadImageToRAM", false);
   SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.cdromLoadImagePatches, "CDROM", "LoadImagePatches", false);
-  SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.cdromIgnoreDriveSubcode, "CDROM", "IgnoreHostSubcode", false);
+
+  if (!m_dialog->isPerGameSettings())
+  {
+    SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.cdromIgnoreDriveSubcode, "CDROM", "IgnoreHostSubcode",
+                                                 false);
+  }
+  else
+  {
+    m_ui.cdromIgnoreDriveSubcode->setEnabled(false);
+  }
+
   SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.cdromSeekSpeedup, "CDROM", "SeekSpeedup", 1);
   SettingWidgetBinder::BindWidgetToIntSetting(sif, m_ui.cdromReadSpeedup, "CDROM", "ReadSpeedup", 1, 1);
 
@@ -111,6 +125,11 @@ ConsoleSettingsWidget::ConsoleSettingsWidget(SettingsWindow* dialog, QWidget* pa
   connect(m_ui.enableCPUClockSpeedControl, &QCheckBox::checkStateChanged, this,
           &ConsoleSettingsWidget::onEnableCPUClockSpeedControlChecked);
   connect(m_ui.cpuClockSpeed, &QSlider::valueChanged, this, &ConsoleSettingsWidget::onCPUClockSpeedValueChanged);
+
+  SettingWidgetBinder::SetAvailability(m_ui.cpuExecutionModeLabel,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::ForceInterpreter));
+  SettingWidgetBinder::SetAvailability(m_ui.cpuExecutionMode,
+                                       !m_dialog->hasGameTrait(GameDatabase::Trait::ForceInterpreter));
 
   calculateCPUClockValue();
 }

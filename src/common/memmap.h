@@ -10,10 +10,8 @@
 
 #if defined(_WIN32) || defined(__SWITCH__)
 
-// not actually what is used on Switch
-// but they will work for us
-
-// eww :/ but better than including windows.h
+// eww :/ but better than including windows.h (the Switch takes the same values,
+// translated to its own permissions in memmap.cpp)
 enum class PageProtect : u32
 {
   NoAccess = 0x01,         // PAGE_NOACCESS
@@ -26,6 +24,19 @@ enum class PageProtect : u32
 #ifdef __SWITCH__
 struct VirtmemReservation;
 #endif
+
+#elif defined(__APPLE__)
+
+#include <mach/mach_vm.h>
+
+enum class PageProtect : u32
+{
+  NoAccess = VM_PROT_NONE,
+  ReadOnly = VM_PROT_READ,
+  ReadWrite = VM_PROT_READ | VM_PROT_WRITE,
+  ReadExecute = VM_PROT_READ | VM_PROT_EXECUTE,
+  ReadWriteExecute = VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE,
+};
 
 #else
 
@@ -47,10 +58,42 @@ class Error;
 namespace MemMap {
 std::string GetFileMappingName(const char* prefix);
 void* CreateSharedMemory(const char* name, size_t size, Error* error);
+void DeleteSharedMemory(const char* name);
 void DestroySharedMemory(void* ptr);
 void* MapSharedMemory(void* handle, size_t offset, void* baseaddr, size_t size, PageProtect mode);
 void UnmapSharedMemory(void* baseaddr, size_t size);
 bool MemProtect(void* baseaddr, size_t size, PageProtect mode);
+
+/// Returns the base address for the current process.
+const void* GetBaseAddress();
+
+/// Allocates RWX memory in branch range from the base address.
+void* AllocateJITMemory(size_t size);
+
+/// Releases RWX memory.
+void ReleaseJITMemory(void* ptr, size_t size);
+
+/// Where JIT code is written, relative to where it runs. The Switch cannot map
+/// memory writable and executable at once: its JIT buffer is mapped twice,
+/// read/execute and read/write. 0 elsewhere.
+#ifdef __SWITCH__
+ptrdiff_t GetJITWriteOffset();
+#else
+ALWAYS_INLINE static ptrdiff_t GetJITWriteOffset()
+{
+  return 0;
+}
+#endif
+
+/// Flushes the instruction cache on the host for the specified range.
+/// Only needed outside of X86, X86 has coherent D/I cache.
+#if !defined(CPU_ARCH_ARM32) && !defined(CPU_ARCH_ARM64) && !defined(CPU_ARCH_RISCV64)
+// clang-format off
+ALWAYS_INLINE static void FlushInstructionCache(void* address, size_t size) { }
+// clang-format on
+#else
+void FlushInstructionCache(void* address, size_t size);
+#endif
 
 /// JIT write protect for Apple Silicon. Needs to be called prior to writing to any RWX pages.
 #if !defined(__APPLE__) || !defined(__aarch64__)

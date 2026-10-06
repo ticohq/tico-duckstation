@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "cpu_newrec_compiler_riscv64.h"
-#include "common/align.h"
-#include "common/assert.h"
-#include "common/log.h"
-#include "common/string_util.h"
 #include "cpu_code_cache_private.h"
 #include "cpu_core_private.h"
 #include "cpu_pgxp.h"
@@ -13,6 +9,13 @@
 #include "gte.h"
 #include "settings.h"
 #include "timing_event.h"
+
+#include "common/align.h"
+#include "common/assert.h"
+#include "common/log.h"
+#include "common/memmap.h"
+#include "common/string_util.h"
+
 #include <limits>
 
 #ifdef CPU_ARCH_RISCV64
@@ -37,6 +40,7 @@ using namespace biscuit;
 using CPU::Recompiler::rvEmitCall;
 using CPU::Recompiler::rvEmitDSExtW;
 using CPU::Recompiler::rvEmitDUExtW;
+using CPU::Recompiler::rvEmitFarLoad;
 using CPU::Recompiler::rvEmitJmp;
 using CPU::Recompiler::rvEmitMov;
 using CPU::Recompiler::rvEmitMov64;
@@ -127,6 +131,25 @@ u32 CPU::Recompiler::rvEmitCall(biscuit::Assembler* rvAsm, const void* ptr)
   return rvEmitJmp(rvAsm, ptr, biscuit::ra);
 }
 
+void CPU::Recompiler::rvEmitFarLoad(biscuit::Assembler* rvAsm, const biscuit::GPR& reg, const void* addr,
+                                    bool sign_extend_word)
+{
+  const auto [hi, lo] = rvGetAddressImmediates(rvAsm->GetCursorPointer(), addr);
+  rvAsm->AUIPC(reg, hi);
+  if (sign_extend_word)
+    rvAsm->LW(reg, lo, reg);
+  else
+    rvAsm->LWU(reg, lo, reg);
+}
+
+void CPU::Recompiler::rvEmitFarStore(biscuit::Assembler* rvAsm, const biscuit::GPR& reg, const void* addr,
+                                     const biscuit::GPR& tempreg)
+{
+  const auto [hi, lo] = rvGetAddressImmediates(rvAsm->GetCursorPointer(), addr);
+  rvAsm->AUIPC(tempreg, hi);
+  rvAsm->SW(reg, lo, tempreg);
+}
+
 void CPU::Recompiler::rvEmitSExtB(biscuit::Assembler* rvAsm, const biscuit::GPR& rd, const biscuit::GPR& rs)
 {
   rvAsm->SLLI(rd, rs, 24);
@@ -173,11 +196,11 @@ void CPU::CodeCache::DisassembleAndLogHostCode(const void* start, u32 size)
     size_t instlen;
     inst_fetch(cur, &inst, &instlen);
     disasm_inst(buf, std::size(buf), rv64, static_cast<u64>(reinterpret_cast<uintptr_t>(cur)), inst);
-    Log_DebugPrintf("\t0x%016" PRIx64 "\t%s", static_cast<u64>(reinterpret_cast<uintptr_t>(cur)), buf);
+    DEBUG_LOG("\t0x{:016X}\t{}", static_cast<u64>(reinterpret_cast<uintptr_t>(cur)), buf);
     cur += instlen;
   }
 #else
-  Log_ErrorPrint("Not compiled with ENABLE_HOST_DISASSEMBLY.");
+  ERROR_LOG("Not compiled with ENABLE_HOST_DISASSEMBLY.");
 #endif
 }
 
@@ -197,7 +220,7 @@ u32 CPU::CodeCache::GetHostInstructionCount(const void* start, u32 size)
   }
   return icount;
 #else
-  Log_ErrorPrint("Not compiled with ENABLE_HOST_DISASSEMBLY.");
+  ERROR_LOG("Not compiled with ENABLE_HOST_DISASSEMBLY.");
   return 0;
 #endif
 }
@@ -226,7 +249,7 @@ u32 CPU::CodeCache::EmitASMFunctions(void* code, u32 code_size)
     // Downcount isn't set on entry, so we need to initialize it
     rvMoveAddressToReg(rvAsm, RARG1, TimingEvents::GetHeadEventPtr());
     rvAsm->LD(RARG1, 0, RARG1);
-    rvAsm->LW(RARG1, offsetof(TimingEvent, m_downcount), RARG1);
+    rvAsm->LW(RARG1, OFFSETOF(TimingEvent, m_downcount), RARG1);
     rvAsm->SW(RARG1, PTR(&g_state.downcount));
 
     // Fall through to event dispatcher
@@ -304,7 +327,7 @@ u32 CPU::CodeCache::EmitJump(void* code, const void* dst, bool flush_icache)
   }
 
   if (flush_icache)
-    JitCodeBuffer::FlushInstructionCache(code, BLOCK_LINK_SIZE);
+    MemMap::FlushInstructionCache(code, BLOCK_LINK_SIZE);
 
   return BLOCK_LINK_SIZE;
 }
@@ -522,13 +545,25 @@ void CPU::NewRec::RISCV64Compiler::GenerateBlockProtectCheck(const u8* ram_ptr, 
 
 void CPU::NewRec::RISCV64Compiler::GenerateICacheCheckAndUpdate()
 {
-  if (GetSegmentForAddress(m_block->pc) >= Segment::KSEG1)
+  if (!m_block->HasFlag(CodeCache::BlockFlags::IsUsingICache))
   {
-    rvAsm->LW(RARG1, PTR(&g_state.pending_ticks));
-    SafeADDIW(RARG1, RARG1, static_cast<u32>(m_block->uncached_fetch_ticks));
-    rvAsm->SW(RARG1, PTR(&g_state.pending_ticks));
+    if (m_block->HasFlag(CodeCache::BlockFlags::NeedsDynamicFetchTicks))
+    {
+      rvEmitFarLoad(rvAsm, RARG2, GetFetchMemoryAccessTimePtr());
+      rvAsm->LW(RARG1, PTR(&g_state.pending_ticks));
+      rvEmitMov(rvAsm, RARG3, m_block->size);
+      rvAsm->MULW(RARG2, RARG2, RARG3);
+      rvAsm->ADD(RARG1, RARG1, RARG2);
+      rvAsm->SW(RARG1, PTR(&g_state.pending_ticks));
+    }
+    else
+    {
+      rvAsm->LW(RARG1, PTR(&g_state.pending_ticks));
+      SafeADDIW(RARG1, RARG1, static_cast<u32>(m_block->uncached_fetch_ticks));
+      rvAsm->SW(RARG1, PTR(&g_state.pending_ticks));
+    }
   }
-  else
+  else if (m_block->icache_line_count > 0)
   {
     const auto& ticks_reg = RARG1;
     const auto& current_tag_reg = RARG2;
@@ -545,7 +580,7 @@ void CPU::NewRec::RISCV64Compiler::GenerateICacheCheckAndUpdate()
         continue;
 
       const u32 line = GetICacheLine(current_pc);
-      const u32 offset = offsetof(State, icache_tags) + (line * sizeof(u32));
+      const u32 offset = OFFSETOF(State, icache_tags) + (line * sizeof(u32));
 
       // TODO: Verify sign extension here...
       Label cache_hit;
@@ -569,9 +604,9 @@ void CPU::NewRec::RISCV64Compiler::GenerateCall(const void* func, s32 arg1reg /*
 {
   if (arg1reg >= 0 && arg1reg != static_cast<s32>(RARG1.Index()))
     rvAsm->MV(RARG1, GPR(arg1reg));
-  if (arg1reg >= 0 && arg2reg != static_cast<s32>(RARG2.Index()))
+  if (arg2reg >= 0 && arg2reg != static_cast<s32>(RARG2.Index()))
     rvAsm->MV(RARG2, GPR(arg2reg));
-  if (arg1reg >= 0 && arg3reg != static_cast<s32>(RARG3.Index()))
+  if (arg3reg >= 0 && arg3reg != static_cast<s32>(RARG3.Index()))
     rvAsm->MV(RARG3, GPR(arg3reg));
   EmitCall(func);
 }
@@ -665,7 +700,7 @@ void CPU::NewRec::RISCV64Compiler::EndAndLinkBlock(const std::optional<u32>& new
     if (newpc.value() == m_block->pc)
     {
       // Special case: ourselves! No need to backlink then.
-      Log_DebugPrintf("Linking block at %08X to self", m_block->pc);
+      DEBUG_LOG("Linking block at {:08X} to self", m_block->pc);
       rvEmitJmp(rvAsm, rvAsm->GetBufferPointer(0));
     }
     else
@@ -754,7 +789,7 @@ biscuit::GPR CPU::NewRec::RISCV64Compiler::CFGetSafeRegS(CompileFlags cf, const 
   }
   else
   {
-    Log_WarningPrintf("Hit memory path in CFGetSafeRegS() for %s", GetRegName(cf.MipsS()));
+    WARNING_LOG("Hit memory path in CFGetSafeRegS() for {}", GetRegName(cf.MipsS()));
     rvAsm->LW(temp_reg, PTR(&g_state.regs.r[cf.mips_s]));
     return temp_reg;
   }
@@ -776,7 +811,7 @@ biscuit::GPR CPU::NewRec::RISCV64Compiler::CFGetSafeRegT(CompileFlags cf, const 
   }
   else
   {
-    Log_WarningPrintf("Hit memory path in CFGetSafeRegT() for %s", GetRegName(cf.MipsT()));
+    WARNING_LOG("Hit memory path in CFGetSafeRegT() for {}", GetRegName(cf.MipsT()));
     rvAsm->LW(temp_reg, PTR(&g_state.regs.r[cf.mips_t]));
     return temp_reg;
   }
@@ -825,7 +860,7 @@ void CPU::NewRec::RISCV64Compiler::MoveSToReg(const biscuit::GPR& dst, CompileFl
   }
   else
   {
-    Log_WarningPrintf("Hit memory path in MoveSToReg() for %s", GetRegName(cf.MipsS()));
+    WARNING_LOG("Hit memory path in MoveSToReg() for {}", GetRegName(cf.MipsS()));
     rvAsm->LW(dst, PTR(&g_state.regs.r[cf.mips_s]));
   }
 }
@@ -843,7 +878,7 @@ void CPU::NewRec::RISCV64Compiler::MoveTToReg(const biscuit::GPR& dst, CompileFl
   }
   else
   {
-    Log_WarningPrintf("Hit memory path in MoveTToReg() for %s", GetRegName(cf.MipsT()));
+    WARNING_LOG("Hit memory path in MoveTToReg() for {}", GetRegName(cf.MipsT()));
     rvAsm->LW(dst, PTR(&g_state.regs.r[cf.mips_t]));
   }
 }
@@ -900,7 +935,7 @@ void CPU::NewRec::RISCV64Compiler::Flush(u32 flags)
     rvAsm->LW(RARG2, PTR(&g_state.load_delay_value));
     rvAsm->SLLI(RARG1, RARG1, 2); // *4
     rvAsm->ADD(RARG1, RARG1, RSTATE);
-    rvAsm->SW(RARG2, offsetof(CPU::State, regs.r[0]), RARG1);
+    rvAsm->SW(RARG2, OFFSETOF(CPU::State, regs.r[0]), RARG1);
     rvAsm->LI(RSCRATCH, static_cast<u8>(Reg::count));
     rvAsm->SB(RSCRATCH, PTR(&g_state.load_delay_reg));
     m_load_delay_dirty = false;
@@ -967,6 +1002,8 @@ void CPU::NewRec::RISCV64Compiler::Flush(u32 flags)
 
 void CPU::NewRec::RISCV64Compiler::Compile_Fallback()
 {
+  WARNING_LOG("Compiling instruction fallback at PC=0x{:08X}, instruction=0x{:08X}", iinfo->pc, inst->bits);
+
   Flush(FLUSH_FOR_INTERPRETER);
 
 #if 0
@@ -1963,7 +2000,7 @@ void CPU::NewRec::RISCV64Compiler::Compile_lwc2(CompileFlags cf, MemoryAccessSiz
     g_settings.gpu_pgxp_enable ? std::optional<GPR>(GPR(AllocateTempHostReg(HR_CALLEE_SAVED))) : std::optional<GPR>();
   FlushForLoadStore(address, false, use_fastmem);
   const GPR addr = ComputeLoadStoreAddressArg(cf, address, addr_reg);
-  const GPR value = GenerateLoad(addr, MemoryAccessSize::Word, false, use_fastmem, [this, action]() {
+  const GPR value = GenerateLoad(addr, MemoryAccessSize::Word, false, use_fastmem, [this, action = action]() {
     return (action == GTERegisterAccessAction::CallHandler && g_settings.gpu_pgxp_enable) ?
              GPR(AllocateTempHostReg(HR_CALLEE_SAVED)) :
              RRET;
@@ -2214,7 +2251,7 @@ void CPU::NewRec::RISCV64Compiler::Compile_mtc0(CompileFlags cf)
   if (mask == 0)
   {
     // if it's a read-only register, ignore
-    Log_DebugPrintf("Ignoring write to read-only cop0 reg %u", static_cast<u32>(reg));
+    DEBUG_LOG("Ignoring write to read-only cop0 reg {}", static_cast<u32>(reg));
     return;
   }
 
@@ -2273,7 +2310,7 @@ void CPU::NewRec::RISCV64Compiler::Compile_mtc0(CompileFlags cf)
   if (reg == Cop0Reg::DCIC && g_settings.cpu_recompiler_memory_exceptions)
   {
     // TODO: DCIC handling for debug breakpoints
-    Log_WarningPrintf("TODO: DCIC handling for debug breakpoints");
+    WARNING_LOG("TODO: DCIC handling for debug breakpoints");
   }
 }
 

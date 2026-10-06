@@ -7,8 +7,8 @@
 #include "common/assert.h"
 #include "common/error.h"
 #include "common/file_system.h"
+#include "common/gsvector.h"
 #include "common/log.h"
-#include "common/rectangle.h"
 #include "common/string_util.h"
 
 #include "fmt/format.h"
@@ -50,7 +50,7 @@ const char* D3DCommon::GetFeatureLevelShaderModelString(D3D_FEATURE_LEVEL featur
     {D3D_FEATURE_LEVEL_10_0, "sm40"},
     {D3D_FEATURE_LEVEL_10_1, "sm41"},
     {D3D_FEATURE_LEVEL_11_0, "sm50"},
-    {D3D_FEATURE_LEVEL_11_1, "sm51"},
+    {D3D_FEATURE_LEVEL_11_1, "sm50"},
   }};
 
   for (const auto& [fl, name] : feature_level_names)
@@ -73,7 +73,7 @@ D3D_FEATURE_LEVEL D3DCommon::GetDeviceMaxFeatureLevel(IDXGIAdapter1* adapter)
                                  requested_feature_levels.data(), static_cast<UINT>(requested_feature_levels.size()),
                                  D3D11_SDK_VERSION, nullptr, &max_supported_level, nullptr);
   if (FAILED(hr))
-    Log_WarningFmt("D3D11CreateDevice() for getting max feature level failed: 0x{:08X}", static_cast<unsigned>(hr));
+    WARNING_LOG("D3D11CreateDevice() for getting max feature level failed: 0x{:08X}", static_cast<unsigned>(hr));
 
   return max_supported_level;
 }
@@ -92,10 +92,10 @@ Microsoft::WRL::ComPtr<IDXGIFactory5> D3DCommon::CreateFactory(bool debug, Error
   return factory;
 }
 
-static std::string FixupDuplicateAdapterNames(const std::vector<std::string>& adapter_names, std::string adapter_name)
+static std::string FixupDuplicateAdapterNames(const GPUDevice::AdapterInfoList& adapter_names, std::string adapter_name)
 {
   if (std::any_of(adapter_names.begin(), adapter_names.end(),
-                  [&adapter_name](const std::string& other) { return (adapter_name == other); }))
+                  [&adapter_name](const GPUDevice::AdapterInfo& other) { return (adapter_name == other.name); }))
   {
     std::string original_adapter_name = std::move(adapter_name);
 
@@ -104,74 +104,80 @@ static std::string FixupDuplicateAdapterNames(const std::vector<std::string>& ad
     {
       adapter_name = fmt::format("{} ({})", original_adapter_name.c_str(), current_extra);
       current_extra++;
-    } while (std::any_of(adapter_names.begin(), adapter_names.end(),
-                         [&adapter_name](const std::string& other) { return (adapter_name == other); }));
+    } while (
+      std::any_of(adapter_names.begin(), adapter_names.end(),
+                  [&adapter_name](const GPUDevice::AdapterInfo& other) { return (adapter_name == other.name); }));
   }
 
   return adapter_name;
 }
 
-std::vector<std::string> D3DCommon::GetAdapterNames(IDXGIFactory5* factory)
+GPUDevice::AdapterInfoList D3DCommon::GetAdapterInfoList()
 {
-  std::vector<std::string> adapter_names;
+  GPUDevice::AdapterInfoList adapters;
+
+  Microsoft::WRL::ComPtr<IDXGIFactory5> factory = CreateFactory(false, nullptr);
+  if (!factory)
+    return adapters;
 
   Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
   for (u32 index = 0;; index++)
   {
-    const HRESULT hr = factory->EnumAdapters1(index, adapter.ReleaseAndGetAddressOf());
+    HRESULT hr = factory->EnumAdapters1(index, adapter.ReleaseAndGetAddressOf());
     if (hr == DXGI_ERROR_NOT_FOUND)
       break;
 
     if (FAILED(hr))
     {
-      Log_ErrorPrintf("IDXGIFactory2::EnumAdapters() returned %08X", hr);
+      ERROR_LOG("IDXGIFactory2::EnumAdapters() returned {:08X}", static_cast<unsigned>(hr));
       continue;
     }
 
-    adapter_names.push_back(FixupDuplicateAdapterNames(adapter_names, GetAdapterName(adapter.Get())));
+    // Unfortunately we can't get any properties such as feature level without creating the device.
+    // So just assume a max of the D3D11 max across the board.
+    GPUDevice::AdapterInfo ai;
+    ai.name = FixupDuplicateAdapterNames(adapters, GetAdapterName(adapter.Get()));
+    ai.max_texture_size = D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION;
+    ai.max_multisamples = 8;
+    ai.supports_sample_shading = true;
+
+    Microsoft::WRL::ComPtr<IDXGIOutput> output;
+    if (SUCCEEDED(hr = adapter->EnumOutputs(0, output.ReleaseAndGetAddressOf())))
+    {
+      UINT num_modes = 0;
+      if (SUCCEEDED(hr = output->GetDisplayModeList(DXGI_FORMAT_R8G8B8A8_UNORM, 0, &num_modes, nullptr)))
+      {
+        std::vector<DXGI_MODE_DESC> dmodes(num_modes);
+        if (SUCCEEDED(hr = output->GetDisplayModeList(DXGI_FORMAT_R8G8B8A8_UNORM, 0, &num_modes, dmodes.data())))
+        {
+          for (const DXGI_MODE_DESC& mode : dmodes)
+          {
+            ai.fullscreen_modes.push_back(GPUDevice::GetFullscreenModeString(
+              mode.Width, mode.Height,
+              static_cast<float>(mode.RefreshRate.Numerator) / static_cast<float>(mode.RefreshRate.Denominator)));
+          }
+        }
+        else
+        {
+          ERROR_LOG("GetDisplayModeList() (2) failed: {:08X}", static_cast<unsigned>(hr));
+        }
+      }
+      else
+      {
+        ERROR_LOG("GetDisplayModeList() failed: {:08X}", static_cast<unsigned>(hr));
+      }
+    }
+    else
+    {
+      // Adapter may not have any outputs, don't spam the error log in this case.
+      if (hr != DXGI_ERROR_NOT_FOUND)
+        ERROR_LOG("EnumOutputs() failed: {:08X}", static_cast<unsigned>(hr));
+    }
+
+    adapters.push_back(std::move(ai));
   }
 
-  return adapter_names;
-}
-
-std::vector<std::string> D3DCommon::GetFullscreenModes(IDXGIFactory5* factory, const std::string_view& adapter_name)
-{
-  std::vector<std::string> modes;
-  HRESULT hr;
-
-  Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter = GetChosenOrFirstAdapter(factory, adapter_name);
-  if (!adapter)
-    return modes;
-
-  Microsoft::WRL::ComPtr<IDXGIOutput> output;
-  if (FAILED(hr = adapter->EnumOutputs(0, &output)))
-  {
-    Log_ErrorPrintf("EnumOutputs() failed: %08X", hr);
-    return modes;
-  }
-
-  UINT num_modes = 0;
-  if (FAILED(hr = output->GetDisplayModeList(DXGI_FORMAT_R8G8B8A8_UNORM, 0, &num_modes, nullptr)))
-  {
-    Log_ErrorPrintf("GetDisplayModeList() failed: %08X", hr);
-    return modes;
-  }
-
-  std::vector<DXGI_MODE_DESC> dmodes(num_modes);
-  if (FAILED(hr = output->GetDisplayModeList(DXGI_FORMAT_R8G8B8A8_UNORM, 0, &num_modes, dmodes.data())))
-  {
-    Log_ErrorPrintf("GetDisplayModeList() (2) failed: %08X", hr);
-    return modes;
-  }
-
-  for (const DXGI_MODE_DESC& mode : dmodes)
-  {
-    modes.push_back(GPUDevice::GetFullscreenModeString(mode.Width, mode.Height,
-                                                       static_cast<float>(mode.RefreshRate.Numerator) /
-                                                         static_cast<float>(mode.RefreshRate.Denominator)));
-  }
-
-  return modes;
+  return adapters;
 }
 
 bool D3DCommon::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, const RECT& window_rect, u32 width,
@@ -179,7 +185,7 @@ bool D3DCommon::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, 
                                                         DXGI_MODE_DESC* fullscreen_mode, IDXGIOutput** output)
 {
   // We need to find which monitor the window is located on.
-  const Common::Rectangle<s32> client_rc_vec(window_rect.left, window_rect.top, window_rect.right, window_rect.bottom);
+  const GSVector4i client_rc_vec(window_rect.left, window_rect.top, window_rect.right, window_rect.bottom);
 
   // The window might be on a different adapter to which we are rendering.. so we have to enumerate them all.
   HRESULT hr;
@@ -204,10 +210,9 @@ bool D3DCommon::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, 
       else if (FAILED(hr) || FAILED(this_output->GetDesc(&output_desc)))
         continue;
 
-      const Common::Rectangle<s32> output_rc(output_desc.DesktopCoordinates.left, output_desc.DesktopCoordinates.top,
-                                             output_desc.DesktopCoordinates.right,
-                                             output_desc.DesktopCoordinates.bottom);
-      if (!client_rc_vec.Intersects(output_rc))
+      const GSVector4i output_rc(output_desc.DesktopCoordinates.left, output_desc.DesktopCoordinates.top,
+                                 output_desc.DesktopCoordinates.right, output_desc.DesktopCoordinates.bottom);
+      if (!client_rc_vec.rintersects(output_rc))
       {
         intersecting_output = std::move(this_output);
         break;
@@ -223,11 +228,11 @@ bool D3DCommon::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, 
   {
     if (!first_output)
     {
-      Log_ErrorPrintf("No DXGI output found. Can't use exclusive fullscreen.");
+      ERROR_LOG("No DXGI output found. Can't use exclusive fullscreen.");
       return false;
     }
 
-    Log_WarningPrint("No DXGI output found for window, using first.");
+    WARNING_LOG("No DXGI output found for window, using first.");
     intersecting_output = std::move(first_output);
   }
 
@@ -241,7 +246,7 @@ bool D3DCommon::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, 
   if (FAILED(hr = intersecting_output->FindClosestMatchingMode(&request_mode, fullscreen_mode, nullptr)) ||
       request_mode.Format != format)
   {
-    Log_ErrorPrintf("Failed to find closest matching mode, hr=%08X", hr);
+    ERROR_LOG("Failed to find closest matching mode, hr={:08X}", static_cast<unsigned>(hr));
     return false;
   }
 
@@ -250,14 +255,14 @@ bool D3DCommon::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, 
   return true;
 }
 
-Microsoft::WRL::ComPtr<IDXGIAdapter1> D3DCommon::GetAdapterByName(IDXGIFactory5* factory, const std::string_view& name)
+Microsoft::WRL::ComPtr<IDXGIAdapter1> D3DCommon::GetAdapterByName(IDXGIFactory5* factory, std::string_view name)
 {
   if (name.empty())
     return {};
 
   // This might seem a bit odd to cache the names.. but there's a method to the madness.
   // We might have two GPUs with the same name... :)
-  std::vector<std::string> adapter_names;
+  GPUDevice::AdapterInfoList adapters;
 
   Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
   for (u32 index = 0;; index++)
@@ -268,21 +273,23 @@ Microsoft::WRL::ComPtr<IDXGIAdapter1> D3DCommon::GetAdapterByName(IDXGIFactory5*
 
     if (FAILED(hr))
     {
-      Log_ErrorPrintf("IDXGIFactory2::EnumAdapters() returned %08X");
+      ERROR_LOG("IDXGIFactory2::EnumAdapters() returned {:08X}", static_cast<unsigned>(hr));
       continue;
     }
 
-    std::string adapter_name = FixupDuplicateAdapterNames(adapter_names, GetAdapterName(adapter.Get()));
+    std::string adapter_name = FixupDuplicateAdapterNames(adapters, GetAdapterName(adapter.Get()));
     if (adapter_name == name)
     {
-      Log_VerbosePrintf("Found adapter '%s'", adapter_name.c_str());
+      VERBOSE_LOG("Found adapter '{}'", adapter_name);
       return adapter;
     }
 
-    adapter_names.push_back(std::move(adapter_name));
+    GPUDevice::AdapterInfo ai;
+    ai.name = std::move(adapter_name);
+    adapters.push_back(std::move(ai));
   }
 
-  Log_ErrorFmt("Adapter '{}' not found.", name);
+  ERROR_LOG("Adapter '{}' not found.", name);
   return {};
 }
 
@@ -291,13 +298,12 @@ Microsoft::WRL::ComPtr<IDXGIAdapter1> D3DCommon::GetFirstAdapter(IDXGIFactory5* 
   Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
   HRESULT hr = factory->EnumAdapters1(0, adapter.GetAddressOf());
   if (FAILED(hr))
-    Log_ErrorPrintf("IDXGIFactory2::EnumAdapters() for first adapter returned %08X", hr);
+    ERROR_LOG("IDXGIFactory2::EnumAdapters() for first adapter returned {:08X}", static_cast<unsigned>(hr));
 
   return adapter;
 }
 
-Microsoft::WRL::ComPtr<IDXGIAdapter1> D3DCommon::GetChosenOrFirstAdapter(IDXGIFactory5* factory,
-                                                                         const std::string_view& name)
+Microsoft::WRL::ComPtr<IDXGIAdapter1> D3DCommon::GetChosenOrFirstAdapter(IDXGIFactory5* factory, std::string_view name)
 {
   Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter = GetAdapterByName(factory, name);
   if (!adapter)
@@ -318,7 +324,7 @@ std::string D3DCommon::GetAdapterName(IDXGIAdapter1* adapter)
   }
   else
   {
-    Log_ErrorPrintf("IDXGIAdapter1::GetDesc() returned %08X", hr);
+    ERROR_LOG("IDXGIAdapter1::GetDesc() returned {:08X}", static_cast<unsigned>(hr));
   }
 
   if (ret.empty())
@@ -373,14 +379,31 @@ std::string D3DCommon::GetDriverVersionFromLUID(const LUID& luid)
   return ret;
 }
 
-std::optional<DynamicHeapArray<u8>> D3DCommon::CompileShader(D3D_FEATURE_LEVEL feature_level, bool debug_device,
-                                                             GPUShaderStage stage, const std::string_view& source,
-                                                             const char* entry_point)
+u32 D3DCommon::GetShaderModelForFeatureLevel(D3D_FEATURE_LEVEL feature_level)
 {
-  const char* target;
   switch (feature_level)
   {
     case D3D_FEATURE_LEVEL_10_0:
+      return 40;
+
+    case D3D_FEATURE_LEVEL_10_1:
+      return 41;
+
+    case D3D_FEATURE_LEVEL_11_0:
+    case D3D_FEATURE_LEVEL_11_1:
+    default:
+      return 50;
+  }
+}
+
+std::optional<DynamicHeapArray<u8>> D3DCommon::CompileShader(u32 shader_model, bool debug_device, GPUShaderStage stage,
+                                                             std::string_view source, const char* entry_point,
+                                                             Error* error)
+{
+  const char* target;
+  switch (shader_model)
+  {
+    case 40:
     {
       static constexpr std::array<const char*, static_cast<u32>(GPUShaderStage::MaxCount)> targets = {
         {"vs_4_0", "ps_4_0", "gs_4_0", "cs_4_0"}};
@@ -388,7 +411,7 @@ std::optional<DynamicHeapArray<u8>> D3DCommon::CompileShader(D3D_FEATURE_LEVEL f
     }
     break;
 
-    case D3D_FEATURE_LEVEL_10_1:
+    case 41:
     {
       static constexpr std::array<const char*, static_cast<u32>(GPUShaderStage::MaxCount)> targets = {
         {"vs_4_1", "ps_4_1", "gs_4_0", "cs_4_1"}};
@@ -396,7 +419,7 @@ std::optional<DynamicHeapArray<u8>> D3DCommon::CompileShader(D3D_FEATURE_LEVEL f
     }
     break;
 
-    case D3D_FEATURE_LEVEL_11_0:
+    case 50:
     {
       static constexpr std::array<const char*, static_cast<u32>(GPUShaderStage::MaxCount)> targets = {
         {"vs_5_0", "ps_5_0", "gs_5_0", "cs_5_0"}};
@@ -404,14 +427,9 @@ std::optional<DynamicHeapArray<u8>> D3DCommon::CompileShader(D3D_FEATURE_LEVEL f
     }
     break;
 
-    case D3D_FEATURE_LEVEL_11_1:
     default:
-    {
-      static constexpr std::array<const char*, static_cast<u32>(GPUShaderStage::MaxCount)> targets = {
-        {"vs_5_1", "ps_5_1", "gs_5_1", "cs_5_1"}};
-      target = targets[static_cast<int>(stage)];
-    }
-    break;
+      Error::SetStringFmt(error, "Unknown shader model: {}", shader_model);
+      return {};
   }
 
   static constexpr UINT flags_non_debug = D3DCOMPILE_OPTIMIZATION_LEVEL3;
@@ -425,18 +443,21 @@ std::optional<DynamicHeapArray<u8>> D3DCommon::CompileShader(D3D_FEATURE_LEVEL f
 
   std::string_view error_string;
   if (error_blob)
+  {
     error_string =
       std::string_view(static_cast<const char*>(error_blob->GetBufferPointer()), error_blob->GetBufferSize());
+  }
 
   if (FAILED(hr))
   {
-    Log_ErrorFmt("Failed to compile '{}':\n{}", target, error_string);
+    ERROR_LOG("Failed to compile '{}':\n{}", target, error_string);
     GPUDevice::DumpBadShader(source, error_string);
+    Error::SetHResult(error, "D3DCompile() failed: ", hr);
     return {};
   }
 
   if (!error_string.empty())
-    Log_WarningFmt("'{}' compiled with warnings:\n{}", target, error_string);
+    WARNING_LOG("'{}' compiled with warnings:\n{}", target, error_string);
 
   error_blob.Reset();
 
@@ -446,29 +467,32 @@ std::optional<DynamicHeapArray<u8>> D3DCommon::CompileShader(D3D_FEATURE_LEVEL f
 static constexpr std::array<D3DCommon::DXGIFormatMapping, static_cast<int>(GPUTexture::Format::MaxCount)>
   s_format_mapping = {{
     // clang-format off
-  // d3d_format                    srv_format                      rtv_format                      dsv_format
-  {DXGI_FORMAT_UNKNOWN,            DXGI_FORMAT_UNKNOWN,            DXGI_FORMAT_UNKNOWN,            DXGI_FORMAT_UNKNOWN   }, // Unknown
-  {DXGI_FORMAT_R8G8B8A8_UNORM,     DXGI_FORMAT_R8G8B8A8_UNORM,     DXGI_FORMAT_R8G8B8A8_UNORM,     DXGI_FORMAT_UNKNOWN   }, // RGBA8
-  {DXGI_FORMAT_B8G8R8A8_UNORM,     DXGI_FORMAT_B8G8R8A8_UNORM,     DXGI_FORMAT_B8G8R8A8_UNORM,     DXGI_FORMAT_UNKNOWN   }, // BGRA8
-  {DXGI_FORMAT_B5G6R5_UNORM,       DXGI_FORMAT_B5G6R5_UNORM,       DXGI_FORMAT_B5G6R5_UNORM,       DXGI_FORMAT_UNKNOWN   }, // RGB565
-  {DXGI_FORMAT_B5G5R5A1_UNORM,     DXGI_FORMAT_B5G5R5A1_UNORM,     DXGI_FORMAT_B5G5R5A1_UNORM,     DXGI_FORMAT_UNKNOWN   }, // RGBA5551
-  {DXGI_FORMAT_R8_UNORM,           DXGI_FORMAT_R8_UNORM,           DXGI_FORMAT_R8_UNORM,           DXGI_FORMAT_UNKNOWN   }, // R8
-  {DXGI_FORMAT_R16_TYPELESS,       DXGI_FORMAT_R16_UNORM,          DXGI_FORMAT_UNKNOWN,            DXGI_FORMAT_D16_UNORM }, // D16
-  {DXGI_FORMAT_R16_UNORM,          DXGI_FORMAT_R16_UNORM,          DXGI_FORMAT_R16_UNORM,          DXGI_FORMAT_UNKNOWN   }, // R16
-  {DXGI_FORMAT_R16_SINT,           DXGI_FORMAT_R16_SINT,           DXGI_FORMAT_R16_SINT,           DXGI_FORMAT_UNKNOWN   }, // R16I
-  {DXGI_FORMAT_R16_UINT,           DXGI_FORMAT_R16_UINT,           DXGI_FORMAT_R16_UINT,           DXGI_FORMAT_UNKNOWN   }, // R16U
-  {DXGI_FORMAT_R16_FLOAT,          DXGI_FORMAT_R16_FLOAT,          DXGI_FORMAT_R16_FLOAT,          DXGI_FORMAT_UNKNOWN   }, // R16F
-  {DXGI_FORMAT_R32_SINT,           DXGI_FORMAT_R32_SINT,           DXGI_FORMAT_R32_SINT,           DXGI_FORMAT_UNKNOWN   }, // R32I
-  {DXGI_FORMAT_R32_UINT,           DXGI_FORMAT_R32_UINT,           DXGI_FORMAT_R32_UINT,           DXGI_FORMAT_UNKNOWN   }, // R32U
-  {DXGI_FORMAT_R32_FLOAT,          DXGI_FORMAT_R32_FLOAT,          DXGI_FORMAT_R32_FLOAT,          DXGI_FORMAT_UNKNOWN   }, // R32F
-  {DXGI_FORMAT_R8G8_UNORM,         DXGI_FORMAT_R8G8_UNORM,         DXGI_FORMAT_R8G8_UNORM,         DXGI_FORMAT_UNKNOWN   }, // RG8
-  {DXGI_FORMAT_R16G16_UNORM,       DXGI_FORMAT_R16G16_UNORM,       DXGI_FORMAT_R16G16_UNORM,       DXGI_FORMAT_UNKNOWN   }, // RG16
-  {DXGI_FORMAT_R16G16_FLOAT,       DXGI_FORMAT_R16G16_FLOAT,       DXGI_FORMAT_R16G16_FLOAT,       DXGI_FORMAT_UNKNOWN   }, // RG16F
-  {DXGI_FORMAT_R32G32_FLOAT,       DXGI_FORMAT_R32G32_FLOAT,       DXGI_FORMAT_R32G32_FLOAT,       DXGI_FORMAT_UNKNOWN   }, // RG32F
-  {DXGI_FORMAT_R16G16B16A16_UNORM, DXGI_FORMAT_R16G16B16A16_UNORM, DXGI_FORMAT_R16G16B16A16_UNORM, DXGI_FORMAT_UNKNOWN   }, // RGBA16
-  {DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_UNKNOWN   }, // RGBA16F
-  {DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_UNKNOWN   }, // RGBA32F
-  {DXGI_FORMAT_R10G10B10A2_UNORM,  DXGI_FORMAT_R10G10B10A2_UNORM,  DXGI_FORMAT_R10G10B10A2_UNORM,  DXGI_FORMAT_UNKNOWN   }, // RGB10A2
+  // d3d_format                    srv_format                           rtv_format                      dsv_format
+  {DXGI_FORMAT_UNKNOWN,            DXGI_FORMAT_UNKNOWN,                 DXGI_FORMAT_UNKNOWN,                  DXGI_FORMAT_UNKNOWN               }, // Unknown
+  {DXGI_FORMAT_R8G8B8A8_UNORM,     DXGI_FORMAT_R8G8B8A8_UNORM,          DXGI_FORMAT_R8G8B8A8_UNORM,           DXGI_FORMAT_UNKNOWN               }, // RGBA8
+  {DXGI_FORMAT_B8G8R8A8_UNORM,     DXGI_FORMAT_B8G8R8A8_UNORM,          DXGI_FORMAT_B8G8R8A8_UNORM,           DXGI_FORMAT_UNKNOWN               }, // BGRA8
+  {DXGI_FORMAT_B5G6R5_UNORM,       DXGI_FORMAT_B5G6R5_UNORM,            DXGI_FORMAT_B5G6R5_UNORM,             DXGI_FORMAT_UNKNOWN               }, // RGB565
+  {DXGI_FORMAT_B5G5R5A1_UNORM,     DXGI_FORMAT_B5G5R5A1_UNORM,          DXGI_FORMAT_B5G5R5A1_UNORM,           DXGI_FORMAT_UNKNOWN               }, // RGBA5551
+  {DXGI_FORMAT_R8_UNORM,           DXGI_FORMAT_R8_UNORM,                DXGI_FORMAT_R8_UNORM,                 DXGI_FORMAT_UNKNOWN               }, // R8
+  {DXGI_FORMAT_R16_TYPELESS,       DXGI_FORMAT_R16_UNORM,               DXGI_FORMAT_UNKNOWN,                  DXGI_FORMAT_D16_UNORM             }, // D16
+  {DXGI_FORMAT_R24G8_TYPELESS,     DXGI_FORMAT_R24_UNORM_X8_TYPELESS,   DXGI_FORMAT_R24_UNORM_X8_TYPELESS,    DXGI_FORMAT_D24_UNORM_S8_UINT     }, // D24S8
+  {DXGI_FORMAT_R32_TYPELESS,       DXGI_FORMAT_R32_FLOAT,               DXGI_FORMAT_R32_FLOAT,                DXGI_FORMAT_D32_FLOAT             }, // D32F
+  {DXGI_FORMAT_R32G8X24_TYPELESS,  DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS,DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS, DXGI_FORMAT_D32_FLOAT_S8X24_UINT  }, // D32FS8
+  {DXGI_FORMAT_R16_UNORM,          DXGI_FORMAT_R16_UNORM,               DXGI_FORMAT_R16_UNORM,                DXGI_FORMAT_UNKNOWN               }, // R16
+  {DXGI_FORMAT_R16_SINT,           DXGI_FORMAT_R16_SINT,                DXGI_FORMAT_R16_SINT,                 DXGI_FORMAT_UNKNOWN               }, // R16I
+  {DXGI_FORMAT_R16_UINT,           DXGI_FORMAT_R16_UINT,                DXGI_FORMAT_R16_UINT,                 DXGI_FORMAT_UNKNOWN               }, // R16U
+  {DXGI_FORMAT_R16_FLOAT,          DXGI_FORMAT_R16_FLOAT,               DXGI_FORMAT_R16_FLOAT,                DXGI_FORMAT_UNKNOWN               }, // R16F
+  {DXGI_FORMAT_R32_SINT,           DXGI_FORMAT_R32_SINT,                DXGI_FORMAT_R32_SINT,                 DXGI_FORMAT_UNKNOWN               }, // R32I
+  {DXGI_FORMAT_R32_UINT,           DXGI_FORMAT_R32_UINT,                DXGI_FORMAT_R32_UINT,                 DXGI_FORMAT_UNKNOWN               }, // R32U
+  {DXGI_FORMAT_R32_FLOAT,          DXGI_FORMAT_R32_FLOAT,               DXGI_FORMAT_R32_FLOAT,                DXGI_FORMAT_UNKNOWN               }, // R32F
+  {DXGI_FORMAT_R8G8_UNORM,         DXGI_FORMAT_R8G8_UNORM,              DXGI_FORMAT_R8G8_UNORM,               DXGI_FORMAT_UNKNOWN               }, // RG8
+  {DXGI_FORMAT_R16G16_UNORM,       DXGI_FORMAT_R16G16_UNORM,            DXGI_FORMAT_R16G16_UNORM,             DXGI_FORMAT_UNKNOWN               }, // RG16
+  {DXGI_FORMAT_R16G16_FLOAT,       DXGI_FORMAT_R16G16_FLOAT,            DXGI_FORMAT_R16G16_FLOAT,             DXGI_FORMAT_UNKNOWN               }, // RG16F
+  {DXGI_FORMAT_R32G32_FLOAT,       DXGI_FORMAT_R32G32_FLOAT,            DXGI_FORMAT_R32G32_FLOAT,             DXGI_FORMAT_UNKNOWN               }, // RG32F
+  {DXGI_FORMAT_R16G16B16A16_UNORM, DXGI_FORMAT_R16G16B16A16_UNORM,      DXGI_FORMAT_R16G16B16A16_UNORM,       DXGI_FORMAT_UNKNOWN               }, // RGBA16
+  {DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT,      DXGI_FORMAT_R16G16B16A16_FLOAT,       DXGI_FORMAT_UNKNOWN               }, // RGBA16F
+  {DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT,      DXGI_FORMAT_R32G32B32A32_FLOAT,       DXGI_FORMAT_UNKNOWN               }, // RGBA32F
+  {DXGI_FORMAT_R10G10B10A2_UNORM,  DXGI_FORMAT_R10G10B10A2_UNORM,       DXGI_FORMAT_R10G10B10A2_UNORM,        DXGI_FORMAT_UNKNOWN               }, // RGB10A2
     // clang-format on
   }};
 

@@ -11,6 +11,8 @@
 #include <cassert>
 #include <cstring> // stricmp
 #include <algorithm> // std::find_if, std::max
+#include <locale>
+#include <sstream>
 
 using namespace reshadefx;
 
@@ -339,9 +341,12 @@ private:
 					s += std::signbit(data.as_float[i]) ? "1.#INF" : "-1.#INF";
 					break;
 				}
-				char temp[64]; // Will be null-terminated by snprintf
-				std::snprintf(temp, sizeof(temp), "%1.8e", data.as_float[i]);
-				s += temp;
+				{
+					std::ostringstream ss;
+					ss.imbue(std::locale::classic());
+					ss << data.as_float[i];
+					s += ss.str();
+				}
 				break;
 			default:
 				assert(false);
@@ -500,7 +505,27 @@ private:
 		// HLSL compiler complains about "technique" and "pass" names in strict mode (no matter the casing)
 		if (stringicmp(name, "line") ||
 			stringicmp(name, "pass") ||
-			stringicmp(name, "technique"))
+			stringicmp(name, "technique") ||
+			stringicmp(name, "point") ||
+			stringicmp(name, "export") ||
+			stringicmp(name, "extern") ||
+			stringicmp(name, "compile") ||
+			stringicmp(name, "discard") ||
+			stringicmp(name, "half") ||
+			stringicmp(name, "in") ||
+			stringicmp(name, "lineadj") ||
+			stringicmp(name, "matrix") ||
+			stringicmp(name, "sample") ||
+			stringicmp(name, "sampler") ||
+			stringicmp(name, "shared") ||
+			stringicmp(name, "precise") ||
+			stringicmp(name, "register") ||
+			stringicmp(name, "texture") ||
+			stringicmp(name, "unorm") ||
+			stringicmp(name, "triangle") ||
+			stringicmp(name, "triangleadj") ||
+			stringicmp(name, "out") ||
+			stringicmp(name, "vector"))
 			// This is guaranteed to not clash with user defined names, since those starting with an underscore are filtered out in 'define_name'
 			name = '_' + name;
 

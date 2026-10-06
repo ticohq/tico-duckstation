@@ -28,6 +28,7 @@ using namespace vixl::aarch32;
 
 using CPU::Recompiler::armEmitCall;
 using CPU::Recompiler::armEmitCondBranch;
+using CPU::Recompiler::armEmitFarLoad;
 using CPU::Recompiler::armEmitJmp;
 using CPU::Recompiler::armEmitMov;
 using CPU::Recompiler::armGetJumpTrampoline;
@@ -302,13 +303,25 @@ bool foo(const void* a, const void* b)
 
 void CPU::NewRec::AArch32Compiler::GenerateICacheCheckAndUpdate()
 {
-  if (GetSegmentForAddress(m_block->pc) >= Segment::KSEG1)
+  if (!m_block->HasFlag(CodeCache::BlockFlags::IsUsingICache))
   {
-    armAsm->ldr(RARG1, PTR(&g_state.pending_ticks));
-    armAsm->add(RARG1, RARG1, armCheckAddSubConstant(static_cast<u32>(m_block->uncached_fetch_ticks)));
-    armAsm->str(RARG1, PTR(&g_state.pending_ticks));
+    if (m_block->HasFlag(CodeCache::BlockFlags::NeedsDynamicFetchTicks))
+    {
+      armEmitFarLoad(armAsm, RARG2, GetFetchMemoryAccessTimePtr());
+      armAsm->ldr(RARG1, PTR(&g_state.pending_ticks));
+      armEmitMov(armAsm, RARG3, m_block->size);
+      armAsm->mul(RARG2, RARG2, RARG3);
+      armAsm->add(RARG1, RARG1, RARG2);
+      armAsm->str(RARG1, PTR(&g_state.pending_ticks));
+    }
+    else
+    {
+      armAsm->ldr(RARG1, PTR(&g_state.pending_ticks));
+      armAsm->add(RARG1, RARG1, armCheckAddSubConstant(static_cast<u32>(m_block->uncached_fetch_ticks)));
+      armAsm->str(RARG1, PTR(&g_state.pending_ticks));
+    }
   }
-  else
+  else if (m_block->icache_line_count > 0)
   {
     const auto& ticks_reg = RARG1;
     const auto& current_tag_reg = RARG2;
@@ -325,7 +338,7 @@ void CPU::NewRec::AArch32Compiler::GenerateICacheCheckAndUpdate()
         continue;
 
       const u32 line = GetICacheLine(current_pc);
-      const u32 offset = offsetof(State, icache_tags) + (line * sizeof(u32));
+      const u32 offset = OFFSETOF(State, icache_tags) + (line * sizeof(u32));
 
       Label cache_hit;
       armAsm->ldr(existing_tag_reg, MemOperand(RSTATE, offset));
@@ -349,9 +362,9 @@ void CPU::NewRec::AArch32Compiler::GenerateCall(const void* func, s32 arg1reg /*
 {
   if (arg1reg >= 0 && arg1reg != static_cast<s32>(RARG1.GetCode()))
     armAsm->mov(RARG1, Register(arg1reg));
-  if (arg1reg >= 0 && arg2reg != static_cast<s32>(RARG2.GetCode()))
+  if (arg2reg >= 0 && arg2reg != static_cast<s32>(RARG2.GetCode()))
     armAsm->mov(RARG2, Register(arg2reg));
-  if (arg1reg >= 0 && arg3reg != static_cast<s32>(RARG3.GetCode()))
+  if (arg3reg >= 0 && arg3reg != static_cast<s32>(RARG3.GetCode()))
     armAsm->mov(RARG3, Register(arg3reg));
   EmitCall(func);
 }
@@ -438,7 +451,7 @@ void CPU::NewRec::AArch32Compiler::EndAndLinkBlock(const std::optional<u32>& new
     if (newpc.value() == m_block->pc)
     {
       // Special case: ourselves! No need to backlink then.
-      Log_DebugPrintf("Linking block at %08X to self", m_block->pc);
+      DEBUG_LOG("Linking block at {:08X} to self", m_block->pc);
       armEmitJmp(armAsm, armAsm->GetBuffer()->GetStartAddress<const void*>(), true);
     }
     else
@@ -575,7 +588,7 @@ void CPU::NewRec::AArch32Compiler::MoveSToReg(const vixl::aarch32::Register& dst
   }
   else
   {
-    Log_WarningPrintf("Hit memory path in MoveSToReg() for %s", GetRegName(cf.MipsS()));
+    WARNING_LOG("Hit memory path in MoveSToReg() for {}", GetRegName(cf.MipsS()));
     armAsm->ldr(dst, PTR(&g_state.regs.r[cf.mips_s]));
   }
 }
@@ -594,7 +607,7 @@ void CPU::NewRec::AArch32Compiler::MoveTToReg(const vixl::aarch32::Register& dst
   }
   else
   {
-    Log_WarningPrintf("Hit memory path in MoveTToReg() for %s", GetRegName(cf.MipsT()));
+    WARNING_LOG("Hit memory path in MoveTToReg() for {}", GetRegName(cf.MipsT()));
     armAsm->ldr(dst, PTR(&g_state.regs.r[cf.mips_t]));
   }
 }
@@ -654,7 +667,7 @@ void CPU::NewRec::AArch32Compiler::Flush(u32 flags)
     // TODO: make it a function?
     armAsm->ldrb(RARG1, PTR(&g_state.load_delay_reg));
     armAsm->ldr(RARG2, PTR(&g_state.load_delay_value));
-    EmitMov(RSCRATCH, offsetof(CPU::State, regs.r[0]));
+    EmitMov(RSCRATCH, OFFSETOF(CPU::State, regs.r[0]));
     armAsm->add(RARG1, RSCRATCH, vixl::aarch32::Operand(RARG1, LSL, 2));
     armAsm->str(RARG2, MemOperand(RSTATE, RARG1));
     EmitMov(RSCRATCH, static_cast<u8>(Reg::count));
@@ -721,6 +734,8 @@ void CPU::NewRec::AArch32Compiler::Flush(u32 flags)
 
 void CPU::NewRec::AArch32Compiler::Compile_Fallback()
 {
+  WARNING_LOG("Compiling instruction fallback at PC=0x{:08X}, instruction=0x{:08X}", iinfo->pc, inst->bits);
+
   Flush(FLUSH_FOR_INTERPRETER);
 
   EmitCall(reinterpret_cast<const void*>(&CPU::Recompiler::Thunks::InterpretInstruction));
@@ -1676,7 +1691,7 @@ void CPU::NewRec::AArch32Compiler::Compile_lwc2(CompileFlags cf, MemoryAccessSiz
                                              std::optional<Register>();
   FlushForLoadStore(address, false, use_fastmem);
   const Register addr = ComputeLoadStoreAddressArg(cf, address, addr_reg);
-  const Register value = GenerateLoad(addr, MemoryAccessSize::Word, false, use_fastmem, [this, action]() {
+  const Register value = GenerateLoad(addr, MemoryAccessSize::Word, false, use_fastmem, [this, action = action]() {
     return (action == GTERegisterAccessAction::CallHandler && g_settings.gpu_pgxp_enable) ?
              Register(AllocateTempHostReg(HR_CALLEE_SAVED)) :
              RRET;
@@ -1927,7 +1942,7 @@ void CPU::NewRec::AArch32Compiler::Compile_mtc0(CompileFlags cf)
   if (mask == 0)
   {
     // if it's a read-only register, ignore
-    Log_DebugPrintf("Ignoring write to read-only cop0 reg %u", static_cast<u32>(reg));
+    DEBUG_LOG("Ignoring write to read-only cop0 reg {}", static_cast<u32>(reg));
     return;
   }
 
@@ -1984,7 +1999,7 @@ void CPU::NewRec::AArch32Compiler::Compile_mtc0(CompileFlags cf)
   if (reg == Cop0Reg::DCIC && g_settings.cpu_recompiler_memory_exceptions)
   {
     // TODO: DCIC handling for debug breakpoints
-    Log_WarningPrintf("TODO: DCIC handling for debug breakpoints");
+    WARNING_LOG("TODO: DCIC handling for debug breakpoints");
   }
 }
 

@@ -9,7 +9,7 @@
 #include "util/state_wrapper.h"
 
 #include "common/bitutils.h"
-#include "common/byte_stream.h"
+#include "common/error.h"
 #include "common/file_system.h"
 #include "common/log.h"
 #include "common/path.h"
@@ -17,18 +17,15 @@
 
 #include "IconsFontAwesome5.h"
 
-#include <cstdio>
-
 Log_SetChannel(MemoryCard);
 
 MemoryCard::MemoryCard()
+  : m_save_event(
+      "Memory Card Host Flush", GetSaveDelayInTicks(), GetSaveDelayInTicks(),
+      [](void* param, TickCount ticks, TickCount ticks_late) { static_cast<MemoryCard*>(param)->SaveIfChanged(true); },
+      this)
 {
   m_FLAG.no_write_yet = true;
-
-  m_save_event = TimingEvents::CreateTimingEvent(
-    "Memory Card Host Flush", GetSaveDelayInTicks(), GetSaveDelayInTicks(),
-    [](void* param, TickCount ticks, TickCount ticks_late) { static_cast<MemoryCard*>(param)->SaveIfChanged(true); },
-    this, false);
 }
 
 MemoryCard::~MemoryCard()
@@ -143,7 +140,7 @@ bool MemoryCard::Transfer(const u8 data_in, u8* data_out)
       const u8 bits = m_data[ZeroExtend32(m_address) * MemoryCardImage::FRAME_SIZE + m_sector_offset];
       if (m_sector_offset == 0)
       {
-        Log_DevPrintf("Reading memory card sector %u", ZeroExtend32(m_address));
+        DEV_LOG("Reading memory card sector {}", m_address);
         m_checksum = Truncate8(m_address >> 8) ^ Truncate8(m_address) ^ bits;
       }
       else
@@ -177,7 +174,7 @@ bool MemoryCard::Transfer(const u8 data_in, u8* data_out)
     {
       if (m_sector_offset == 0)
       {
-        Log_InfoPrintf("Writing memory card sector %u", ZeroExtend32(m_address));
+        INFO_LOG("Writing memory card sector {}", m_address);
         m_checksum = Truncate8(m_address >> 8) ^ Truncate8(m_address) ^ data_in;
         m_FLAG.no_write_yet = false;
       }
@@ -208,6 +205,16 @@ bool MemoryCard::Transfer(const u8 data_in, u8* data_out)
       FIXED_REPLY_STATE(State::WriteACK1, 0x5C, true, State::WriteACK2);
       FIXED_REPLY_STATE(State::WriteACK2, 0x5D, true, State::WriteEnd);
       FIXED_REPLY_STATE(State::WriteEnd, 0x47, false, State::Idle);
+
+      // TODO: This really needs a proper buffer system...
+      FIXED_REPLY_STATE(State::GetIDCardID1, 0x5A, true, State::GetIDCardID2);
+      FIXED_REPLY_STATE(State::GetIDCardID2, 0x5D, true, State::GetIDACK1);
+      FIXED_REPLY_STATE(State::GetIDACK1, 0x5C, true, State::GetIDACK2);
+      FIXED_REPLY_STATE(State::GetIDACK2, 0x5D, true, State::GetID1);
+      FIXED_REPLY_STATE(State::GetID1, 0x04, true, State::GetID2);
+      FIXED_REPLY_STATE(State::GetID2, 0x00, true, State::GetID3);
+      FIXED_REPLY_STATE(State::GetID3, 0x00, true, State::GetID4);
+      FIXED_REPLY_STATE(State::GetID4, 0x80, true, State::Command);
 
       // new command
     case State::Idle:
@@ -244,17 +251,20 @@ bool MemoryCard::Transfer(const u8 data_in, u8* data_out)
 
         case 0x53: // get id
         {
-          Panic("implement me");
+          *data_out = m_FLAG.bits;
+          ack = true;
+          m_state = State::GetIDCardID1;
         }
         break;
 
         default:
-        {
-          Log_ErrorPrintf("Invalid command 0x%02X", ZeroExtend32(data_in));
-          *data_out = m_FLAG.bits;
-          ack = false;
-          m_state = State::Idle;
-        }
+          [[unlikely]]
+          {
+            ERROR_LOG("Invalid command 0x{:02X}", data_in);
+            *data_out = m_FLAG.bits;
+            ack = false;
+            m_state = State::Idle;
+          }
       }
     }
     break;
@@ -264,10 +274,15 @@ bool MemoryCard::Transfer(const u8 data_in, u8* data_out)
       break;
   }
 
-  Log_DebugPrintf("Transfer, old_state=%u, new_state=%u, data_in=0x%02X, data_out=0x%02X, ack=%s",
-                  static_cast<u32>(old_state), static_cast<u32>(m_state), data_in, *data_out, ack ? "true" : "false");
+  DEBUG_LOG("Transfer, old_state={}, new_state={}, data_in=0x{:02X}, data_out=0x{:02X}, ack={}",
+            static_cast<u32>(old_state), static_cast<u32>(m_state), data_in, *data_out, ack ? "true" : "false");
   m_last_byte = data_in;
   return ack;
+}
+
+bool MemoryCard::IsOrWasRecentlyWriting() const
+{
+  return (m_state == State::WriteData || m_save_event.IsActive());
 }
 
 std::unique_ptr<MemoryCard> MemoryCard::Create()
@@ -281,11 +296,20 @@ std::unique_ptr<MemoryCard> MemoryCard::Open(std::string_view filename)
 {
   std::unique_ptr<MemoryCard> mc = std::make_unique<MemoryCard>();
   mc->m_filename = filename;
-  if (!mc->LoadFromFile())
+
+  Error error;
+  if (!FileSystem::FileExists(mc->m_filename.c_str())) [[unlikely]]
   {
-    Log_InfoFmt("Memory card at '{}' could not be read, formatting.", mc->m_filename);
     Host::AddIconOSDMessage(fmt::format("memory_card_{}", filename), ICON_FA_SD_CARD,
-                            fmt::format(TRANSLATE_FS("OSDMessage", "Memory card '{}' could not be read, formatting."),
+                            fmt::format(TRANSLATE_FS("OSDMessage", "Memory card '{}' does not exist, creating."),
+                                        Path::GetFileName(filename), Host::OSD_INFO_DURATION));
+    mc->Format();
+    mc->SaveIfChanged(true);
+  }
+  else if (!MemoryCardImage::LoadFromFile(&mc->m_data, mc->m_filename.c_str(), &error)) [[unlikely]]
+  {
+    Host::AddIconOSDMessage(fmt::format("memory_card_{}", filename), ICON_FA_SD_CARD,
+                            fmt::format(TRANSLATE_FS("OSDMessage", "Memory card '{}' could not be read: {}"),
                                         Path::GetFileName(filename), Host::OSD_INFO_DURATION));
     mc->Format();
   }
@@ -299,14 +323,9 @@ void MemoryCard::Format()
   m_changed = true;
 }
 
-bool MemoryCard::LoadFromFile()
-{
-  return MemoryCardImage::LoadFromFile(&m_data, m_filename.c_str());
-}
-
 bool MemoryCard::SaveIfChanged(bool display_osd_message)
 {
-  m_save_event->Deactivate();
+  m_save_event.Deactivate();
 
   if (!m_changed)
     return true;
@@ -324,14 +343,17 @@ bool MemoryCard::SaveIfChanged(bool display_osd_message)
     display_name = FileSystem::GetDisplayNameFromPath(m_filename);
   }
 
-  if (!MemoryCardImage::SaveToFile(m_data, m_filename.c_str()))
+  INFO_LOG("Saving memory card to {}...", Path::GetFileTitle(m_filename));
+
+  Error error;
+  if (!MemoryCardImage::SaveToFile(m_data, m_filename.c_str(), &error))
   {
     if (display_osd_message)
     {
-      Host::AddIconOSDMessage(
-        std::move(osd_key), ICON_FA_SD_CARD,
-        fmt::format(TRANSLATE_FS("OSDMessage", "Failed to save memory card to '{}'."), Path::GetFileName(display_name)),
-        20.0f);
+      Host::AddIconOSDMessage(std::move(osd_key), ICON_FA_SD_CARD,
+                              fmt::format(TRANSLATE_FS("OSDMessage", "Failed to save memory card to '{}': {}"),
+                                          Path::GetFileName(display_name), error.GetDescription()),
+                              Host::OSD_ERROR_DURATION);
     }
 
     return false;
@@ -341,7 +363,8 @@ bool MemoryCard::SaveIfChanged(bool display_osd_message)
   {
     Host::AddIconOSDMessage(
       std::move(osd_key), ICON_FA_SD_CARD,
-      fmt::format(TRANSLATE_FS("OSDMessage", "Saved memory card to '{}'."), Path::GetFileName(display_name)), 5.0f);
+      fmt::format(TRANSLATE_FS("OSDMessage", "Saved memory card to '{}'."), Path::GetFileName(display_name)),
+      Host::OSD_QUICK_DURATION);
   }
 
   return true;
@@ -350,9 +373,9 @@ bool MemoryCard::SaveIfChanged(bool display_osd_message)
 void MemoryCard::QueueFileSave()
 {
   // skip if the event is already pending, or we don't have a backing file
-  if (m_save_event->IsActive() || m_filename.empty())
+  if (m_save_event.IsActive() || m_filename.empty())
     return;
 
   // save in one second, that should be long enough for everything to finish writing
-  m_save_event->Schedule(GetSaveDelayInTicks());
+  m_save_event.Schedule(GetSaveDelayInTicks());
 }

@@ -1,17 +1,22 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "controller.h"
 #include "analog_controller.h"
 #include "analog_joystick.h"
 #include "digital_controller.h"
-#include "fmt/format.h"
+#include "game_database.h"
 #include "guncon.h"
 #include "host.h"
+#include "justifier.h"
 #include "negcon.h"
 #include "negcon_rumble.h"
 #include "playstation_mouse.h"
+#include "system.h"
+
 #include "util/state_wrapper.h"
+
+#include "fmt/format.h"
 
 static const Controller::ControllerInfo s_none_info = {ControllerType::None,
                                                        "None",
@@ -22,9 +27,15 @@ static const Controller::ControllerInfo s_none_info = {ControllerType::None,
                                                        Controller::VibrationCapabilities::NoVibration};
 
 static const Controller::ControllerInfo* s_controller_info[] = {
-  &s_none_info,  &DigitalController::INFO, &AnalogController::INFO, &AnalogJoystick::INFO,
-  &NeGcon::INFO, &NeGconRumble::INFO,&GunCon::INFO, &PlayStationMouse::INFO,
+  &s_none_info,     &DigitalController::INFO, &AnalogController::INFO, &AnalogJoystick::INFO,
+  &NeGcon::INFO,    &NeGconRumble::INFO,      &GunCon::INFO,           &PlayStationMouse::INFO,
+  &Justifier::INFO,
 };
+
+const char* Controller::ControllerInfo::GetDisplayName() const
+{
+  return Host::TranslateToCString("ControllerType", display_name);
+}
 
 Controller::Controller(u32 index) : m_index(index)
 {
@@ -75,7 +86,12 @@ std::optional<u32> Controller::GetAnalogInputBytes() const
   return std::nullopt;
 }
 
-void Controller::LoadSettings(SettingsInterface& si, const char* section)
+u32 Controller::GetInputOverlayIconColor() const
+{
+  return 0xFFFFFFFFu;
+}
+
+void Controller::LoadSettings(SettingsInterface& si, const char* section, bool initial)
 {
 }
 
@@ -95,12 +111,15 @@ std::unique_ptr<Controller> Controller::Create(ControllerType type, u32 index)
     case ControllerType::GunCon:
       return GunCon::Create(index);
 
+    case ControllerType::Justifier:
+      return Justifier::Create(index);
+
     case ControllerType::PlayStationMouse:
       return PlayStationMouse::Create(index);
 
     case ControllerType::NeGcon:
       return NeGcon::Create(index);
-    
+
     case ControllerType::NeGconRumble:
       return NeGconRumble::Create(index);
 
@@ -112,8 +131,8 @@ std::unique_ptr<Controller> Controller::Create(ControllerType type, u32 index)
 
 const char* Controller::GetDefaultPadType(u32 pad)
 {
-  return Settings::GetControllerTypeName((pad == 0) ? Settings::DEFAULT_CONTROLLER_1_TYPE :
-                                                      Settings::DEFAULT_CONTROLLER_2_TYPE);
+  return GetControllerInfo((pad == 0) ? Settings::DEFAULT_CONTROLLER_1_TYPE : Settings::DEFAULT_CONTROLLER_2_TYPE)
+    ->name;
 }
 
 const Controller::ControllerInfo* Controller::GetControllerInfo(ControllerType type)
@@ -127,7 +146,7 @@ const Controller::ControllerInfo* Controller::GetControllerInfo(ControllerType t
   return nullptr;
 }
 
-const Controller::ControllerInfo* Controller::GetControllerInfo(const std::string_view& name)
+const Controller::ControllerInfo* Controller::GetControllerInfo(std::string_view name)
 {
   for (const ControllerInfo* info : s_controller_info)
   {
@@ -147,7 +166,7 @@ std::vector<std::pair<std::string, std::string>> Controller::GetControllerTypeNa
   return ret;
 }
 
-std::optional<u32> Controller::GetBindIndex(ControllerType type, const std::string_view& bind_name)
+std::optional<u32> Controller::GetBindIndex(ControllerType type, std::string_view bind_name)
 {
   const ControllerInfo* info = GetControllerInfo(type);
   if (!info)
@@ -160,12 +179,6 @@ std::optional<u32> Controller::GetBindIndex(ControllerType type, const std::stri
   }
 
   return std::nullopt;
-}
-
-Controller::VibrationCapabilities Controller::GetControllerVibrationCapabilities(const std::string_view& type)
-{
-  const ControllerInfo* info = GetControllerInfo(type);
-  return info ? info->vibration_caps : VibrationCapabilities::NoVibration;
 }
 
 std::tuple<u32, u32> Controller::ConvertPadToPortAndSlot(u32 index)
@@ -219,4 +232,14 @@ bool Controller::InCircularDeadzone(float deadzone, float pos_x, float pos_y)
   const bool in_x = (pos_x < 0.0f) ? (pos_x > dz_x) : (pos_x <= dz_x);
   const bool in_y = (pos_y < 0.0f) ? (pos_y > dz_y) : (pos_y <= dz_y);
   return (in_x && in_y);
+}
+
+bool Controller::CanStartInAnalogMode(ControllerType ctype)
+{
+  const GameDatabase::Entry* dbentry = System::GetGameDatabaseEntry();
+  if (!dbentry)
+    return false;
+
+  return ((dbentry->supported_controllers & (1u << static_cast<u8>(ctype))) != 0 &&
+          !dbentry->HasTrait(GameDatabase::Trait::DisableAutoAnalogMode));
 }

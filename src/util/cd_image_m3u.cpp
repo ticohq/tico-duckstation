@@ -33,7 +33,7 @@ public:
   bool HasSubImages() const override;
   u32 GetSubImageCount() const override;
   u32 GetCurrentSubImage() const override;
-  std::string GetSubImageMetadata(u32 index, const std::string_view& type) const override;
+  std::string GetSubImageMetadata(u32 index, std::string_view type) const override;
   bool SwitchSubImage(u32 index, Error* error) override;
 
 protected:
@@ -61,7 +61,7 @@ CDImageM3u::~CDImageM3u() = default;
 
 bool CDImageM3u::Open(const char* path, bool apply_patches, Error* error)
 {
-  std::FILE* fp = FileSystem::OpenCFile(path, "rb");
+  std::FILE* fp = FileSystem::OpenSharedCFile(path, "rb", FileSystem::FileShareMode::DenyWrite, error);
   if (!fp)
     return false;
 
@@ -107,11 +107,11 @@ bool CDImageM3u::Open(const char* path, bool apply_patches, Error* error)
     else
       entry.filename = std::move(entry_filename);
 
-    Log_DevPrintf("Read path from m3u: '%s'", entry.filename.c_str());
+    DEV_LOG("Read path from m3u: '{}'", entry.filename);
     m_entries.push_back(std::move(entry));
   }
 
-  Log_InfoPrintf("Loaded %zu paths from m3u '%s'", m_entries.size(), path);
+  INFO_LOG("Loaded {} paths from m3u '{}'", m_entries.size(), path);
   return !m_entries.empty() && SwitchSubImage(0, error);
 }
 
@@ -146,7 +146,7 @@ bool CDImageM3u::SwitchSubImage(u32 index, Error* error)
   std::unique_ptr<CDImage> new_image = CDImage::Open(entry.filename.c_str(), m_apply_patches, error);
   if (!new_image)
   {
-    Log_ErrorPrintf("Failed to load subimage %u (%s)", index, entry.filename.c_str());
+    ERROR_LOG("Failed to load subimage {} ({})", index, entry.filename);
     return false;
   }
 
@@ -159,9 +159,9 @@ bool CDImageM3u::SwitchSubImage(u32 index, Error* error)
   return true;
 }
 
-std::string CDImageM3u::GetSubImageMetadata(u32 index, const std::string_view& type) const
+std::string CDImageM3u::GetSubImageMetadata(u32 index, std::string_view type) const
 {
-  if (index > m_entries.size())
+  if (index >= m_entries.size())
     return {};
 
   if (type == "title")

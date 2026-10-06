@@ -1,9 +1,11 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "page_fault_handler.h"
 
 #include "common/assert.h"
+#include "common/crash_handler.h"
+#include "common/error.h"
 #include "common/log.h"
 
 #include <algorithm>
@@ -11,19 +13,15 @@
 #include <mutex>
 #include <vector>
 
-Log_SetChannel(Common::PageFaultHandler);
-
 #if defined(_WIN32)
 #include "common/windows_headers.h"
-#elif defined(__linux__) || defined(__ANDROID__)
+#elif defined(__linux__)
 #include <signal.h>
 #include <ucontext.h>
 #include <unistd.h>
-#define USE_SIGSEGV 1
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #include <signal.h>
 #include <unistd.h>
-#define USE_SIGSEGV 1
 #endif
 
 #ifdef __APPLE__
@@ -34,14 +32,14 @@ Log_SetChannel(Common::PageFaultHandler);
 #include "switch_exception_frame.h"
 #endif
 
-namespace Common::PageFaultHandler {
-
+namespace PageFaultHandler {
 static std::recursive_mutex s_exception_handler_mutex;
-static Handler s_exception_handler_callback;
-static bool s_in_exception_handler;
+static bool s_in_exception_handler = false;
+static bool s_installed = false;
+} // namespace PageFaultHandler
 
 #if defined(CPU_ARCH_ARM64)
-static bool IsStoreInstruction(const void* ptr)
+[[maybe_unused]] static bool IsStoreInstruction(const void* ptr)
 {
   u32 bits;
   std::memcpy(&bits, ptr, sizeof(bits));
@@ -76,7 +74,7 @@ static bool IsStoreInstruction(const void* ptr)
   }
 }
 #elif defined(CPU_ARCH_RISCV64)
-static bool IsStoreInstruction(const void* ptr)
+[[maybe_unused]] static bool IsStoreInstruction(const void* ptr)
 {
   u32 bits;
   std::memcpy(&bits, ptr, sizeof(bits));
@@ -85,10 +83,13 @@ static bool IsStoreInstruction(const void* ptr)
 }
 #endif
 
-#if defined(_WIN32) && (defined(CPU_ARCH_X64) || defined(CPU_ARCH_ARM64))
-static PVOID s_veh_handle;
+#if defined(_WIN32)
 
-static LONG ExceptionHandler(PEXCEPTION_POINTERS exi)
+namespace PageFaultHandler {
+static LONG ExceptionHandler(PEXCEPTION_POINTERS exi);
+}
+
+LONG PageFaultHandler::ExceptionHandler(PEXCEPTION_POINTERS exi)
 {
   // Executing the handler concurrently from multiple threads wouldn't go down well.
   std::unique_lock lock(s_exception_handler_mutex);
@@ -114,60 +115,70 @@ static LONG ExceptionHandler(PEXCEPTION_POINTERS exi)
 
   s_in_exception_handler = true;
 
-  const HandlerResult handled = s_exception_handler_callback(exception_pc, exception_address, is_write);
+  const HandlerResult handled = HandlePageFault(exception_pc, exception_address, is_write);
 
   s_in_exception_handler = false;
 
   return (handled == HandlerResult::ContinueExecution) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
 }
 
-#elif defined(USE_SIGSEGV)
-
-static struct sigaction s_old_sigsegv_action;
-#if defined(__APPLE__) || defined(__aarch64__)
-static struct sigaction s_old_sigbus_action;
-#endif
-
-static void CallExistingSignalHandler(int signal, siginfo_t* siginfo, void* ctx)
+bool PageFaultHandler::Install(Error* error)
 {
-#if defined(__aarch64__)
-  const struct sigaction& sa = (signal == SIGBUS) ? s_old_sigbus_action : s_old_sigsegv_action;
-#elif defined(__APPLE__)
-  const struct sigaction& sa = s_old_sigbus_action;
-#else
-  const struct sigaction& sa = s_old_sigsegv_action;
-#endif
+  std::unique_lock lock(s_exception_handler_mutex);
+  AssertMsg(!s_installed, "Page fault handler has already been installed.");
 
-  if (sa.sa_flags & SA_SIGINFO)
+  PVOID handle = AddVectoredExceptionHandler(1, ExceptionHandler);
+  if (!handle)
   {
-    sa.sa_sigaction(signal, siginfo, ctx);
+    Error::SetWin32(error, "AddVectoredExceptionHandler() failed: ", GetLastError());
+    return false;
   }
-  else if (sa.sa_handler == SIG_DFL)
-  {
-    // Re-raising the signal would just queue it, and since we'd restore the handler back to us,
-    // we'd end up right back here again. So just abort, because that's probably what it'd do anyway.
-    abort();
-  }
-  else if (sa.sa_handler != SIG_IGN)
-  {
-    sa.sa_handler(signal);
-  }
+
+  s_installed = true;
+  return true;
 }
 
-static void SignalHandler(int sig, siginfo_t* info, void* ctx)
+#elif defined(__SWITCH__)
+
+// The Switch has no signals: the exception entry (switch_asm.S) hands every
+// CPU exception to the platform, which offers it here first.
+bool PageFaultHandler::HandleSwitchException(ExceptionFrameA64* frame)
 {
   // Executing the handler concurrently from multiple threads wouldn't go down well.
   std::unique_lock lock(s_exception_handler_mutex);
 
   // Prevent recursive exception filtering.
-  if (s_in_exception_handler)
-  {
-    lock.unlock();
-    CallExistingSignalHandler(sig, info, ctx);
-    return;
-  }
+  if (!s_installed || s_in_exception_handler)
+    return false;
 
-#if defined(__linux__) || defined(__ANDROID__)
+  void* const exception_pc = reinterpret_cast<void*>(frame->pc);
+  void* const exception_address = reinterpret_cast<void*>(frame->far);
+  const bool is_write = IsStoreInstruction(exception_pc);
+
+  s_in_exception_handler = true;
+  const HandlerResult result = HandlePageFault(exception_pc, exception_address, is_write);
+  s_in_exception_handler = false;
+
+  return (result == HandlerResult::ContinueExecution);
+}
+
+bool PageFaultHandler::Install(Error* error)
+{
+  std::unique_lock lock(s_exception_handler_mutex);
+  AssertMsg(!s_installed, "Page fault handler has already been installed.");
+  s_installed = true;
+  return true;
+}
+
+#else
+
+namespace PageFaultHandler {
+static void SignalHandler(int sig, siginfo_t* info, void* ctx);
+} // namespace PageFaultHandler
+
+void PageFaultHandler::SignalHandler(int sig, siginfo_t* info, void* ctx)
+{
+#if defined(__linux__)
   void* const exception_address = reinterpret_cast<void*>(info->si_addr);
 
 #if defined(CPU_ARCH_X64)
@@ -222,119 +233,61 @@ static void SignalHandler(int sig, siginfo_t* info, void* ctx)
 
 #endif
 
-  s_in_exception_handler = true;
+  // Executing the handler concurrently from multiple threads wouldn't go down well.
+  s_exception_handler_mutex.lock();
 
-  const HandlerResult result = s_exception_handler_callback(exception_pc, exception_address, is_write);
-
-  s_in_exception_handler = false;
+  // Prevent recursive exception filtering.
+  HandlerResult result = HandlerResult::ExecuteNextHandler;
+  if (!s_in_exception_handler)
+  {
+    s_in_exception_handler = true;
+    result = HandlePageFault(exception_pc, exception_address, is_write);
+    s_in_exception_handler = false;
+  }
+  
+  s_exception_handler_mutex.unlock();
 
   // Resumes execution right where we left off (re-executes instruction that caused the SIGSEGV).
   if (result == HandlerResult::ContinueExecution)
     return;
 
-  // Call old signal handler, which will likely dump core.
-  lock.unlock();
-  CallExistingSignalHandler(sig, info, ctx);
+  // We couldn't handle it. Pass it off to the crash dumper.
+  CrashHandler::CrashSignalHandler(sig, info, ctx);
 }
 
-#elif defined(__SWITCH__)
-
-bool PageFaultHandler(ExceptionFrameA64* frame)
-{
-  // Executing the handler concurrently from multiple threads wouldn't go down well.
-  std::unique_lock lock(s_exception_handler_mutex);
-
-  // Prevent recursive exception filtering.
-  if (s_in_exception_handler)
-    return false;
-
-  void* const exception_pc = reinterpret_cast<void*>(frame->pc);
-  void* const exception_address = reinterpret_cast<void*>(frame->far);
-  const bool is_write = IsStoreInstruction(exception_pc);
-
-  s_in_exception_handler = true;
-
-  HandlerResult handled = HandlerResult::ExecuteNextHandler;
-  if (s_exception_handler_callback)
-    handled = s_exception_handler_callback(exception_pc, exception_address, is_write);
-
-  s_in_exception_handler = false;
-
-  return handled == HandlerResult::ContinueExecution;
-}
-
-#endif
-
-bool InstallHandler(Handler handler)
+bool PageFaultHandler::Install(Error* error)
 {
   std::unique_lock lock(s_exception_handler_mutex);
-  AssertMsg(!s_exception_handler_callback, "A page fault handler is already registered.");
-  if (!s_exception_handler_callback)
-  {
-#if defined(_WIN32) && (defined(CPU_ARCH_X64) || defined(CPU_ARCH_ARM64))
-    s_veh_handle = AddVectoredExceptionHandler(1, ExceptionHandler);
-    if (!s_veh_handle)
-    {
-      Log_ErrorPrint("Failed to add vectored exception handler");
-      return false;
-    }
-#elif defined(USE_SIGSEGV)
-    struct sigaction sa;
+  AssertMsg(!s_installed, "Page fault handler has already been installed.");
 
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_SIGINFO;
-    sa.sa_sigaction = SignalHandler;
+  struct sigaction sa;
+
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = SA_SIGINFO;
+  sa.sa_sigaction = SignalHandler;
 #ifdef __linux__
-    // Don't block the signal from executing recursively, we want to fire the original handler.
-    sa.sa_flags |= SA_NODEFER;
+  // Don't block the signal from executing recursively, we want to fire the original handler.
+  sa.sa_flags |= SA_NODEFER;
 #endif
-    if (sigaction(SIGSEGV, &sa, &s_old_sigsegv_action) != 0)
-      return false;
+  if (sigaction(SIGSEGV, &sa, nullptr) != 0)
+  {
+    Error::SetErrno(error, "sigaction() for SIGSEGV failed: ", errno);
+    return false;
+  }
 #if defined(__APPLE__) || defined(__aarch64__)
-    // MacOS uses SIGBUS for memory permission violations
-    if (sigaction(SIGBUS, &sa, &s_old_sigbus_action) != 0)
-      return false;
+  // MacOS uses SIGBUS for memory permission violations
+  if (sigaction(SIGBUS, &sa, nullptr) != 0)
+  {
+    Error::SetErrno(error, "sigaction() for SIGBUS failed: ", errno);
+    return false;
+  }
 #endif
 #ifdef __APPLE__
-    task_set_exception_ports(mach_task_self(), EXC_MASK_BAD_ACCESS, MACH_PORT_NULL, EXCEPTION_DEFAULT, 0);
+  task_set_exception_ports(mach_task_self(), EXC_MASK_BAD_ACCESS, MACH_PORT_NULL, EXCEPTION_DEFAULT, 0);
 #endif
-#elif !defined(__SWITCH__) // handler is staically linked on Switch
-    return false;
-#endif
-  }
 
-  s_exception_handler_callback = handler;
+  s_installed = true;
   return true;
 }
 
-bool RemoveHandler(Handler handler)
-{
-  std::unique_lock lock(s_exception_handler_mutex);
-  AssertMsg(!s_exception_handler_callback || s_exception_handler_callback == handler,
-            "Not removing the same handler previously registered.");
-  if (!s_exception_handler_callback)
-    return false;
-
-  s_exception_handler_callback = nullptr;
-
-#if defined(_WIN32) && (defined(CPU_ARCH_X64) || defined(CPU_ARCH_ARM64))
-  RemoveVectoredExceptionHandler(s_veh_handle);
-  s_veh_handle = nullptr;
-#elif defined(USE_SIGSEGV)
-  struct sigaction sa;
-#if defined(__APPLE__) || defined(__aarch64__)
-  sigaction(SIGBUS, &s_old_sigbus_action, &sa);
-  s_old_sigbus_action = {};
 #endif
-#if !defined(__APPLE__) || defined(__aarch64__)
-  sigaction(SIGSEGV, &s_old_sigsegv_action, &sa);
-  s_old_sigsegv_action = {};
-#endif
-#elif !defined(__SWITCH__) // handler is statically linked on Switch
-  return false;
-#endif
-
-  return true;
-}
-
-} // namespace Common::PageFaultHandler

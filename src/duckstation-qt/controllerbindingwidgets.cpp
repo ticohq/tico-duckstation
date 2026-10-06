@@ -8,10 +8,12 @@
 #include "qtutils.h"
 #include "settingswindow.h"
 #include "settingwidgetbinder.h"
+
 #include "ui_controllerbindingwidget_analog_controller.h"
 #include "ui_controllerbindingwidget_analog_joystick.h"
 #include "ui_controllerbindingwidget_digital_controller.h"
 #include "ui_controllerbindingwidget_guncon.h"
+#include "ui_controllerbindingwidget_justifier.h"
 #include "ui_controllerbindingwidget_mouse.h"
 #include "ui_controllerbindingwidget_negcon.h"
 #include "ui_controllerbindingwidget_negconrumble.h"
@@ -63,14 +65,18 @@ void ControllerBindingWidget::populateControllerTypes()
     if (!cinfo)
       continue;
 
-    m_ui.controllerType->addItem(qApp->translate("ControllerType", cinfo->display_name), QVariant(static_cast<int>(i)));
+    m_ui.controllerType->addItem(QString::fromUtf8(cinfo->GetDisplayName()), QVariant(static_cast<int>(i)));
   }
 
-  const std::string controller_type_name(
+  m_controller_info = Controller::GetControllerInfo(
     m_dialog->getStringValue(m_config_section.c_str(), "Type", Controller::GetDefaultPadType(m_port_number)));
-  m_controller_type = Settings::ParseControllerTypeName(controller_type_name.c_str()).value_or(ControllerType::None);
+  if (!m_controller_info)
+  {
+    m_controller_info = Controller::GetControllerInfo(m_port_number == 0 ? Settings::DEFAULT_CONTROLLER_1_TYPE :
+                                                                           Settings::DEFAULT_CONTROLLER_2_TYPE);
+  }
 
-  const int index = m_ui.controllerType->findData(QVariant(static_cast<int>(m_controller_type)));
+  const int index = m_ui.controllerType->findData(QVariant(static_cast<int>(m_controller_info->type)));
   if (index >= 0 && index != m_ui.controllerType->currentIndex())
   {
     QSignalBlocker sb(m_ui.controllerType);
@@ -100,14 +106,13 @@ void ControllerBindingWidget::populateWidgets()
     m_macros_widget = nullptr;
   }
 
-  const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(m_controller_type);
-  const bool has_settings = (cinfo && !cinfo->settings.empty());
-  const bool has_macros = (cinfo && !cinfo->bindings.empty());
+  const bool has_settings = !m_controller_info->settings.empty();
+  const bool has_macros = !m_controller_info->bindings.empty();
   m_ui.settings->setEnabled(has_settings);
   m_ui.macros->setEnabled(has_macros);
 
   m_bindings_widget = new QWidget(this);
-  switch (m_controller_type)
+  switch (m_controller_info->type)
   {
     case ControllerType::AnalogController:
     {
@@ -172,10 +177,25 @@ void ControllerBindingWidget::populateWidgets()
     }
     break;
 
+    case ControllerType::Justifier:
+    {
+      Ui::ControllerBindingWidget_Justifier ui;
+      ui.setupUi(m_bindings_widget);
+      bindBindingWidgets(m_bindings_widget);
+      m_icon = QIcon::fromTheme(QStringLiteral("guncon-line"));
+    }
+    break;
+
+    case ControllerType::None:
+    {
+      m_icon = QIcon::fromTheme(QStringLiteral("controller-strike-line"));
+    }
+    break;
+
     default:
     {
       createBindingWidgets(m_bindings_widget);
-      m_icon = QIcon::fromTheme(QStringLiteral("controller-strike-line"));
+      m_icon = QIcon::fromTheme(QStringLiteral("controller-line"));
     }
     break;
   }
@@ -224,18 +244,19 @@ void ControllerBindingWidget::onTypeChanged()
   if (!ok || index < 0 || index >= static_cast<int>(ControllerType::Count))
     return;
 
-  m_controller_type = static_cast<ControllerType>(index);
+  m_controller_info = Controller::GetControllerInfo(static_cast<ControllerType>(index));
+  DebugAssert(m_controller_info);
 
-  SettingsInterface* sif = m_dialog->getProfileSettingsInterface();
+  SettingsInterface* sif = m_dialog->getEditingSettingsInterface();
   if (sif)
   {
-    sif->SetStringValue(m_config_section.c_str(), "Type", Settings::GetControllerTypeName(m_controller_type));
+    sif->SetStringValue(m_config_section.c_str(), "Type", m_controller_info->name);
+    QtHost::SaveGameSettings(sif, false);
     g_emu_thread->reloadGameSettings();
   }
   else
   {
-    Host::SetBaseStringSettingValue(m_config_section.c_str(), "Type",
-                                    Settings::GetControllerTypeName(m_controller_type));
+    Host::SetBaseStringSettingValue(m_config_section.c_str(), "Type", m_controller_info->name);
     Host::CommitBaseSettingChanges();
     g_emu_thread->applySettings();
   }
@@ -248,11 +269,13 @@ void ControllerBindingWidget::onAutomaticBindingClicked()
   QMenu menu(this);
   bool added = false;
 
-  for (const QPair<QString, QString>& dev : m_dialog->getDeviceList())
+  for (const auto& [identifier, device_name] : m_dialog->getDeviceList())
   {
     // we set it as data, because the device list could get invalidated while the menu is up
-    QAction* action = menu.addAction(QStringLiteral("%1 (%2)").arg(dev.first).arg(dev.second));
-    action->setData(dev.first);
+    const QString qidentifier = QString::fromStdString(identifier);
+    QAction* action =
+      menu.addAction(QStringLiteral("%1 (%2)").arg(qidentifier).arg(QString::fromStdString(device_name)));
+    action->setData(qidentifier);
     connect(action, &QAction::triggered, this,
             [this, action]() { doDeviceAutomaticBinding(action->data().toString()); });
     added = true;
@@ -284,7 +307,7 @@ void ControllerBindingWidget::onClearBindingsClicked()
   }
   else
   {
-    InputManager::ClearPortBindings(*m_dialog->getProfileSettingsInterface(), m_port_number);
+    InputManager::ClearPortBindings(*m_dialog->getEditingSettingsInterface(), m_port_number);
   }
 
   saveAndRefresh();
@@ -335,8 +358,8 @@ void ControllerBindingWidget::doDeviceAutomaticBinding(const QString& device)
   }
   else
   {
-    result = InputManager::MapController(*m_dialog->getProfileSettingsInterface(), m_port_number, mapping);
-    m_dialog->getProfileSettingsInterface()->Save();
+    result = InputManager::MapController(*m_dialog->getEditingSettingsInterface(), m_port_number, mapping);
+    QtHost::SaveGameSettings(m_dialog->getEditingSettingsInterface(), false);
     g_emu_thread->reloadInputBindings();
   }
 
@@ -354,11 +377,8 @@ void ControllerBindingWidget::saveAndRefresh()
 
 void ControllerBindingWidget::createBindingWidgets(QWidget* parent)
 {
-  SettingsInterface* sif = getDialog()->getProfileSettingsInterface();
-  const ControllerType type = getControllerType();
-  const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(type);
-  if (!cinfo)
-    return;
+  SettingsInterface* sif = getDialog()->getEditingSettingsInterface();
+  DebugAssert(m_controller_info);
 
   QGroupBox* axis_gbox = nullptr;
   QGridLayout* axis_layout = nullptr;
@@ -370,13 +390,13 @@ void ControllerBindingWidget::createBindingWidgets(QWidget* parent)
   scrollarea->setWidget(scrollarea_widget);
   scrollarea->setWidgetResizable(true);
   scrollarea->setFrameShape(QFrame::StyledPanel);
-  scrollarea->setFrameShadow(QFrame::Plain);
+  scrollarea->setFrameShadow(QFrame::Sunken);
 
   // We do axes and buttons separately, so we can figure out how many columns to use.
   constexpr int NUM_AXIS_COLUMNS = 2;
   int column = 0;
   int row = 0;
-  for (const Controller::ControllerBindingInfo& bi : cinfo->bindings)
+  for (const Controller::ControllerBindingInfo& bi : m_controller_info->bindings)
   {
     if (bi.type == InputBindingInfo::Type::Axis || bi.type == InputBindingInfo::Type::HalfAxis ||
         bi.type == InputBindingInfo::Type::Pointer)
@@ -405,7 +425,7 @@ void ControllerBindingWidget::createBindingWidgets(QWidget* parent)
   const int num_button_columns = axis_layout ? 2 : 4;
   row = 0;
   column = 0;
-  for (const Controller::ControllerBindingInfo& bi : cinfo->bindings)
+  for (const Controller::ControllerBindingInfo& bi : m_controller_info->bindings)
   {
     if (bi.type == InputBindingInfo::Type::Button)
     {
@@ -434,6 +454,7 @@ void ControllerBindingWidget::createBindingWidgets(QWidget* parent)
   if (!axis_gbox && !button_gbox)
   {
     delete scrollarea_widget;
+    delete scrollarea;
     return;
   }
 
@@ -450,14 +471,11 @@ void ControllerBindingWidget::createBindingWidgets(QWidget* parent)
 
 void ControllerBindingWidget::bindBindingWidgets(QWidget* parent)
 {
-  SettingsInterface* sif = getDialog()->getProfileSettingsInterface();
-  const ControllerType type = getControllerType();
-  const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(type);
-  if (!cinfo)
-    return;
+  SettingsInterface* sif = getDialog()->getEditingSettingsInterface();
+  DebugAssert(m_controller_info);
 
   const std::string& config_section = getConfigSection();
-  for (const Controller::ControllerBindingInfo& bi : cinfo->bindings)
+  for (const Controller::ControllerBindingInfo& bi : m_controller_info->bindings)
   {
     if (bi.type == InputBindingInfo::Type::Axis || bi.type == InputBindingInfo::Type::HalfAxis ||
         bi.type == InputBindingInfo::Type::Button || bi.type == InputBindingInfo::Type::Pointer)
@@ -465,7 +483,7 @@ void ControllerBindingWidget::bindBindingWidgets(QWidget* parent)
       InputBindingWidget* widget = parent->findChild<InputBindingWidget*>(QString::fromUtf8(bi.name));
       if (!widget)
       {
-        Log_ErrorPrintf("No widget found for '%s' (%s)", bi.name, cinfo->name);
+        ERROR_LOG("No widget found for '{}' ({})", bi.name, m_controller_info->name);
         continue;
       }
 
@@ -473,7 +491,7 @@ void ControllerBindingWidget::bindBindingWidgets(QWidget* parent)
     }
   }
 
-  switch (cinfo->vibration_caps)
+  switch (m_controller_info->vibration_caps)
   {
     case Controller::VibrationCapabilities::LargeSmallMotors:
     {
@@ -548,16 +566,12 @@ ControllerMacroEditWidget::ControllerMacroEditWidget(ControllerMacroWidget* pare
 
   ControllerSettingsWindow* dialog = m_bwidget->getDialog();
   const std::string& section = m_bwidget->getConfigSection();
-  const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(m_bwidget->getControllerType());
-  if (!cinfo)
-  {
-    // Shouldn't ever happen.
-    return;
-  }
+  const Controller::ControllerInfo* cinfo = m_bwidget->getControllerInfo();
+  DebugAssert(cinfo);
 
   // load binds (single string joined by &)
   const std::string binds_string(
-    dialog->getStringValue(section.c_str(), fmt::format("Macro{}Binds", index + 1u).c_str(), ""));
+    dialog->getStringValue(section.c_str(), TinyString::from_format("Macro{}Binds", index + 1u), ""));
   const std::vector<std::string_view> buttons_split(StringUtil::SplitString(binds_string, '&', true));
 
   for (const std::string_view& button : buttons_split)
@@ -585,10 +599,13 @@ ControllerMacroEditWidget::ControllerMacroEditWidget(ControllerMacroWidget* pare
     m_ui.bindList->addItem(item);
   }
 
-  m_frequency = dialog->getIntValue(section.c_str(), fmt::format("Macro{}Frequency", index + 1u).c_str(), 0);
+  m_frequency = dialog->getIntValue(section.c_str(), TinyString::from_format("Macro{}Frequency", index + 1u), 0);
+  ControllerSettingWidgetBinder::BindWidgetToInputProfileBool(dialog->getEditingSettingsInterface(), m_ui.triggerToggle,
+                                                              section.c_str(), fmt::format("Macro{}Toggle", index + 1u),
+                                                              false);
   updateFrequencyText();
 
-  m_ui.trigger->initialize(dialog->getProfileSettingsInterface(), InputBindingInfo::Type::Macro, section,
+  m_ui.trigger->initialize(dialog->getEditingSettingsInterface(), InputBindingInfo::Type::Macro, section,
                            fmt::format("Macro{}", index + 1u));
 
   connect(m_ui.increaseFrequency, &QAbstractButton::clicked, this, [this]() { modFrequency(1); });
@@ -651,9 +668,8 @@ void ControllerMacroEditWidget::updateFrequencyText()
 void ControllerMacroEditWidget::updateBinds()
 {
   ControllerSettingsWindow* dialog = m_bwidget->getDialog();
-  const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(m_bwidget->getControllerType());
-  if (!cinfo)
-    return;
+  const Controller::ControllerInfo* cinfo = m_bwidget->getControllerInfo();
+  DebugAssert(cinfo);
 
   std::vector<const Controller::ControllerBindingInfo*> new_binds;
   u32 bind_index = 0;
@@ -702,8 +718,9 @@ void ControllerMacroEditWidget::updateBinds()
 ControllerCustomSettingsWidget::ControllerCustomSettingsWidget(ControllerBindingWidget* parent)
   : QWidget(parent), m_parent(parent)
 {
-  const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(parent->getControllerType());
-  if (!cinfo || cinfo->settings.empty())
+  const Controller::ControllerInfo* cinfo = parent->getControllerInfo();
+  DebugAssert(cinfo);
+  if (cinfo->settings.empty())
     return;
 
   QScrollArea* sarea = new QScrollArea(this);
@@ -729,7 +746,7 @@ void ControllerCustomSettingsWidget::createSettingWidgets(ControllerBindingWidge
                                                           QGridLayout* layout, const Controller::ControllerInfo* cinfo)
 {
   const std::string& section = parent->getConfigSection();
-  SettingsInterface* sif = parent->getDialog()->getProfileSettingsInterface();
+  SettingsInterface* sif = parent->getDialog()->getEditingSettingsInterface();
   int current_row = 0;
 
   for (const SettingInfo& si : cinfo->settings)
@@ -864,8 +881,9 @@ void ControllerCustomSettingsWidget::createSettingWidgets(ControllerBindingWidge
 
 void ControllerCustomSettingsWidget::restoreDefaults()
 {
-  const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(m_parent->getControllerType());
-  if (!cinfo || cinfo->settings.empty())
+  const Controller::ControllerInfo* cinfo = m_parent->getControllerInfo();
+  DebugAssert(cinfo);
+  if (cinfo->settings.empty())
     return;
 
   for (const SettingInfo& si : cinfo->settings)

@@ -1,14 +1,13 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-
-#include "common/assert.h"
 
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
+#include <span>
 #include <type_traits>
 
 template<typename T, std::size_t SIZE, std::size_t ALIGNMENT = 0>
@@ -73,6 +72,9 @@ public:
 
   void swap(this_type& move) { std::swap(m_data, move.m_data); }
 
+  std::span<T, SIZE> span() { return std::span<T, SIZE>(m_data); }
+  std::span<const T, SIZE> cspan() const { return std::span<const T, SIZE>(m_data); }
+
   this_type& operator=(const this_type& rhs)
   {
     std::copy(begin(), end(), rhs.cbegin());
@@ -113,18 +115,25 @@ private:
     {
 #ifdef _MSC_VER
       m_data = static_cast<T*>(_aligned_malloc(SIZE * sizeof(T), ALIGNMENT));
-      if (!m_data)
-        Panic("Memory allocation failed.");
+      assert(m_data);
+      if (!m_data) [[unlikely]]
+        std::abort();
 #else
-      if (posix_memalign(reinterpret_cast<void**>(&m_data), ALIGNMENT, SIZE * sizeof(T)) != 0)
-        Panic("Memory allocation failed.");
+#ifdef __SWITCH__
+      m_data = static_cast<T*>(aligned_alloc(ALIGNMENT, SIZE * sizeof(T)));
+      if (!m_data) [[unlikely]]
+#else
+      if (posix_memalign(reinterpret_cast<void**>(&m_data), ALIGNMENT, SIZE * sizeof(T)) != 0) [[unlikely]]
+#endif
+        std::abort();
 #endif
     }
     else
     {
       m_data = static_cast<T*>(std::malloc(SIZE * sizeof(T)));
-      if (!m_data)
-        Panic("Memory allocation failed.");
+      assert(m_data);
+      if (!m_data) [[unlikely]]
+        std::abort();
     }
   }
   void deallocate()
@@ -191,6 +200,19 @@ public:
       m_size = 0;
     }
   }
+  DynamicHeapArray(const std::span<const T> data)
+  {
+    if (!data.empty())
+    {
+      internal_resize(data.size(), nullptr, 0);
+      std::memcpy(m_data, data.data(), sizeof(T) * data.size());
+    }
+    else
+    {
+      m_data = nullptr;
+      m_size = 0;
+    }
+  }
 
   DynamicHeapArray(const this_type& copy)
   {
@@ -247,7 +269,11 @@ public:
 
   void fill(const_reference value) { std::fill(begin(), end(), value); }
 
-  void swap(this_type& move) { std::swap(m_data, move.m_data); }
+  void swap(this_type& rhs)
+  {
+    std::swap(m_data, rhs.m_data);
+    std::swap(m_size, rhs.m_size);
+  }
 
   void resize(size_t new_size) { internal_resize(new_size, m_data, m_size); }
 
@@ -310,6 +336,25 @@ public:
     move.m_size = 0;
   }
 
+  std::span<T> span() { return std::span<T>(m_data, m_size); }
+  std::span<const T> cspan() const { return std::span<const T>(m_data, m_size); }
+
+  std::span<T> span(size_t offset, size_t size = static_cast<size_t>(-1))
+  {
+    std::span<T> ret;
+    if (offset < m_size) [[likely]]
+      ret = std::span<T>(m_data + offset, std::min(m_size - offset, size));
+    return ret;
+  }
+
+  std::span<const T> cspan(size_t offset, size_t size = static_cast<size_t>(-1)) const
+  {
+    std::span<const T> ret;
+    if (offset < m_size) [[likely]]
+      ret = std::span<const T>(m_data + offset, std::min(m_size - offset, size));
+    return ret;
+  }
+
   this_type& operator=(const this_type& rhs)
   {
     assign(rhs);
@@ -350,16 +395,17 @@ private:
     {
 #ifdef _MSC_VER
       m_data = static_cast<T*>(_aligned_realloc(prev_ptr, size * sizeof(T), alignment));
-      if (!m_data)
-        Panic("Memory allocation failed.");
+      assert(m_data);
+      if (!m_data) [[unlikely]]
+        std::abort();
 #else
 #ifdef __SWITCH__
-      m_data = reinterpret_cast<T*>(aligned_alloc(alignment, size * sizeof(T)));
-      if (!m_data)
+      m_data = static_cast<T*>(aligned_alloc(alignment, size * sizeof(T)));
+      if (!m_data) [[unlikely]]
 #else
-      if (posix_memalign(reinterpret_cast<void**>(&m_data), alignment, size * sizeof(T)) != 0)
+      if (posix_memalign(reinterpret_cast<void**>(&m_data), alignment, size * sizeof(T)) != 0) [[unlikely]]
 #endif
-        Panic("Memory allocation failed.");
+        std::abort();
 
       if (prev_ptr)
       {
@@ -371,8 +417,9 @@ private:
     else
     {
       m_data = static_cast<T*>(std::realloc(prev_ptr, size * sizeof(T)));
-      if (!m_data)
-        Panic("Memory allocation failed.");
+      assert(m_data);
+      if (!m_data) [[unlikely]]
+        std::abort();
     }
 
     m_size = size;

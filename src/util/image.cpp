@@ -3,8 +3,9 @@
 
 #include "image.h"
 
+#include "common/assert.h"
 #include "common/bitutils.h"
-#include "common/byte_stream.h"
+#include "common/fastjmp.h"
 #include "common/file_system.h"
 #include "common/log.h"
 #include "common/path.h"
@@ -19,7 +20,6 @@
 // clang-format off
 #ifdef _MSC_VER
 #pragma warning(disable : 4611) // warning C4611: interaction between '_setjmp' and C++ object destruction is non-portable
-#pragma warning(disable : 4324) // warning C4324: '`anonymous-namespace'::JPEGErrorHandler': structure was padded due to alignment specifier
 #endif
 // clang-format on
 
@@ -27,26 +27,26 @@ Log_SetChannel(Image);
 
 static bool PNGBufferLoader(RGBA8Image* image, const void* buffer, size_t buffer_size);
 static bool PNGBufferSaver(const RGBA8Image& image, std::vector<u8>* buffer, u8 quality);
-static bool PNGFileLoader(RGBA8Image* image, const char* filename, std::FILE* fp);
-static bool PNGFileSaver(const RGBA8Image& image, const char* filename, std::FILE* fp, u8 quality);
+static bool PNGFileLoader(RGBA8Image* image, std::string_view filename, std::FILE* fp);
+static bool PNGFileSaver(const RGBA8Image& image, std::string_view filename, std::FILE* fp, u8 quality);
 
 static bool JPEGBufferLoader(RGBA8Image* image, const void* buffer, size_t buffer_size);
 static bool JPEGBufferSaver(const RGBA8Image& image, std::vector<u8>* buffer, u8 quality);
-static bool JPEGFileLoader(RGBA8Image* image, const char* filename, std::FILE* fp);
-static bool JPEGFileSaver(const RGBA8Image& image, const char* filename, std::FILE* fp, u8 quality);
+static bool JPEGFileLoader(RGBA8Image* image, std::string_view filename, std::FILE* fp);
+static bool JPEGFileSaver(const RGBA8Image& image, std::string_view filename, std::FILE* fp, u8 quality);
 
 static bool WebPBufferLoader(RGBA8Image* image, const void* buffer, size_t buffer_size);
 static bool WebPBufferSaver(const RGBA8Image& image, std::vector<u8>* buffer, u8 quality);
-static bool WebPFileLoader(RGBA8Image* image, const char* filename, std::FILE* fp);
-static bool WebPFileSaver(const RGBA8Image& image, const char* filename, std::FILE* fp, u8 quality);
+static bool WebPFileLoader(RGBA8Image* image, std::string_view filename, std::FILE* fp);
+static bool WebPFileSaver(const RGBA8Image& image, std::string_view filename, std::FILE* fp, u8 quality);
 
 struct FormatHandler
 {
   const char* extension;
   bool (*buffer_loader)(RGBA8Image*, const void*, size_t);
   bool (*buffer_saver)(const RGBA8Image&, std::vector<u8>*, u8);
-  bool (*file_loader)(RGBA8Image*, const char*, std::FILE*);
-  bool (*file_saver)(const RGBA8Image&, const char*, std::FILE*, u8);
+  bool (*file_loader)(RGBA8Image*, std::string_view, std::FILE*);
+  bool (*file_saver)(const RGBA8Image&, std::string_view, std::FILE*, u8);
 };
 
 static constexpr FormatHandler s_format_handlers[] = {
@@ -56,7 +56,7 @@ static constexpr FormatHandler s_format_handlers[] = {
   {"webp", WebPBufferLoader, WebPBufferSaver, WebPFileLoader, WebPFileSaver},
 };
 
-static const FormatHandler* GetFormatHandler(const std::string_view& extension)
+static const FormatHandler* GetFormatHandler(std::string_view extension)
 {
   for (const FormatHandler& handler : s_format_handlers)
   {
@@ -125,39 +125,39 @@ bool RGBA8Image::SaveToFile(const char* filename, u8 quality) const
   return false;
 }
 
-bool RGBA8Image::LoadFromFile(const char* filename, std::FILE* fp)
+bool RGBA8Image::LoadFromFile(std::string_view filename, std::FILE* fp)
 {
   const std::string_view extension(Path::GetExtension(filename));
   const FormatHandler* handler = GetFormatHandler(extension);
   if (!handler || !handler->file_loader)
   {
-    Log_ErrorPrintf("Unknown extension '%.*s'", static_cast<int>(extension.size()), extension.data());
+    ERROR_LOG("Unknown extension '{}'", extension);
     return false;
   }
 
   return handler->file_loader(this, filename, fp);
 }
 
-bool RGBA8Image::LoadFromBuffer(const char* filename, const void* buffer, size_t buffer_size)
+bool RGBA8Image::LoadFromBuffer(std::string_view filename, const void* buffer, size_t buffer_size)
 {
   const std::string_view extension(Path::GetExtension(filename));
   const FormatHandler* handler = GetFormatHandler(extension);
   if (!handler || !handler->buffer_loader)
   {
-    Log_ErrorPrintf("Unknown extension '%.*s'", static_cast<int>(extension.size()), extension.data());
+    ERROR_LOG("Unknown extension '{}'", extension);
     return false;
   }
 
   return handler->buffer_loader(this, buffer, buffer_size);
 }
 
-bool RGBA8Image::SaveToFile(const char* filename, std::FILE* fp, u8 quality) const
+bool RGBA8Image::SaveToFile(std::string_view filename, std::FILE* fp, u8 quality) const
 {
   const std::string_view extension(Path::GetExtension(filename));
   const FormatHandler* handler = GetFormatHandler(extension);
   if (!handler || !handler->file_saver)
   {
-    Log_ErrorPrintf("Unknown extension '%.*s'", static_cast<int>(extension.size()), extension.data());
+    ERROR_LOG("Unknown extension '{}'", extension);
     return false;
   }
 
@@ -167,7 +167,7 @@ bool RGBA8Image::SaveToFile(const char* filename, std::FILE* fp, u8 quality) con
   return (std::fflush(fp) == 0);
 }
 
-std::optional<std::vector<u8>> RGBA8Image::SaveToBuffer(const char* filename, u8 quality) const
+std::optional<std::vector<u8>> RGBA8Image::SaveToBuffer(std::string_view filename, u8 quality) const
 {
   std::optional<std::vector<u8>> ret;
 
@@ -175,7 +175,7 @@ std::optional<std::vector<u8>> RGBA8Image::SaveToBuffer(const char* filename, u8
   const FormatHandler* handler = GetFormatHandler(extension);
   if (!handler || !handler->file_saver)
   {
-    Log_ErrorPrintf("Unknown extension '%.*s'", static_cast<int>(extension.size()), extension.data());
+    ERROR_LOG("Unknown extension '{}'", extension);
     return ret;
   }
 
@@ -271,7 +271,7 @@ static bool PNGCommonLoader(RGBA8Image* image, png_structp png_ptr, png_infop in
   return true;
 }
 
-bool PNGFileLoader(RGBA8Image* image, const char* filename, std::FILE* fp)
+bool PNGFileLoader(RGBA8Image* image, std::string_view filename, std::FILE* fp)
 {
   png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
   if (!png_ptr)
@@ -356,7 +356,7 @@ static void PNGSaveCommon(const RGBA8Image& image, png_structp png_ptr, png_info
   png_write_end(png_ptr, nullptr);
 }
 
-bool PNGFileSaver(const RGBA8Image& image, const char* filename, std::FILE* fp, u8 quality)
+bool PNGFileSaver(const RGBA8Image& image, std::string_view filename, std::FILE* fp, u8 quality)
 {
   png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
   png_infop info_ptr = nullptr;
@@ -426,52 +426,54 @@ namespace {
 struct JPEGErrorHandler
 {
   jpeg_error_mgr err;
-  jmp_buf jbuf;
-};
-} // namespace
+  fastjmp_buf jbuf;
 
-static bool HandleJPEGError(JPEGErrorHandler* eh)
-{
-  jpeg_std_error(&eh->err);
+  JPEGErrorHandler()
+  {
+    jpeg_std_error(&err);
+    err.error_exit = &ErrorExit;
+  }
 
-  eh->err.error_exit = [](j_common_ptr cinfo) {
+  static void ErrorExit(j_common_ptr cinfo)
+  {
     JPEGErrorHandler* eh = (JPEGErrorHandler*)cinfo->err;
     char msg[JMSG_LENGTH_MAX];
     eh->err.format_message(cinfo, msg);
-    Log_ErrorFmt("libjpeg fatal error: {}", msg);
-    longjmp(eh->jbuf, 1);
-  };
-
-  if (setjmp(eh->jbuf) == 0)
-    return true;
-
-  return false;
-}
+    ERROR_LOG("libjpeg fatal error: {}", msg);
+    fastjmp_jmp(&eh->jbuf, 1);
+  }
+};
+} // namespace
 
 template<typename T>
 static bool WrapJPEGDecompress(RGBA8Image* image, T setup_func)
 {
   std::vector<u8> scanline;
+  jpeg_decompress_struct info = {};
 
-  JPEGErrorHandler err;
-  if (!HandleJPEGError(&err))
+  // NOTE: Be **very** careful not to allocate memory after calling this function.
+  // It won't get freed, because fastjmp does not unwind the stack.
+  JPEGErrorHandler errhandler;
+  if (fastjmp_set(&errhandler.jbuf) != 0)
+  {
+    jpeg_destroy_decompress(&info);
     return false;
+  }
 
-  jpeg_decompress_struct info;
-  info.err = &err.err;
+  info.err = &errhandler.err;
   jpeg_create_decompress(&info);
   setup_func(info);
 
   const int herr = jpeg_read_header(&info, TRUE);
   if (herr != JPEG_HEADER_OK)
   {
-    Log_ErrorFmt("jpeg_read_header() returned {}", herr);
+    ERROR_LOG("jpeg_read_header() returned {}", herr);
     return false;
   }
 
   if (info.image_width == 0 || info.image_height == 0 || info.num_components < 3)
   {
-    Log_ErrorFmt("Invalid image dimensions: {}x{}x{}", info.image_width, info.image_height, info.num_components);
+    ERROR_LOG("Invalid image dimensions: {}x{}x{}", info.image_width, info.image_height, info.num_components);
     return false;
   }
 
@@ -480,7 +482,7 @@ static bool WrapJPEGDecompress(RGBA8Image* image, T setup_func)
 
   if (!jpeg_start_decompress(&info))
   {
-    Log_ErrorFmt("jpeg_start_decompress() returned failure");
+    ERROR_LOG("jpeg_start_decompress() returned failure");
     return false;
   }
 
@@ -493,7 +495,7 @@ static bool WrapJPEGDecompress(RGBA8Image* image, T setup_func)
   {
     if (jpeg_read_scanlines(&info, scanline_buffer, 1) != 1)
     {
-      Log_ErrorFmt("jpeg_read_scanlines() failed at row {}", y);
+      ERROR_LOG("jpeg_read_scanlines() failed at row {}", y);
       result = false;
       break;
     }
@@ -517,11 +519,11 @@ static bool WrapJPEGDecompress(RGBA8Image* image, T setup_func)
 bool JPEGBufferLoader(RGBA8Image* image, const void* buffer, size_t buffer_size)
 {
   return WrapJPEGDecompress(image, [buffer, buffer_size](jpeg_decompress_struct& info) {
-    jpeg_mem_src(&info, static_cast<const unsigned char*>(buffer), buffer_size);
+    jpeg_mem_src(&info, static_cast<const unsigned char*>(buffer), static_cast<unsigned long>(buffer_size));
   });
 }
 
-bool JPEGFileLoader(RGBA8Image* image, const char* filename, std::FILE* fp)
+bool JPEGFileLoader(RGBA8Image* image, std::string_view filename, std::FILE* fp)
 {
   static constexpr u32 BUFFER_SIZE = 16384;
 
@@ -585,13 +587,18 @@ template<typename T>
 static bool WrapJPEGCompress(const RGBA8Image& image, u8 quality, T setup_func)
 {
   std::vector<u8> scanline;
+  jpeg_compress_struct info = {};
 
-  JPEGErrorHandler err;
-  if (!HandleJPEGError(&err))
+  // NOTE: Be **very** careful not to allocate memory after calling this function.
+  // It won't get freed, because fastjmp does not unwind the stack.
+  JPEGErrorHandler errhandler;
+  if (fastjmp_set(&errhandler.jbuf) != 0)
+  {
+    jpeg_destroy_compress(&info);
     return false;
+  }
 
-  jpeg_compress_struct info;
-  info.err = &err.err;
+  info.err = &errhandler.err;
   jpeg_create_compress(&info);
   setup_func(info);
 
@@ -622,7 +629,7 @@ static bool WrapJPEGCompress(const RGBA8Image& image, u8 quality, T setup_func)
 
     if (jpeg_write_scanlines(&info, scanline_buffer, 1) != 1)
     {
-      Log_ErrorFmt("jpeg_write_scanlines() failed at row {}", y);
+      ERROR_LOG("jpeg_write_scanlines() failed at row {}", y);
       result = false;
       break;
     }
@@ -671,7 +678,7 @@ bool JPEGBufferSaver(const RGBA8Image& image, std::vector<u8>* buffer, u8 qualit
   return WrapJPEGCompress(image, quality, [&cb](jpeg_compress_struct& info) { info.dest = &cb.mgr; });
 }
 
-bool JPEGFileSaver(const RGBA8Image& image, const char* filename, std::FILE* fp, u8 quality)
+bool JPEGFileSaver(const RGBA8Image& image, std::string_view filename, std::FILE* fp, u8 quality)
 {
   static constexpr u32 BUFFER_SIZE = 16384;
 
@@ -723,7 +730,7 @@ bool WebPBufferLoader(RGBA8Image* image, const void* buffer, size_t buffer_size)
   int width, height;
   if (!WebPGetInfo(static_cast<const u8*>(buffer), buffer_size, &width, &height) || width <= 0 || height <= 0)
   {
-    Log_ErrorPrint("WebPGetInfo() failed");
+    ERROR_LOG("WebPGetInfo() failed");
     return false;
   }
 
@@ -732,7 +739,7 @@ bool WebPBufferLoader(RGBA8Image* image, const void* buffer, size_t buffer_size)
   if (!WebPDecodeRGBAInto(static_cast<const u8*>(buffer), buffer_size, reinterpret_cast<u8*>(pixels.data()),
                           sizeof(u32) * pixels.size(), sizeof(u32) * static_cast<u32>(width)))
   {
-    Log_ErrorPrint("WebPDecodeRGBAInto() failed");
+    ERROR_LOG("WebPDecodeRGBAInto() failed");
     return false;
   }
 
@@ -755,16 +762,16 @@ bool WebPBufferSaver(const RGBA8Image& image, std::vector<u8>* buffer, u8 qualit
   return true;
 }
 
-bool WebPFileLoader(RGBA8Image* image, const char* filename, std::FILE* fp)
+bool WebPFileLoader(RGBA8Image* image, std::string_view filename, std::FILE* fp)
 {
-  std::optional<std::vector<u8>> data = FileSystem::ReadBinaryFile(fp);
+  std::optional<DynamicHeapArray<u8>> data = FileSystem::ReadBinaryFile(fp);
   if (!data.has_value())
     return false;
 
   return WebPBufferLoader(image, data->data(), data->size());
 }
 
-bool WebPFileSaver(const RGBA8Image& image, const char* filename, std::FILE* fp, u8 quality)
+bool WebPFileSaver(const RGBA8Image& image, std::string_view filename, std::FILE* fp, u8 quality)
 {
   std::vector<u8> buffer;
   if (!WebPBufferSaver(image, &buffer, quality))

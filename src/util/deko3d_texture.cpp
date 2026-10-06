@@ -5,6 +5,7 @@
 #include "common/string_util.h"
 
 #include "deko3d_device.h"
+#include "fmt/printf.h"
 
 Log_SetChannel(Deko3D_Texture);
 
@@ -27,7 +28,7 @@ std::unique_ptr<Deko3DTexture> Deko3DTexture::Create(u32 width, u32 height, u32 
 
   Deko3DDevice& dev = Deko3DDevice::GetInstance();
 
-  Log_TraceFmt("Creating texture {}x{} levels={} levels={} samples={} type={} format={} flags={}", width, height,
+  TRACE_LOG("Creating texture {}x{} levels={} levels={} samples={} type={} format={} flags={}", width, height,
                layers, levels, samples, static_cast<u32>(type), static_cast<u32>(format), flags);
 
   dk::ImageLayout layout;
@@ -99,7 +100,7 @@ Deko3DTexture::~Deko3DTexture()
     Destroy(true);
 }
 
-void Deko3DTexture::SetDebugName(const std::string_view& name)
+void Deko3DTexture::SetDebugName(std::string_view name)
 {
   // nop
 }
@@ -143,7 +144,7 @@ bool Deko3DTexture::Update(u32 x, u32 y, u32 width, u32 height, const void* data
       dev.SubmitCommandBuffer(false, "While waiting for %u bytes in texture upload buffer", required_size);
       if (!sbuffer->ReserveMemory(required_size, DK_IMAGE_LINEAR_STRIDE_ALIGNMENT))
       {
-        Log_ErrorPrintf("Failed to reserve texture upload memory (%u bytes).", required_size);
+        ERROR_LOG("{}", fmt::sprintf("Failed to reserve texture upload memory (%u bytes).", required_size));
         return false;
       }
     }
@@ -417,7 +418,7 @@ Deko3DTextureBuffer::~Deko3DTextureBuffer()
   Deko3DDevice::GetInstance().UnbindTextureBuffer(this);
 }
 
-void Deko3DTextureBuffer::SetDebugName(const std::string_view& name)
+void Deko3DTextureBuffer::SetDebugName(std::string_view name)
 {
   // nop
 }
@@ -486,7 +487,7 @@ Deko3DSampler::~Deko3DSampler()
   Deko3DDevice::GetInstance().UnbindTextureSampler(this);
 }
 
-void Deko3DSampler::SetDebugName(const std::string_view& name)
+void Deko3DSampler::SetDebugName(std::string_view name)
 {
   // nop
 }
@@ -530,7 +531,7 @@ void Deko3DDevice::CommitClear(dk::CmdBuf command_buffer, Deko3DTexture* tex)
 
   if (tex->GetState() == GPUTexture::State::Cleared)
   {
-    Common::Rectangle<s32> restore_rect = m_last_scissor;
+    const GSVector4i restore_rect = m_last_scissor;
     SetScissor(0, 0, tex->GetWidth(), tex->GetHeight());
 
     if (tex->IsDepthStencil())
@@ -552,7 +553,7 @@ void Deko3DDevice::CommitClear(dk::CmdBuf command_buffer, Deko3DTexture* tex)
       ApplyBlendState(blend_state);
     }
 
-    SetScissor(restore_rect.left, restore_rect.top, restore_rect.GetWidth(), restore_rect.GetHeight());
+    SetScissor(restore_rect);
   }
   else // tex->GetState() == GPUTexture::State::Invalidated
   {
@@ -594,7 +595,7 @@ void Deko3DDevice::CommitRTClearInFB(Deko3DTexture* tex, u32 idx)
     {
       const auto color = tex->GetUNormClearColor();
 
-      Common::Rectangle<s32> restore_rect = m_last_scissor;
+      const GSVector4i restore_rect = m_last_scissor;
       SetScissor(0, 0, tex->GetWidth(), tex->GetHeight());
 
       if (tex->IsDepthStencil())
@@ -614,7 +615,7 @@ void Deko3DDevice::CommitRTClearInFB(Deko3DTexture* tex, u32 idx)
         ApplyBlendState(blend_state);
       }
 
-      SetScissor(restore_rect.left, restore_rect.top, restore_rect.GetWidth(), restore_rect.GetHeight());
+      SetScissor(restore_rect);
 
       tex->SetState(GPUTexture::State::Dirty);
     }

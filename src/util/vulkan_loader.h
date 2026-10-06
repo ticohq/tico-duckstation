@@ -1,7 +1,9 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
+class Error;
 
 #define VK_NO_PROTOTYPES
 
@@ -78,12 +80,13 @@
 #pragma clang diagnostic ignored "-Wnullability-completeness"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #pragma clang diagnostic ignored "-Wmissing-field-initializers"
+#pragma clang diagnostic ignored "-Wunused-function"
 #elif defined(_MSC_VER)
 #pragma warning(push, 0)
 #endif
 
 #define VMA_STATIC_VULKAN_FUNCTIONS 1
-#define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
+#define VMA_DYNAMIC_VULKAN_FUNCTIONS 0
 #define VMA_STATS_STRING_ENABLED 0
 #include "vulkan/vk_mem_alloc.h"
 
@@ -95,7 +98,7 @@
 
 namespace Vulkan {
 bool IsVulkanLibraryLoaded();
-bool LoadVulkanLibrary();
+bool LoadVulkanLibrary(Error* error);
 bool LoadVulkanInstanceFunctions(VkInstance instance);
 bool LoadVulkanDeviceFunctions(VkDevice device);
 void UnloadVulkanLibrary();

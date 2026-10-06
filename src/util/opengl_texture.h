@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
 #include "gpu_device.h"
 #include "gpu_texture.h"
 #include "opengl_loader.h"
+
 #include <tuple>
 
 class OpenGLDevice;
@@ -27,7 +29,7 @@ public:
   bool Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer = 0, u32 level = 0) override;
   void Unmap() override;
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
   static std::unique_ptr<OpenGLTexture> Create(u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type,
                                                Format format, const void* data = nullptr, u32 data_pitch = 0);
@@ -73,7 +75,7 @@ public:
   void* Map(u32 required_elements) override;
   void Unmap(u32 used_elements) override;
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
 private:
   OpenGLTextureBuffer(Format format, u32 size_in_elements, std::unique_ptr<OpenGLStreamBuffer> buffer,
@@ -92,7 +94,7 @@ public:
 
   ALWAYS_INLINE GLuint GetID() const { return m_id; }
 
-  void SetDebugName(const std::string_view& name) override;
+  void SetDebugName(std::string_view name) override;
 
 private:
   OpenGLSampler(GLuint id);

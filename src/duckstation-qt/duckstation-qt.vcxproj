@@ -23,7 +23,6 @@
     <ClCompile Include="debuggerwindow.cpp" />
     <ClCompile Include="foldersettingswidget.cpp" />
     <ClCompile Include="gamelistmodel.cpp" />
-    <ClCompile Include="gamelistsearchdirectoriesmodel.cpp" />
     <ClCompile Include="interfacesettingswidget.cpp" />
     <ClCompile Include="graphicssettingswidget.cpp" />
     <ClCompile Include="hotkeysettingswidget.cpp" />
@@ -37,8 +36,6 @@
     <ClCompile Include="gamelistrefreshthread.cpp" />
     <ClCompile Include="gamelistwidget.cpp" />
     <ClCompile Include="gamesummarywidget.cpp" />
-    <ClCompile Include="gdbconnection.cpp" />
-    <ClCompile Include="gdbserver.cpp" />
     <ClCompile Include="mainwindow.cpp" />
     <ClCompile Include="memorycardsettingswidget.cpp" />
     <ClCompile Include="memorycardeditorwindow.cpp" />
@@ -46,13 +43,16 @@
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="postprocessingsettingswidget.cpp" />
+    <ClCompile Include="qtthemes.cpp" />
     <ClCompile Include="qttranslations.cpp" />
     <ClCompile Include="qthost.cpp" />
     <ClCompile Include="qtkeycodes.cpp" />
     <ClCompile Include="qtprogresscallback.cpp" />
     <ClCompile Include="qtutils.cpp" />
+    <ClCompile Include="selectdiscdialog.cpp" />
     <ClCompile Include="settingswindow.cpp" />
     <ClCompile Include="setupwizarddialog.cpp" />
+    <ClCompile Include="vcruntimecheck.cpp" />
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="setupwizarddialog.h" />
@@ -72,7 +72,6 @@
     <QtMoc Include="qtprogresscallback.h" />
     <QtMoc Include="inputbindingdialog.h" />
     <QtMoc Include="gamelistmodel.h" />
-    <QtMoc Include="gamelistsearchdirectoriesmodel.h" />
     <QtMoc Include="autoupdaterdialog.h" />
     <QtMoc Include="debuggermodels.h" />
     <QtMoc Include="debuggerwindow.h" />
@@ -90,6 +89,7 @@
     <QtMoc Include="memoryscannerwindow.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="resource.h" />
+    <QtMoc Include="selectdiscdialog.h" />
     <ClInclude Include="settingwidgetbinder.h" />
     <QtMoc Include="consolesettingswidget.h" />
     <QtMoc Include="emulationsettingswidget.h" />
@@ -97,8 +97,6 @@
     <QtMoc Include="gamelistrefreshthread.h" />
     <QtMoc Include="gamelistwidget.h" />
     <QtMoc Include="gamesummarywidget.h" />
-    <QtMoc Include="gdbconnection.h" />
-    <QtMoc Include="gdbserver.h" />
     <QtMoc Include="postprocessingsettingswidget.h" />
     <QtMoc Include="mainwindow.h" />
     <QtMoc Include="qthost.h" />
@@ -137,7 +135,7 @@
     <QtUi Include="advancedsettingswidget.ui">
       <FileType>Document</FileType>
     </QtUi>
-    <QtUi Include="postprocessingsettingswidget.ui">
+    <QtUi Include="postprocessingchainconfigwidget.ui">
       <FileType>Document</FileType>
     </QtUi>
     <QtUi Include="memorycardeditorwindow.ui">
@@ -214,7 +212,7 @@
     </QtUi>
   </ItemGroup>
   <ItemGroup>
-    <QtResource Include="resources\resources.qrc">
+    <QtResource Include="resources\duckstation-qt.qrc">
       <FileType>Document</FileType>
     </QtResource>
   </ItemGroup>
@@ -240,12 +238,9 @@
     <ClCompile Include="$(IntDir)moc_foldersettingswidget.cpp" />
     <ClCompile Include="$(IntDir)moc_gamelistmodel.cpp" />
     <ClCompile Include="$(IntDir)moc_gamelistrefreshthread.cpp" />
-    <ClCompile Include="$(IntDir)moc_gamelistsearchdirectoriesmodel.cpp" />
     <ClCompile Include="$(IntDir)moc_gamelistsettingswidget.cpp" />
     <ClCompile Include="$(IntDir)moc_gamelistwidget.cpp" />
     <ClCompile Include="$(IntDir)moc_gamesummarywidget.cpp" />
-    <ClCompile Include="$(IntDir)moc_gdbconnection.cpp" />
-    <ClCompile Include="$(IntDir)moc_gdbserver.cpp" />
     <ClCompile Include="$(IntDir)moc_graphicssettingswidget.cpp" />
     <ClCompile Include="$(IntDir)moc_debuggermodels.cpp" />
     <ClCompile Include="$(IntDir)moc_debuggerwindow.cpp" />
@@ -260,14 +255,11 @@
     <ClCompile Include="$(IntDir)moc_memoryscannerwindow.cpp" />
     <ClCompile Include="$(IntDir)moc_memoryviewwidget.cpp" />
     <ClCompile Include="$(IntDir)moc_postprocessingsettingswidget.cpp" />
+    <ClCompile Include="$(IntDir)moc_selectdiscdialog.cpp" />
     <ClCompile Include="$(IntDir)moc_qthost.cpp" />
     <ClCompile Include="$(IntDir)moc_qtprogresscallback.cpp" />
     <ClCompile Include="$(IntDir)moc_settingswindow.cpp" />
     <ClCompile Include="$(IntDir)moc_setupwizarddialog.cpp" />
-    <ClCompile Include="$(IntDir)qrc_resources.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <Natvis Include="qt5.natvis" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="duckstation-qt.rc" />
@@ -336,6 +328,18 @@
       <FileType>Document</FileType>
     </QtUi>
     <QtUi Include="controllerbindingwidget_negconrumble.ui">
+      <FileType>Document</FileType>
+    </QtUi>
+    <QtUi Include="audioexpansionsettingsdialog.ui">
+      <FileType>Document</FileType>
+    </QtUi>
+    <QtUi Include="audiostretchsettingsdialog.ui">
+      <FileType>Document</FileType>
+    </QtUi>
+    <QtUi Include="controllerbindingwidget_justifier.ui">
+      <FileType>Document</FileType>
+    </QtUi>
+    <QtUi Include="selectdiscdialog.ui">
       <FileType>Document</FileType>
     </QtUi>
     <None Include="translations\duckstation-qt_es-es.ts" />

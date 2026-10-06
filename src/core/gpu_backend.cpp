@@ -73,6 +73,12 @@ GPUBackendSetDrawingAreaCommand* GPUBackend::NewSetDrawingAreaCommand()
     AllocateCommand(GPUBackendCommandType::SetDrawingArea, sizeof(GPUBackendSetDrawingAreaCommand)));
 }
 
+GPUBackendUpdateCLUTCommand* GPUBackend::NewUpdateCLUTCommand()
+{
+  return static_cast<GPUBackendUpdateCLUTCommand*>(
+    AllocateCommand(GPUBackendCommandType::UpdateCLUT, sizeof(GPUBackendUpdateCLUTCommand)));
+}
+
 GPUBackendDrawPolygonCommand* GPUBackend::NewDrawPolygonCommand(u32 num_vertices)
 {
   const u32 size = sizeof(GPUBackendDrawPolygonCommand) + (num_vertices * sizeof(GPUBackendDrawPolygonCommand::Vertex));
@@ -177,7 +183,7 @@ void GPUBackend::StartGPUThread()
   m_gpu_loop_done.store(false);
   m_use_gpu_thread = true;
   m_gpu_thread.Start([this]() { RunGPULoop(); });
-  Log_InfoPrint("GPU thread started.");
+  INFO_LOG("GPU thread started.");
 }
 
 void GPUBackend::StopGPUThread()
@@ -189,7 +195,7 @@ void GPUBackend::StopGPUThread()
   WakeGPUThread();
   m_gpu_thread.Join();
   m_use_gpu_thread = false;
-  Log_InfoPrint("GPU thread stopped.");
+  INFO_LOG("GPU thread stopped.");
 }
 
 void GPUBackend::Sync(bool allow_sleep)
@@ -309,6 +315,13 @@ void GPUBackend::HandleCommand(const GPUBackendCommand* cmd)
     }
     break;
 
+    case GPUBackendCommandType::UpdateCLUT:
+    {
+      const GPUBackendUpdateCLUTCommand* ccmd = static_cast<const GPUBackendUpdateCLUTCommand*>(cmd);
+      UpdateCLUT(ccmd->reg, ccmd->clut_is_8bit);
+    }
+    break;
+
     case GPUBackendCommandType::DrawPolygon:
     {
       DrawPolygon(static_cast<const GPUBackendDrawPolygonCommand*>(cmd));
@@ -328,6 +341,6 @@ void GPUBackend::HandleCommand(const GPUBackendCommand* cmd)
     break;
 
     default:
-      break;
+      UnreachableCode();
   }
 }

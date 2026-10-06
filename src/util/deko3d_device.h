@@ -13,7 +13,7 @@
 #include "deko3d_swap_chain.h"
 #include "deko3d_texture.h"
 
-#include "common/rectangle.h"
+#include "common/gsvector.h"
 
 #include <cstdio>
 #include <memory>
@@ -39,7 +39,7 @@ public:
 
   std::string GetDriverInfo() const override;
 
-  AdapterAndModeList GetAdapterAndModeList() override;
+  void ExecuteAndWaitForGPUIdle() override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                             GPUTexture::Type type, GPUTexture::Format format,
@@ -60,10 +60,12 @@ public:
   void ClearDepth(GPUTexture* t, float d) override;
   void InvalidateRenderTarget(GPUTexture* t) override;
 
-  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data) override;
-  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                    const char* entry_point, DynamicHeapArray<u8>* out_binary) override;
-  std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config) override;
+  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data,
+                                                    Error* error) override;
+  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, GPUShaderLanguage language,
+                                                    std::string_view source, const char* entry_point,
+                                                    DynamicHeapArray<u8>* out_binary, Error* error) override;
+  std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config, Error* error) override;
 
   void PushDebugGroup(const char* name) override;
   void PopDebugGroup() override;
@@ -82,15 +84,19 @@ public:
   void SetPipeline(GPUPipeline* pipeline) override;
   void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler) override;
   void SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer) override;
-  void SetViewport(s32 x, s32 y, s32 width, s32 height) override;
-  void SetScissor(s32 x, s32 y, s32 width, s32 height) override;
+  using GPUDevice::SetScissor;
+  using GPUDevice::SetViewport;
+  void SetViewport(const GSVector4i rc) override;
+  void SetScissor(const GSVector4i rc) override;
   void Draw(u32 vertex_count, u32 base_vertex) override;
   void DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex) override;
   void DrawIndexedWithBarrier(u32 index_count, u32 base_index, u32 base_vertex, DrawBarrier type) override;
 
-  bool BeginPresent(bool skip_present) override;
+  bool BeginPresent(bool skip_present, u32 clear_color) override;
   void EndPresent(bool explicit_submit) override;
   void SubmitPresent() override;
+
+  void SetVSyncMode(GPUVSyncMode mode, bool allow_present_throttle) override;
 
   bool SetGPUTimingEnabled(bool enabled) override;
   float GetAndResetAccumulatedGPUTime() override;
@@ -140,12 +146,12 @@ public:
   void UnbindTextureSampler(Deko3DSampler* sampler);
 
 protected:
-  bool CreateDevice(const std::string_view& adapter, bool threaded_presentation,
+  bool CreateDevice(std::string_view adapter, bool threaded_presentation,
                     std::optional<bool> exclusive_fullscreen_control, FeatureMask disabled_features,
                     Error* error) override;
   void DestroyDevice() override;
 
-  bool ReadPipelineCache(const std::string& filename) override;
+  bool ReadPipelineCache(std::optional<DynamicHeapArray<u8>> data) override;
   bool GetPipelineCacheData(DynamicHeapArray<u8>* data) override;
 
 private:
@@ -221,8 +227,8 @@ private:
   GPUPipeline::RasterizationState m_last_rasterization_state = {};
   GPUPipeline::DepthState m_last_depth_state = {};
 
-  Common::Rectangle<s32> m_last_viewport{0, 0, 1, 1};
-  Common::Rectangle<s32> m_last_scissor{0, 0, 1, 1};
+  GSVector4i m_last_viewport = GSVector4i::cxpr(0, 0, 1, 1);
+  GSVector4i m_last_scissor = GSVector4i::cxpr(0, 0, 1, 1);
 
   std::unique_ptr<Deko3DStreamBuffer> m_vertex_buffer, m_index_buffer, m_uniform_buffer;
 

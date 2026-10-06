@@ -5,3 +5,9 @@
 	path = tico/deps/uam
 	url = https://github.com/RSDuck/uam.git
 	branch = library-target
+[submodule "tico/deps/soundtouch"]
+	path = tico/deps/soundtouch
+	url = https://github.com/stenzek/soundtouch.git
+[submodule "tico/deps/SPIRV-Cross"]
+	path = tico/deps/SPIRV-Cross
+	url = https://github.com/KhronosGroup/SPIRV-Cross.git

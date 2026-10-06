@@ -6,7 +6,6 @@
     <ClCompile Include="cpu_disasm.cpp" />
     <ClCompile Include="bus.cpp" />
     <ClCompile Include="dma.cpp" />
-    <ClCompile Include="gdb_protocol.cpp" />
     <ClCompile Include="gpu.cpp" />
     <ClCompile Include="gpu_hw.cpp" />
     <ClCompile Include="interrupt_controller.cpp" />
@@ -39,7 +38,6 @@
     <ClCompile Include="guncon.cpp" />
     <ClCompile Include="playstation_mouse.cpp" />
     <ClCompile Include="negcon.cpp" />
-    <ClCompile Include="resources.cpp" />
     <ClCompile Include="host_interface_progress_callback.cpp" />
     <ClCompile Include="cpu_pgxp.cpp" />
     <ClCompile Include="cheats.cpp" />
@@ -66,6 +64,9 @@
     <ClCompile Include="cpu_newrec_compiler_aarch64.cpp" />
     <ClCompile Include="cpu_newrec_compiler_riscv64.cpp" />
     <ClCompile Include="cpu_newrec_compiler_aarch32.cpp" />
+    <ClCompile Include="justifier.cpp" />
+    <ClCompile Include="pine_server.cpp" />
+    <ClCompile Include="gdb_server.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="types.h" />
@@ -105,7 +106,6 @@
     <ClInclude Include="guncon.h" />
     <ClInclude Include="playstation_mouse.h" />
     <ClInclude Include="negcon.h" />
-    <ClInclude Include="resources.h" />
     <ClInclude Include="host_interface_progress_callback.h" />
     <ClInclude Include="gte_types.h" />
     <ClInclude Include="cpu_pgxp.h" />
@@ -118,7 +118,6 @@
     <ClInclude Include="gpu_sw_backend.h" />
     <ClInclude Include="texture_replacements.h" />
     <ClInclude Include="multitap.h" />
-    <ClInclude Include="gdb_protocol.h" />
     <ClInclude Include="host.h" />
     <ClInclude Include="achievements.h" />
     <ClInclude Include="game_database.h" />
@@ -138,5 +137,8 @@
     <ClInclude Include="cpu_newrec_compiler_riscv64.h" />
     <ClInclude Include="cpu_newrec_compiler_aarch32.h" />
     <ClInclude Include="achievements_private.h" />
+    <ClInclude Include="justifier.h" />
+    <ClInclude Include="pine_server.h" />
+    <ClInclude Include="gdb_server.h" />
   </ItemGroup>
 </Project>

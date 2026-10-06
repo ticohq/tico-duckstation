@@ -24,14 +24,16 @@ public:
   ~ReShadeFXShader();
 
   bool IsValid() const override;
+  bool WantsDepthBuffer() const override;
 
   bool LoadFromFile(std::string name, std::string filename, bool only_config, Error* error);
   bool LoadFromString(std::string name, std::string filename, std::string code, bool only_config, Error* error);
 
   bool ResizeOutput(GPUTexture::Format format, u32 width, u32 height) override;
   bool CompilePipeline(GPUTexture::Format format, u32 width, u32 height, ProgressCallback* progress) override;
-  bool Apply(GPUTexture* input, GPUTexture* final_target, s32 final_left, s32 final_top, s32 final_width,
-             s32 final_height, s32 orig_width, s32 orig_height, u32 target_width, u32 target_height) override;
+  bool Apply(GPUTexture* input_color, GPUTexture* input_depth, GPUTexture* final_target, GSVector4i final_rect,
+             s32 orig_width, s32 orig_height, s32 native_width, s32 native_height, u32 target_width,
+             u32 target_height) override;
 
 private:
   using TextureID = s32;
@@ -44,6 +46,7 @@ private:
   {
     None,
     Zero,
+    HasDepth,
     Timer,
     FrameTime,
     FrameCount,
@@ -60,6 +63,22 @@ private:
     InternalHeight,
     InternalWidthF,
     InternalHeightF,
+    NativeWidth,
+    NativeHeight,
+    NativeWidthF,
+    NativeHeightF,
+    UpscaleMultiplier,
+    ViewportX,
+    ViewportY,
+    ViewportWidth,
+    ViewportHeight,
+    ViewportOffset,
+    ViewportSize,
+    InternalPixelSize,
+    InternalNormPixelSize,
+    NativePixelSize,
+    NativeNormPixelSize,
+    BufferToViewportRatio,
 
     MaxCount
   };
@@ -81,7 +100,8 @@ private:
   bool CreatePasses(GPUTexture::Format backbuffer_format, reshadefx::module& mod, Error* error);
 
   const char* GetTextureNameForID(TextureID id) const;
-  GPUTexture* GetTextureByID(TextureID id, GPUTexture* input, GPUTexture* final_target) const;
+  GPUTexture* GetTextureByID(TextureID id, GPUTexture* input_color, GPUTexture* input_depth,
+                             GPUTexture* final_target) const;
 
   std::string m_filename;
 
@@ -118,6 +138,7 @@ private:
   std::vector<SourceOption> m_source_options;
   u32 m_uniforms_size = 0;
   bool m_valid = false;
+  bool m_wants_depth_buffer = false;
 
   Common::Timer m_frame_timer;
   u32 m_frame_count = 0;

@@ -12,9 +12,8 @@
 #include "common/log.h"
 #include "common/string_util.h"
 
+#include "IconsFontAwesome5.h"
 #include "IconsPromptFont.h"
-
-#include <cmath>
 
 Log_SetChannel(AnalogJoystick);
 
@@ -65,10 +64,10 @@ bool AnalogJoystick::DoState(StateWrapper& sw, bool apply_input_state)
 
   if (sw.IsReading() && (old_analog_mode != m_analog_mode))
   {
-    Host::AddFormattedOSDMessage(5.0f,
-                                 m_analog_mode ? TRANSLATE("AnalogJoystick", "Controller %u switched to analog mode.") :
-                                                 TRANSLATE("AnalogJoystick", "Controller %u switched to digital mode."),
-                                 m_index + 1u);
+    Host::AddIconOSDMessage(
+      fmt::format("analog_mode_toggle_{}", m_index), ICON_FA_GAMEPAD,
+      m_analog_mode ? fmt::format(TRANSLATE_FS("Controller", "Controller {} switched to analog mode."), m_index + 1u) :
+                      fmt::format(TRANSLATE_FS("Controller", "Controller {} switched to digital mode."), m_index + 1u));
   }
   return true;
 }
@@ -239,11 +238,11 @@ void AnalogJoystick::ToggleAnalogMode()
 {
   m_analog_mode = !m_analog_mode;
 
-  Log_InfoPrintf("Joystick %u switched to %s mode.", m_index + 1u, m_analog_mode ? "analog" : "digital");
-  Host::AddFormattedOSDMessage(5.0f,
-                               m_analog_mode ? TRANSLATE("AnalogJoystick", "Controller %u switched to analog mode.") :
-                                               TRANSLATE("AnalogJoystick", "Controller %u switched to digital mode."),
-                               m_index + 1u);
+  INFO_LOG("Joystick {} switched to {} mode.", m_index + 1u, m_analog_mode ? "analog" : "digital");
+  Host::AddIconOSDMessage(
+    fmt::format("analog_mode_toggle_{}", m_index), ICON_FA_GAMEPAD,
+    m_analog_mode ? fmt::format(TRANSLATE_FS("Controller", "Controller {} switched to analog mode."), m_index + 1u) :
+                    fmt::format(TRANSLATE_FS("Controller", "Controller {} switched to digital mode."), m_index + 1u));
 }
 
 bool AnalogJoystick::Transfer(const u8 data_in, u8* data_out)
@@ -414,9 +413,9 @@ const Controller::ControllerInfo AnalogJoystick::INFO = {ControllerType::AnalogJ
                                                          s_settings,
                                                          Controller::VibrationCapabilities::NoVibration};
 
-void AnalogJoystick::LoadSettings(SettingsInterface& si, const char* section)
+void AnalogJoystick::LoadSettings(SettingsInterface& si, const char* section, bool initial)
 {
-  Controller::LoadSettings(si, section);
+  Controller::LoadSettings(si, section, initial);
   m_analog_deadzone = std::clamp(si.GetFloatValue(section, "AnalogDeadzone", DEFAULT_STICK_DEADZONE), 0.0f, 1.0f);
   m_analog_sensitivity =
     std::clamp(si.GetFloatValue(section, "AnalogSensitivity", DEFAULT_STICK_SENSITIVITY), 0.01f, 3.0f);

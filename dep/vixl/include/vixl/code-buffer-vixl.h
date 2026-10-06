@@ -36,24 +36,14 @@ namespace vixl {
 
 class CodeBuffer {
  public:
-  static const size_t kDefaultCapacity = 4 * KBytes;
-
-  explicit CodeBuffer(size_t capacity = kDefaultCapacity);
+  CodeBuffer();
+  // rw_diff: where the buffer is written, relative to where it runs (the
+  // Switch maps JIT code twice, read/execute and read/write); 0 elsewhere.
   CodeBuffer(byte* buffer, ptrdiff_t rw_diff, size_t capacity);
-  ~CodeBuffer();
+  ~CodeBuffer() VIXL_NEGATIVE_TESTING_ALLOW_EXCEPTION;
 
   void Reset();
-  void Reset(byte* buffer, ptrdiff_t rw_diff, size_t capacity, bool managed = false);
-
-#ifdef VIXL_CODE_BUFFER_MMAP
-  void SetExecutable();
-  void SetWritable();
-#else
-  // These require page-aligned memory blocks, which we can only guarantee with
-  // mmap.
-  VIXL_NO_RETURN_IN_DEBUG_MODE void SetExecutable() { VIXL_UNIMPLEMENTED(); }
-  VIXL_NO_RETURN_IN_DEBUG_MODE void SetWritable() { VIXL_UNIMPLEMENTED(); }
-#endif
+  void Reset(byte* buffer, ptrdiff_t rw_diff, size_t capacity);
 
   ptrdiff_t GetOffsetFrom(ptrdiff_t offset) const {
     ptrdiff_t cursor_offset = cursor_ - buffer_;
@@ -132,8 +122,9 @@ class CodeBuffer {
   void Emit(T value) {
     VIXL_ASSERT(HasSpaceFor(sizeof(value)));
     dirty_ = true;
-    memcpy(cursor_ + rw_diff_, &value, sizeof(value));
-    cursor_ += sizeof(value);
+    byte* c = cursor_;
+    memcpy(c + rw_diff_, &value, sizeof(value));
+    cursor_ = c + sizeof(value);
   }
 
   void UpdateData(size_t offset, const void* data, size_t size);
@@ -153,10 +144,6 @@ class CodeBuffer {
     return GetCapacity();
   }
 
-  bool IsManaged() const { return managed_; }
-
-  void Grow(size_t new_capacity);
-
   bool IsDirty() const { return dirty_; }
 
   void SetClean() { dirty_ = false; }
@@ -165,24 +152,9 @@ class CodeBuffer {
     return GetRemainingBytes() >= amount;
   }
 
-  void EnsureSpaceFor(size_t amount, bool* has_grown) {
-    bool is_full = !HasSpaceFor(amount);
-    if (is_full) Grow(capacity_ * 2 + amount);
-    VIXL_ASSERT(has_grown != NULL);
-    *has_grown = is_full;
-  }
-  void EnsureSpaceFor(size_t amount) {
-    bool dummy;
-    EnsureSpaceFor(amount, &dummy);
-  }
-
  private:
   // Backing store of the buffer.
   byte* buffer_;
-  // If true the backing store is allocated and deallocated by the buffer. The
-  // backing store can then grow on demand. If false the backing store is
-  // provided by the user and cannot be resized internally.
-  bool managed_;
   // Pointer to the next location to be written.
   byte* cursor_;
   // True if there has been any write since the buffer was created or cleaned.

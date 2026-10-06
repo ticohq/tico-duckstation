@@ -49,6 +49,9 @@ public:
     std::span<const ControllerBindingInfo> bindings;
     std::span<const SettingInfo> settings;
     VibrationCapabilities vibration_caps;
+
+    /// Returns localized controller type name.
+    const char* GetDisplayName() const;
   };
 
   /// Default stick deadzone/sensitivity.
@@ -86,8 +89,11 @@ public:
   /// Returns analog input bytes packed as a u32. Values are specific to controller type.
   virtual std::optional<u32> GetAnalogInputBytes() const;
 
+  /// Returns the colour to use in the input overlay.
+  virtual u32 GetInputOverlayIconColor() const;
+
   /// Loads/refreshes any per-controller settings.
-  virtual void LoadSettings(SettingsInterface& si, const char* section);
+  virtual void LoadSettings(SettingsInterface& si, const char* section, bool initial);
 
   /// Creates a new controller of the specified type.
   static std::unique_ptr<Controller> Create(ControllerType type, u32 index);
@@ -99,14 +105,11 @@ public:
   static std::vector<std::pair<std::string, std::string>> GetControllerTypeNames();
 
   /// Gets the integer code for an axis in the specified controller type.
-  static std::optional<u32> GetBindIndex(ControllerType type, const std::string_view& bind_name);
-
-  /// Returns the vibration configuration for the specified controller type.
-  static VibrationCapabilities GetControllerVibrationCapabilities(const std::string_view& type);
+  static std::optional<u32> GetBindIndex(ControllerType type, std::string_view bind_name);
 
   /// Returns general information for the specified controller type.
   static const ControllerInfo* GetControllerInfo(ControllerType type);
-  static const ControllerInfo* GetControllerInfo(const std::string_view& name);
+  static const ControllerInfo* GetControllerInfo(std::string_view name);
 
   /// Converts a global pad index to a multitap port and slot.
   static std::tuple<u32, u32> ConvertPadToPortAndSlot(u32 index);
@@ -131,5 +134,8 @@ public:
   static bool InCircularDeadzone(float deadzone, float pos_x, float pos_y);
 
 protected:
+  /// Returns true if automatic analog mode can be used.
+  static bool CanStartInAnalogMode(ControllerType ctype);
+
   u32 m_index;
 };

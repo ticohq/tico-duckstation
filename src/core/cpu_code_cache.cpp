@@ -12,6 +12,9 @@
 #include "system.h"
 #include "timing_event.h"
 
+#include "util/page_fault_handler.h"
+
+#include "common/align.h"
 #include "common/assert.h"
 #include "common/error.h"
 #include "common/intrin.h"
@@ -19,6 +22,12 @@
 #include "common/memmap.h"
 
 Log_SetChannel(CPU::CodeCache);
+
+// Enable dumping of recompiled block code size statistics.
+// #define DUMP_CODE_SIZE_STATS 1
+
+// Enable profiling of JIT blocks.
+// #define ENABLE_RECOMPILER_PROFILING 1
 
 #ifdef ENABLE_RECOMPILER
 #include "cpu_recompiler_code_generator.h"
@@ -72,8 +81,6 @@ static void SetRegAccess(InstructionInfo* inst, Reg reg, bool write);
 static void AddBlockToPageList(Block* block);
 static void RemoveBlockFromPageList(Block* block);
 
-static Common::PageFaultHandler::HandlerResult ExceptionHandler(void* exception_pc, void* fault_address, bool is_write);
-
 static Block* CreateCachedInterpreterBlock(u32 pc);
 [[noreturn]] static void ExecuteCachedInterpreter();
 template<PGXPMode pgxp_mode>
@@ -91,16 +98,14 @@ static std::vector<Block*> s_blocks;
 // for compiling - reuse to avoid allocations
 static BlockInstructionList s_block_instructions;
 
-#ifdef ENABLE_RECOMPILER_SUPPORT
-
 static void BacklinkBlocks(u32 pc, const void* dst);
 static void UnlinkBlockExits(Block* block);
+static void ResetCodeBuffer();
 
 static void ClearASMFunctions();
 static void CompileASMFunctions();
 static bool CompileBlock(Block* block);
-static Common::PageFaultHandler::HandlerResult HandleFastmemException(void* exception_pc, void* fault_address,
-                                                                      bool is_write);
+static PageFaultHandler::HandlerResult HandleFastmemException(void* exception_pc, void* fault_address, bool is_write);
 static void BackpatchLoadStore(void* host_pc, const LoadstoreBackpatchInfo& info);
 static void RemoveBackpatchInfoForRange(const void* host_code, u32 size);
 
@@ -122,42 +127,49 @@ PerfScope MIPSPerfScope("MIPS");
 
 #endif
 
-// Currently remapping the code buffer doesn't work in macOS. TODO: Make dynamic instead...
-#ifndef __APPLE__
-#define USE_STATIC_CODE_BUFFER 1
-#endif
-
 #if defined(CPU_ARCH_ARM32)
 // Use a smaller code buffer size on AArch32 to have a better chance of being in range.
 static constexpr u32 RECOMPILER_CODE_CACHE_SIZE = 16 * 1024 * 1024;
-static constexpr u32 RECOMPILER_FAR_CODE_CACHE_SIZE = 8 * 1024 * 1024;
+static constexpr u32 RECOMPILER_FAR_CODE_CACHE_SIZE = 4 * 1024 * 1024;
 #else
-static constexpr u32 RECOMPILER_CODE_CACHE_SIZE = 32 * 1024 * 1024;
+static constexpr u32 RECOMPILER_CODE_CACHE_SIZE = 48 * 1024 * 1024;
 static constexpr u32 RECOMPILER_FAR_CODE_CACHE_SIZE = 16 * 1024 * 1024;
 #endif
 
-#ifdef USE_STATIC_CODE_BUFFER
-alignas(HOST_PAGE_SIZE) static u8 s_code_storage[RECOMPILER_CODE_CACHE_SIZE + RECOMPILER_FAR_CODE_CACHE_SIZE];
+// On Linux ARM32/ARM64, we use a dedicated section in the ELF for storing code.
+// This is because without ASLR, or on certain ASLR offsets, the sbrk() heap ends up immediately following the text/data
+// sections, which means there isn't a large enough gap to fit within range on ARM32.
+#if defined(__linux__) && (defined(CPU_ARCH_ARM32) || defined(CPU_ARCH_ARM64))
+#define USE_CODE_BUFFER_SECTION 1
+#ifdef __clang__
+#pragma clang section bss = ".jitstorage"
+__attribute__((aligned(HOST_PAGE_SIZE))) static u8 s_code_buffer_ptr[RECOMPILER_CODE_CACHE_SIZE];
+#pragma clang section bss = ""
+#endif
+#else
+static u8* s_code_buffer_ptr = nullptr;
 #endif
 
-static JitCodeBuffer s_code_buffer;
+static u8* s_code_ptr = nullptr;
+static u8* s_free_code_ptr = nullptr;
+static u32 s_code_size = 0;
+static u32 s_code_used = 0;
+
+static u8* s_far_code_ptr = nullptr;
+static u8* s_free_far_code_ptr = nullptr;
+static u32 s_far_code_size = 0;
+static u32 s_far_code_used = 0;
 
 #ifdef _DEBUG
 static u32 s_total_instructions_compiled = 0;
 static u32 s_total_host_instructions_emitted = 0;
 #endif
-
-#endif // ENABLE_RECOMPILER_SUPPORT
 } // namespace CPU::CodeCache
 
 bool CPU::CodeCache::IsUsingAnyRecompiler()
 {
-#ifdef ENABLE_RECOMPILER_SUPPORT
   return (g_settings.cpu_execution_mode == CPUExecutionMode::Recompiler ||
           g_settings.cpu_execution_mode == CPUExecutionMode::NewRec);
-#else
-  return false;
-#endif
 }
 
 bool CPU::CodeCache::IsUsingFastmem()
@@ -165,56 +177,53 @@ bool CPU::CodeCache::IsUsingFastmem()
   return IsUsingAnyRecompiler() && g_settings.cpu_fastmem_mode != CPUFastmemMode::Disabled;
 }
 
-bool CPU::CodeCache::ProcessStartup()
+bool CPU::CodeCache::ProcessStartup(Error* error)
 {
+#ifdef USE_CODE_BUFFER_SECTION
+  const u8* module_base = static_cast<const u8*>(MemMap::GetBaseAddress());
+  INFO_LOG("Using JIT buffer section of size {} at {} (0x{:X} bytes / {} MB away)", sizeof(s_code_buffer_ptr),
+           static_cast<void*>(s_code_buffer_ptr), std::abs(static_cast<ptrdiff_t>(s_code_buffer_ptr - module_base)),
+           (std::abs(static_cast<ptrdiff_t>(s_code_buffer_ptr - module_base)) + (1024 * 1024 - 1)) / (1024 * 1024));
+  const bool code_buffer_allocated =
+    MemMap::MemProtect(s_code_buffer_ptr, RECOMPILER_CODE_CACHE_SIZE, PageProtect::ReadWriteExecute);
+#else
+  s_code_buffer_ptr = static_cast<u8*>(MemMap::AllocateJITMemory(RECOMPILER_CODE_CACHE_SIZE));
+  const bool code_buffer_allocated = (s_code_buffer_ptr != nullptr);
+#endif
+  if (!code_buffer_allocated) [[unlikely]]
+  {
+    Error::SetStringView(error, "Failed to allocate code storage. The log may contain more information, you will need "
+                                "to run DuckStation with -earlyconsole in the command line.");
+    return false;
+  }
+
   AllocateLUTs();
 
-#ifdef ENABLE_RECOMPILER_SUPPORT
-#ifdef USE_STATIC_CODE_BUFFER
-  const bool has_buffer =
-    s_code_buffer.Initialize(s_code_storage, sizeof(s_code_storage), RECOMPILER_FAR_CODE_CACHE_SIZE, HOST_PAGE_SIZE);
-#else
-  const bool has_buffer = false;
-#endif
-  if (!has_buffer && !s_code_buffer.Allocate(RECOMPILER_CODE_CACHE_SIZE, RECOMPILER_FAR_CODE_CACHE_SIZE))
-  {
-    Host::ReportFatalError("Error", "Failed to initialize code space");
+  if (!PageFaultHandler::Install(error))
     return false;
-  }
-#endif
-
-  if (!Common::PageFaultHandler::InstallHandler(ExceptionHandler))
-  {
-    Host::ReportFatalError("Error", "Failed to install page fault handler");
-    return false;
-  }
 
   return true;
 }
 
 void CPU::CodeCache::ProcessShutdown()
 {
-  Common::PageFaultHandler::RemoveHandler(ExceptionHandler);
-
-#ifdef ENABLE_RECOMPILER_SUPPORT
-  s_code_buffer.Destroy();
-#endif
-
   DeallocateLUTs();
+
+#ifndef USE_CODE_BUFFER_SECTION
+  MemMap::ReleaseJITMemory(s_code_buffer_ptr, RECOMPILER_CODE_CACHE_SIZE);
+#endif
 }
 
 void CPU::CodeCache::Initialize()
 {
   Assert(s_blocks.empty());
 
-#ifdef ENABLE_RECOMPILER_SUPPORT
   if (IsUsingAnyRecompiler())
   {
-    s_code_buffer.Reset();
+    ResetCodeBuffer();
     CompileASMFunctions();
     ResetCodeLUT();
   }
-#endif
 
   Bus::UpdateFastmemViews(IsUsingAnyRecompiler() ? g_settings.cpu_fastmem_mode : CPUFastmemMode::Disabled);
   CPU::UpdateMemoryPointers();
@@ -223,10 +232,7 @@ void CPU::CodeCache::Initialize()
 void CPU::CodeCache::Shutdown()
 {
   ClearBlocks();
-
-#ifdef ENABLE_RECOMPILER_SUPPORT
   ClearASMFunctions();
-#endif
 
   Bus::UpdateFastmemViews(CPUFastmemMode::Disabled);
   CPU::UpdateMemoryPointers();
@@ -236,20 +242,17 @@ void CPU::CodeCache::Reset()
 {
   ClearBlocks();
 
-#ifdef ENABLE_RECOMPILER_SUPPORT
   if (IsUsingAnyRecompiler())
   {
     ClearASMFunctions();
-    s_code_buffer.Reset();
+    ResetCodeBuffer();
     CompileASMFunctions();
     ResetCodeLUT();
   }
-#endif
 }
 
 void CPU::CodeCache::Execute()
 {
-#ifdef ENABLE_RECOMPILER_SUPPORT
   if (IsUsingAnyRecompiler())
   {
     g_enter_recompiler();
@@ -259,9 +262,6 @@ void CPU::CodeCache::Execute()
   {
     ExecuteCachedInterpreter();
   }
-#else
-  ExecuteCachedInterpreter();
-#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -457,15 +457,15 @@ CPU::CodeCache::Block* CPU::CodeCache::CreateBlock(u32 pc, const BlockInstructio
       s_blocks.erase(it);
 
       block->~Block();
-      std::free(block);
+      Common::AlignedFree(block);
       block = nullptr;
     }
   }
 
   if (!block)
   {
-    block =
-      static_cast<Block*>(std::malloc(sizeof(Block) + (sizeof(Instruction) * size) + (sizeof(InstructionInfo) * size)));
+    block = static_cast<Block*>(Common::AlignedMalloc(
+      sizeof(Block) + (sizeof(Instruction) * size) + (sizeof(InstructionInfo) * size), alignof(Block)));
     Assert(block);
     new (block) Block();
     s_blocks.push_back(block);
@@ -509,8 +509,7 @@ CPU::CodeCache::Block* CPU::CodeCache::CreateBlock(u32 pc, const BlockInstructio
   }
   else if (block->compile_count >= RECOMPILE_COUNT_FOR_INTERPRETER_FALLBACK)
   {
-    Log_DevFmt("{} recompiles in {} frames to block 0x{:08X}, not caching.", block->compile_count, frame_delta,
-               block->pc);
+    DEV_LOG("{} recompiles in {} frames to block 0x{:08X}, not caching.", block->compile_count, frame_delta, block->pc);
     block->size = 0;
   }
 
@@ -557,7 +556,7 @@ bool CPU::CodeCache::RevalidateBlock(Block* block)
   if (!IsBlockCodeCurrent(block))
   {
     // changed, needs recompiling
-    Log_DebugPrintf("Block at PC %08X has changed and needs recompiling", block->pc);
+    DEBUG_LOG("Block at PC {:08X} has changed and needs recompiling", block->pc);
     return false;
   }
 
@@ -640,8 +639,8 @@ void CPU::CodeCache::InvalidateBlocksWithPageIndex(u32 index)
   }
   else if (ppi.invalidate_count > INVALIDATE_COUNT_FOR_MANUAL_PROTECTION)
   {
-    Log_DevFmt("{} invalidations in {} frames to page {} [0x{:08X} -> 0x{:08X}], switching to manual protection",
-               ppi.invalidate_count, frame_delta, index, (index * HOST_PAGE_SIZE), ((index + 1) * HOST_PAGE_SIZE));
+    DEV_LOG("{} invalidations in {} frames to page {} [0x{:08X} -> 0x{:08X}], switching to manual protection",
+            ppi.invalidate_count, frame_delta, index, (index * HOST_PAGE_SIZE), ((index + 1) * HOST_PAGE_SIZE));
     ppi.mode = PageProtectionMode::ManualCheck;
     new_block_state = BlockState::NeedsRecompile;
   }
@@ -685,13 +684,11 @@ CPU::CodeCache::PageProtectionMode CPU::CodeCache::GetProtectionModeForBlock(con
 
 void CPU::CodeCache::InvalidateBlock(Block* block, BlockState new_state)
 {
-#ifdef ENABLE_RECOMPILER_SUPPORT
   if (block->state == BlockState::Valid)
   {
     SetCodeLUT(block->pc, g_compile_or_revalidate_block);
     BacklinkBlocks(block->pc, g_compile_or_revalidate_block);
   }
-#endif
 
   block->state = new_state;
 }
@@ -731,24 +728,22 @@ void CPU::CodeCache::ClearBlocks()
     ppi = {};
   }
 
-#ifdef ENABLE_RECOMPILER_SUPPORT
   s_fastmem_backpatch_info.clear();
   s_fastmem_faulting_pcs.clear();
   s_block_links.clear();
-#endif
 
   for (Block* block : s_blocks)
   {
     block->~Block();
-    std::free(block);
+    Common::AlignedFree(block);
   }
   s_blocks.clear();
 
   std::memset(s_lut_block_pointers.get(), 0, sizeof(Block*) * GetLUTSlotCount(false));
 }
 
-Common::PageFaultHandler::HandlerResult CPU::CodeCache::ExceptionHandler(void* exception_pc, void* fault_address,
-                                                                         bool is_write)
+PageFaultHandler::HandlerResult PageFaultHandler::HandlePageFault(void* exception_pc, void* fault_address,
+                                                                  bool is_write)
 {
   if (static_cast<const u8*>(fault_address) >= Bus::g_ram &&
       static_cast<const u8*>(fault_address) < (Bus::g_ram + Bus::RAM_8MB_SIZE))
@@ -757,17 +752,12 @@ Common::PageFaultHandler::HandlerResult CPU::CodeCache::ExceptionHandler(void* e
     DebugAssert(is_write);
     const u32 guest_address = static_cast<u32>(static_cast<const u8*>(fault_address) - Bus::g_ram);
     const u32 page_index = Bus::GetRAMCodePageIndex(guest_address);
-    Log_DevFmt("Page fault on protected RAM @ 0x{:08X} (page #{}), invalidating code cache.", guest_address,
-               page_index);
-    InvalidateBlocksWithPageIndex(page_index);
-    return Common::PageFaultHandler::HandlerResult::ContinueExecution;
+    DEV_LOG("Page fault on protected RAM @ 0x{:08X} (page #{}), invalidating code cache.", guest_address, page_index);
+    CPU::CodeCache::InvalidateBlocksWithPageIndex(page_index);
+    return PageFaultHandler::HandlerResult::ContinueExecution;
   }
 
-#ifdef ENABLE_RECOMPILER_SUPPORT
-  return HandleFastmemException(exception_pc, fault_address, is_write);
-#else
-  return Common::PageFaultHandler::HandlerResult::ExecuteNextHandler;
-#endif
+  return CPU::CodeCache::HandleFastmemException(exception_pc, fault_address, is_write);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -836,8 +826,20 @@ template<PGXPMode pgxp_mode>
       }
 
       DebugAssert(!(HasPendingInterrupt()));
-      if (g_settings.cpu_recompiler_icache)
-        CheckAndUpdateICacheTags(block->icache_line_count, block->uncached_fetch_ticks);
+      if (block->HasFlag(BlockFlags::IsUsingICache))
+      {
+        CheckAndUpdateICacheTags(block->icache_line_count);
+      }
+      else if (block->HasFlag(BlockFlags::NeedsDynamicFetchTicks))
+      {
+        AddPendingTicks(
+          static_cast<TickCount>(block->size * static_cast<u32>(*Bus::GetMemoryAccessTimePtr(
+                                                 block->pc & PHYSICAL_MEMORY_ADDRESS_MASK, MemoryAccessSize::Word))));
+      }
+      else
+      {
+        AddPendingTicks(block->uncached_fetch_ticks);
+      }
 
       InterpretCachedBlock<pgxp_mode>(block);
 
@@ -885,9 +887,10 @@ void CPU::CodeCache::LogCurrentState()
 
   const auto& regs = g_state.regs;
   WriteToExecutionLog(
-    "tick=%u dc=%u/%u pc=%08X at=%08X v0=%08X v1=%08X a0=%08X a1=%08X a2=%08X a3=%08X t0=%08X t1=%08X t2=%08X t3=%08X "
-    "t4=%08X t5=%08X t6=%08X t7=%08X s0=%08X s1=%08X s2=%08X s3=%08X s4=%08X s5=%08X s6=%08X s7=%08X t8=%08X t9=%08X "
-    "k0=%08X k1=%08X gp=%08X sp=%08X fp=%08X ra=%08X hi=%08X lo=%08X ldr=%s ldv=%08X cause=%08X sr=%08X gte=%08X\n",
+    "tick=%" PRIu64
+    " dc=%u/%u pc=%08X at=%08X v0=%08X v1=%08X a0=%08X a1=%08X a2=%08X a3=%08X t0=%08X t1=%08X t2=%08X t3=%08X t4=%08X "
+    "t5=%08X t6=%08X t7=%08X s0=%08X s1=%08X s2=%08X s3=%08X s4=%08X s5=%08X s6=%08X s7=%08X t8=%08X t9=%08X k0=%08X "
+    "k1=%08X gp=%08X sp=%08X fp=%08X ra=%08X hi=%08X lo=%08X ldr=%s ldv=%08X cause=%08X sr=%08X gte=%08X\n",
     System::GetGlobalTickCounter(), g_state.pending_ticks, g_state.downcount, g_state.pc, regs.at, regs.v0, regs.v1,
     regs.a0, regs.a1, regs.a2, regs.a3, regs.t0, regs.t1, regs.t2, regs.t3, regs.t4, regs.t5, regs.t6, regs.t7, regs.s0,
     regs.s1, regs.s2, regs.s3, regs.s4, regs.s5, regs.s6, regs.s7, regs.t8, regs.t9, regs.k0, regs.k1, regs.gp, regs.sp,
@@ -906,6 +909,9 @@ bool CPU::CodeCache::ReadBlockInstructions(u32 start_pc, BlockInstructionList* i
   // TODO: Jump to other block if it exists at this pc?
 
   const PageProtectionMode protection = GetProtectionModeForPC(start_pc);
+  const bool use_icache = CPU::IsCachedAddress(start_pc);
+  const bool dynamic_fetch_ticks = (!use_icache && Bus::GetMemoryAccessTimePtr(start_pc & PHYSICAL_MEMORY_ADDRESS_MASK,
+                                                                               MemoryAccessSize::Word) != nullptr);
   u32 pc = start_pc;
   bool is_branch_delay_slot = false;
   bool is_load_delay_slot = false;
@@ -918,7 +924,8 @@ bool CPU::CodeCache::ReadBlockInstructions(u32 start_pc, BlockInstructionList* i
   instructions->clear();
   metadata->icache_line_count = 0;
   metadata->uncached_fetch_ticks = 0;
-  metadata->flags = BlockFlags::None;
+  metadata->flags = use_icache ? BlockFlags::IsUsingICache :
+                                 (dynamic_fetch_ticks ? BlockFlags::NeedsDynamicFetchTicks : BlockFlags::None);
 
   u32 last_cache_line = ICACHE_LINES;
   u32 last_page = (protection == PageProtectionMode::WriteProtected) ? Bus::GetRAMCodePageIndex(start_pc) : 0;
@@ -933,7 +940,7 @@ bool CPU::CodeCache::ReadBlockInstructions(u32 start_pc, BlockInstructionList* i
         // if we're just crossing the page and not in a branch delay slot, jump directly to the next block
         if (!is_branch_delay_slot)
         {
-          Log_DevFmt("Breaking block 0x{:08X} at 0x{:08X} due to page crossing", start_pc, pc);
+          DEV_LOG("Breaking block 0x{:08X} at 0x{:08X} due to page crossing", start_pc, pc);
           metadata->flags |= BlockFlags::SpansPages;
           break;
         }
@@ -941,16 +948,20 @@ bool CPU::CodeCache::ReadBlockInstructions(u32 start_pc, BlockInstructionList* i
         {
           // otherwise, we need to use manual protection in case the delay slot changes.
           // may as well keep going then, since we're doing manual check anyways.
-          Log_DevFmt("Block 0x{:08X} has branch delay slot crossing page at 0x{:08X}, forcing manual protection",
-                     start_pc, pc);
+          DEV_LOG("Block 0x{:08X} has branch delay slot crossing page at 0x{:08X}, forcing manual protection", start_pc,
+                  pc);
           metadata->flags |= BlockFlags::BranchDelaySpansPages;
         }
       }
     }
 
     Instruction instruction;
-    if (!SafeReadInstruction(pc, &instruction.bits) || !IsInvalidInstruction(instruction))
+    if (!SafeReadInstruction(pc, &instruction.bits) || !IsValidInstruction(instruction))
+    {
+      // Away to the int you go!
+      ERROR_LOG("Instruction read failed at PC=0x{:08X}, truncating block.", pc);
       break;
+    }
 
     InstructionInfo info;
     std::memset(&info, 0, sizeof(info));
@@ -964,20 +975,24 @@ bool CPU::CodeCache::ReadBlockInstructions(u32 start_pc, BlockInstructionList* i
     info.is_load_instruction = IsMemoryLoadInstruction(instruction);
     info.is_store_instruction = IsMemoryStoreInstruction(instruction);
     info.has_load_delay = InstructionHasLoadDelay(instruction);
-    info.can_trap = CanInstructionTrap(instruction, false /*InUserMode()*/);
-    info.is_direct_branch_instruction = IsDirectBranchInstruction(instruction);
 
-    if (g_settings.cpu_recompiler_icache)
+    if (use_icache)
     {
-      const u32 icache_line = GetICacheLine(pc);
-      if (icache_line != last_cache_line)
+      if (g_settings.cpu_recompiler_icache)
       {
-        metadata->icache_line_count++;
-        last_cache_line = icache_line;
+        const u32 icache_line = GetICacheLine(pc);
+        if (icache_line != last_cache_line)
+        {
+          metadata->icache_line_count++;
+          last_cache_line = icache_line;
+        }
       }
     }
+    else if (!dynamic_fetch_ticks)
+    {
+      metadata->uncached_fetch_ticks += GetInstructionReadTicks(pc);
+    }
 
-    metadata->uncached_fetch_ticks += GetInstructionReadTicks(pc);
     if (info.is_load_instruction || info.is_store_instruction)
       metadata->flags |= BlockFlags::ContainsLoadStoreInstructions;
 
@@ -988,18 +1003,18 @@ bool CPU::CodeCache::ReadBlockInstructions(u32 start_pc, BlockInstructionList* i
       const BlockInstructionInfoPair& prev = instructions->back();
       if (!prev.second.is_unconditional_branch_instruction || !prev.second.is_direct_branch_instruction)
       {
-        Log_WarningPrintf("Conditional or indirect branch delay slot at %08X, skipping block", info.pc);
+        WARNING_LOG("Conditional or indirect branch delay slot at {:08X}, skipping block", info.pc);
         return false;
       }
       if (!IsDirectBranchInstruction(instruction))
       {
-        Log_WarningPrintf("Indirect branch in delay slot at %08X, skipping block", info.pc);
+        WARNING_LOG("Indirect branch in delay slot at {:08X}, skipping block", info.pc);
         return false;
       }
 
       // we _could_ fetch the delay slot from the first branch's target, but it's probably in a different
       // page, and that's an invalidation nightmare. so just fallback to the int, this is very rare anyway.
-      Log_WarningPrintf("Direct branch in delay slot at %08X, skipping block", info.pc);
+      WARNING_LOG("Direct branch in delay slot at {:08X}, skipping block", info.pc);
       return false;
     }
 
@@ -1024,7 +1039,7 @@ bool CPU::CodeCache::ReadBlockInstructions(u32 start_pc, BlockInstructionList* i
 
   if (instructions->empty())
   {
-    Log_WarningFmt("Empty block compiled at 0x{:08X}", start_pc);
+    WARNING_LOG("Empty block compiled at 0x{:08X}", start_pc);
     return false;
   }
 
@@ -1032,12 +1047,14 @@ bool CPU::CodeCache::ReadBlockInstructions(u32 start_pc, BlockInstructionList* i
 
 #ifdef _DEBUG
   SmallString disasm;
-  Log_DebugPrintf("Block at 0x%08X", start_pc);
+  DEBUG_LOG("Block at 0x{:08X}", start_pc);
+  DEBUG_LOG(" Uncached fetch ticks: {}", metadata->uncached_fetch_ticks);
+  DEBUG_LOG(" ICache line count: {}", metadata->icache_line_count);
   for (const auto& cbi : *instructions)
   {
     CPU::DisassembleInstruction(&disasm, cbi.second.pc, cbi.first.bits);
-    Log_DebugPrintf("[%s %s 0x%08X] %08X %s", cbi.second.is_branch_delay_slot ? "BD" : "  ",
-                    cbi.second.is_load_delay_slot ? "LD" : "  ", cbi.second.pc, cbi.first.bits, disasm.c_str());
+    DEBUG_LOG("[{} {} 0x{:08X}] {:08X} {}", cbi.second.is_branch_delay_slot ? "BD" : "  ",
+              cbi.second.is_load_delay_slot ? "LD" : "  ", cbi.second.pc, cbi.first.bits, disasm);
   }
 #endif
 
@@ -1198,7 +1215,7 @@ void CPU::CodeCache::FillBlockRegInfo(Block* block)
             break;
 
           default:
-            Log_ErrorPrintf("Unknown funct %u", static_cast<u32>(iinst->r.funct.GetValue()));
+            ERROR_LOG("Unknown funct {}", static_cast<u32>(iinst->r.funct.GetValue()));
             break;
         }
       }
@@ -1297,7 +1314,7 @@ void CPU::CodeCache::FillBlockRegInfo(Block* block)
           break;
 
         default:
-          Log_ErrorPrintf("Unknown op %u", static_cast<u32>(iinst->r.funct.GetValue()));
+          ERROR_LOG("Unknown op {}", static_cast<u32>(iinst->op.GetValue()));
           break;
       }
     } // end switch
@@ -1310,8 +1327,6 @@ void CPU::CodeCache::FillBlockRegInfo(Block* block)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MARK: - Recompiler Glue
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#ifdef ENABLE_RECOMPILER_SUPPORT
 
 void CPU::CodeCache::CompileOrRevalidateBlock(u32 start_pc)
 {
@@ -1344,7 +1359,7 @@ void CPU::CodeCache::CompileOrRevalidateBlock(u32 start_pc)
   BlockMetadata metadata = {};
   if (!ReadBlockInstructions(start_pc, &s_block_instructions, &metadata))
   {
-    Log_ErrorFmt("Failed to read block at 0x{:08X}, falling back to uncached interpreter", start_pc);
+    ERROR_LOG("Failed to read block at 0x{:08X}, falling back to uncached interpreter", start_pc);
     SetCodeLUT(start_pc, g_interpret_block);
     BacklinkBlocks(start_pc, g_interpret_block);
     MemMap::EndCodeWrite();
@@ -1354,17 +1369,17 @@ void CPU::CodeCache::CompileOrRevalidateBlock(u32 start_pc)
   // Ensure we're not going to run out of space while compiling this block.
   // We could definitely do better here... TODO: far code is no longer needed for newrec
   const u32 block_size = static_cast<u32>(s_block_instructions.size());
-  if (s_code_buffer.GetFreeCodeSpace() < (block_size * Recompiler::MAX_NEAR_HOST_BYTES_PER_INSTRUCTION) ||
-      s_code_buffer.GetFreeFarCodeSpace() < (block_size * Recompiler::MAX_FAR_HOST_BYTES_PER_INSTRUCTION))
+  if (GetFreeCodeSpace() < (block_size * Recompiler::MAX_NEAR_HOST_BYTES_PER_INSTRUCTION) ||
+      GetFreeFarCodeSpace() < (block_size * Recompiler::MAX_FAR_HOST_BYTES_PER_INSTRUCTION))
   {
-    Log_ErrorFmt("Out of code space while compiling {:08X}. Resetting code cache.", start_pc);
+    ERROR_LOG("Out of code space while compiling {:08X}. Resetting code cache.", start_pc);
     CodeCache::Reset();
   }
 
   if ((block = CreateBlock(start_pc, s_block_instructions, metadata)) == nullptr || block->size == 0 ||
       !CompileBlock(block))
   {
-    Log_ErrorFmt("Failed to compile block at 0x{:08X}, falling back to uncached interpreter", start_pc);
+    ERROR_LOG("Failed to compile block at 0x{:08X}, falling back to uncached interpreter", start_pc);
     SetCodeLUT(start_pc, g_interpret_block);
     BacklinkBlocks(start_pc, g_interpret_block);
     MemMap::EndCodeWrite();
@@ -1380,7 +1395,7 @@ void CPU::CodeCache::DiscardAndRecompileBlock(u32 start_pc)
 {
   MemMap::BeginCodeWrite();
 
-  Log_DevPrintf("Discard block %08X with manual protection", start_pc);
+  DEV_LOG("Discard block {:08X} with manual protection", start_pc);
   Block* block = LookupBlock(start_pc);
   DebugAssert(block && block->state == BlockState::Valid);
   InvalidateBlock(block, BlockState::NeedsRecompile);
@@ -1416,8 +1431,8 @@ const void* CPU::CodeCache::CreateBlockLink(Block* block, void* code, u32 newpc)
     block->exit_links[block->num_exit_links++] = iter;
   }
 
-  Log_DebugPrintf("Linking %p with dst pc %08X to %p%s", code, newpc, dst,
-                  (dst == g_compile_or_revalidate_block) ? "[compiler]" : "");
+  DEBUG_LOG("Linking {} with dst pc {:08X} to {}{}", code, newpc, dst,
+            (dst == g_compile_or_revalidate_block) ? "[compiler]" : "");
   return dst;
 }
 
@@ -1429,9 +1444,9 @@ void CPU::CodeCache::BacklinkBlocks(u32 pc, const void* dst)
   const auto link_range = s_block_links.equal_range(pc);
   for (auto it = link_range.first; it != link_range.second; ++it)
   {
-    Log_DebugPrintf("Backlinking %p with dst pc %08X to %p%s", it->second, pc, dst,
-                    (dst == g_compile_or_revalidate_block) ? "[compiler]" : "");
-    EmitJump(it->second, dst, s_code_buffer.GetRWDiff(), true);
+    DEBUG_LOG("Backlinking {} with dst pc {:08X} to {}{}", it->second, pc, dst,
+              (dst == g_compile_or_revalidate_block) ? "[compiler]" : "");
+    EmitJump(it->second, dst, true);
   }
 }
 
@@ -1443,9 +1458,91 @@ void CPU::CodeCache::UnlinkBlockExits(Block* block)
   block->num_exit_links = 0;
 }
 
-JitCodeBuffer& CPU::CodeCache::GetCodeBuffer()
+void CPU::CodeCache::ResetCodeBuffer()
 {
-  return s_code_buffer;
+  s_code_ptr = static_cast<u8*>(s_code_buffer_ptr);
+  s_free_code_ptr = s_code_ptr;
+  s_code_size = RECOMPILER_CODE_CACHE_SIZE - RECOMPILER_FAR_CODE_CACHE_SIZE;
+  s_code_used = 0;
+
+  // Use half the far code size when using newrec and memory exceptions aren't enabled. It's only used for backpatching.
+  const u32 far_code_size =
+    (g_settings.cpu_execution_mode == CPUExecutionMode::NewRec && !g_settings.cpu_recompiler_memory_exceptions) ?
+      (RECOMPILER_FAR_CODE_CACHE_SIZE / 2) :
+      RECOMPILER_FAR_CODE_CACHE_SIZE;
+  s_far_code_size = far_code_size;
+  s_far_code_ptr = (far_code_size > 0) ? (static_cast<u8*>(s_code_ptr) + s_code_size) : nullptr;
+  s_free_far_code_ptr = s_far_code_ptr;
+  s_far_code_used = 0;
+
+  MemMap::BeginCodeWrite();
+
+  std::memset(s_code_ptr + MemMap::GetJITWriteOffset(), 0, RECOMPILER_CODE_CACHE_SIZE);
+  MemMap::FlushInstructionCache(s_code_ptr, RECOMPILER_CODE_CACHE_SIZE);
+
+  MemMap::EndCodeWrite();
+}
+
+u8* CPU::CodeCache::GetFreeCodePointer()
+{
+  return s_free_code_ptr;
+}
+
+u32 CPU::CodeCache::GetFreeCodeSpace()
+{
+  return s_code_size - s_code_used;
+}
+
+void CPU::CodeCache::CommitCode(u32 length)
+{
+  if (length == 0) [[unlikely]]
+    return;
+
+  MemMap::FlushInstructionCache(s_free_code_ptr, length);
+
+  Assert(length <= (s_code_size - s_code_used));
+  s_free_code_ptr += length;
+  s_code_used += length;
+}
+
+u8* CPU::CodeCache::GetFreeFarCodePointer()
+{
+  return s_free_far_code_ptr;
+}
+
+u32 CPU::CodeCache::GetFreeFarCodeSpace()
+{
+  return s_far_code_size - s_far_code_used;
+}
+
+void CPU::CodeCache::CommitFarCode(u32 length)
+{
+  if (length == 0) [[unlikely]]
+    return;
+
+  MemMap::FlushInstructionCache(s_free_far_code_ptr, length);
+
+  Assert(length <= (s_far_code_size - s_far_code_used));
+  s_free_far_code_ptr += length;
+  s_far_code_used += length;
+}
+
+void CPU::CodeCache::AlignCode(u32 alignment)
+{
+#if defined(CPU_ARCH_X64)
+  constexpr u8 padding_value = 0xcc; // int3
+#else
+  constexpr u8 padding_value = 0x00;
+#endif
+
+  DebugAssert(Common::IsPow2(alignment));
+  const u32 num_padding_bytes =
+    std::min(static_cast<u32>(Common::AlignUpPow2(reinterpret_cast<uintptr_t>(s_free_code_ptr), alignment) -
+                              reinterpret_cast<uintptr_t>(s_free_code_ptr)),
+             GetFreeCodeSpace());
+  std::memset(s_free_code_ptr + MemMap::GetJITWriteOffset(), padding_value, num_padding_bytes);
+  s_free_code_ptr += num_padding_bytes;
+  s_code_used += num_padding_bytes;
 }
 
 const void* CPU::CodeCache::GetInterpretUncachedBlockFunction()
@@ -1483,14 +1580,13 @@ void CPU::CodeCache::CompileASMFunctions()
 {
   MemMap::BeginCodeWrite();
 
-  const u32 asm_size =
-    EmitASMFunctions(s_code_buffer.GetFreeCodePointer(), s_code_buffer.GetFreeCodeSpace(), s_code_buffer.GetRWDiff());
+  const u32 asm_size = EmitASMFunctions(GetFreeCodePointer(), GetFreeCodeSpace());
 
 #ifdef ENABLE_RECOMPILER_PROFILING
-  MIPSPerfScope.Register(s_code_buffer.GetFreeCodePointer(), asm_size, "ASMFunctions");
+  MIPSPerfScope.Register(GetFreeCodePointer(), asm_size, "ASMFunctions");
 #endif
 
-  s_code_buffer.CommitCode(asm_size);
+  CommitCode(asm_size);
   MemMap::EndCodeWrite();
 }
 
@@ -1503,7 +1599,7 @@ bool CPU::CodeCache::CompileBlock(Block* block)
 #ifdef ENABLE_RECOMPILER
   if (g_settings.cpu_execution_mode == CPUExecutionMode::Recompiler)
   {
-    Recompiler::CodeGenerator codegen(&s_code_buffer);
+    Recompiler::CodeGenerator codegen;
     host_code = codegen.CompileBlock(block, &host_code_size, &host_far_code_size);
   }
 #endif
@@ -1517,27 +1613,23 @@ bool CPU::CodeCache::CompileBlock(Block* block)
 
   if (!host_code)
   {
-    Log_ErrorFmt("Failed to compile host code for block at 0x{:08X}", block->pc);
+    ERROR_LOG("Failed to compile host code for block at 0x{:08X}", block->pc);
     block->state = BlockState::FallbackToInterpreter;
     return false;
   }
 
-#ifdef _DEBUG
+#ifdef DUMP_CODE_SIZE_STATS
   const u32 host_instructions = GetHostInstructionCount(host_code, host_code_size);
   s_total_instructions_compiled += block->size;
   s_total_host_instructions_emitted += host_instructions;
 
-  Log_ProfileFmt("0x{:08X}: {}/{}b for {}b ({}i), blowup: {:.2f}x, cache: {:.2f}%/{:.2f}%, ipi: {:.2f}/{:.2f}",
-                 block->pc, host_code_size, host_far_code_size, block->size * 4, block->size,
-                 static_cast<float>(host_code_size) / static_cast<float>(block->size * 4), s_code_buffer.GetUsedPct(),
-                 s_code_buffer.GetFarUsedPct(), static_cast<float>(host_instructions) / static_cast<float>(block->size),
-                 static_cast<float>(s_total_host_instructions_emitted) /
-                   static_cast<float>(s_total_instructions_compiled));
-#else
-  Log_ProfileFmt("0x{:08X}: {}/{}b for {}b ({} inst), blowup: {:.2f}x, cache: {:.2f}%/{:.2f}%", block->pc,
-                 host_code_size, host_far_code_size, block->size * 4, block->size,
-                 static_cast<float>(host_code_size) / static_cast<float>(block->size * 4), s_code_buffer.GetUsedPct(),
-                 s_code_buffer.GetFarUsedPct());
+  DEV_LOG("0x{:08X}: {}/{}b for {}b ({}i), blowup: {:.2f}x, cache: {:.2f}%/{:.2f}%, ipi: {:.2f}/{:.2f}", block->pc,
+          host_code_size, host_far_code_size, block->size * 4, block->size,
+          static_cast<float>(host_code_size) / static_cast<float>(block->size * 4),
+          (static_cast<float>(s_code_used) / static_cast<float>(s_code_size)) * 100.0f,
+          (static_cast<float>(s_far_code_used) / static_cast<float>(s_far_code_size)) * 100.0f,
+          static_cast<float>(host_instructions) / static_cast<float>(block->size),
+          static_cast<float>(s_total_host_instructions_emitted) / static_cast<float>(s_total_instructions_compiled));
 #endif
 
 #if 0
@@ -1594,10 +1686,9 @@ void CPU::CodeCache::AddLoadStoreInfo(void* code_address, u32 code_size, u32 gue
   s_fastmem_backpatch_info.emplace(code_address, info);
 }
 
-Common::PageFaultHandler::HandlerResult CPU::CodeCache::HandleFastmemException(void* exception_pc, void* fault_address,
-                                                                               bool is_write)
+PageFaultHandler::HandlerResult CPU::CodeCache::HandleFastmemException(void* exception_pc, void* fault_address,
+                                                                       bool is_write)
 {
-  // TODO: Catch general RAM writes, not just fastmem
   PhysicalMemoryAddress guest_address;
 
 #ifdef ENABLE_MMAP_FASTMEM
@@ -1607,7 +1698,7 @@ Common::PageFaultHandler::HandlerResult CPU::CodeCache::HandleFastmemException(v
         (static_cast<u8*>(fault_address) - static_cast<u8*>(g_state.fastmem_base)) >=
           static_cast<ptrdiff_t>(Bus::FASTMEM_ARENA_SIZE))
     {
-      return Common::PageFaultHandler::HandlerResult::ExecuteNextHandler;
+      return PageFaultHandler::HandlerResult::ExecuteNextHandler;
     }
 
     guest_address = static_cast<PhysicalMemoryAddress>(
@@ -1617,9 +1708,9 @@ Common::PageFaultHandler::HandlerResult CPU::CodeCache::HandleFastmemException(v
     // TODO: path for manual protection to return back to read-only pages
     if (is_write && !g_state.cop0_regs.sr.Isc && AddressInRAM(guest_address))
     {
-      Log_DevFmt("Ignoring fault due to RAM write @ 0x{:08X}", guest_address);
+      DEV_LOG("Ignoring fault due to RAM write @ 0x{:08X}", guest_address);
       InvalidateBlocksWithPageIndex(Bus::GetRAMCodePageIndex(guest_address));
-      return Common::PageFaultHandler::HandlerResult::ContinueExecution;
+      return PageFaultHandler::HandlerResult::ContinueExecution;
     }
   }
   else
@@ -1629,21 +1720,21 @@ Common::PageFaultHandler::HandlerResult CPU::CodeCache::HandleFastmemException(v
     guest_address = std::numeric_limits<PhysicalMemoryAddress>::max();
   }
 
-  Log_DevFmt("Page fault handler invoked at PC={} Address={} {}, fastmem offset {:08X}", exception_pc, fault_address,
-             is_write ? "(write)" : "(read)", guest_address);
+  DEV_LOG("Page fault handler invoked at PC={} Address={} {}, fastmem offset {:08X}", exception_pc, fault_address,
+          is_write ? "(write)" : "(read)", guest_address);
 
   auto iter = s_fastmem_backpatch_info.find(exception_pc);
   if (iter == s_fastmem_backpatch_info.end())
   {
-    Log_ErrorFmt("No backpatch info found for {}", exception_pc);
-    return Common::PageFaultHandler::HandlerResult::ExecuteNextHandler;
+    ERROR_LOG("No backpatch info found for {}", exception_pc);
+    return PageFaultHandler::HandlerResult::ExecuteNextHandler;
   }
 
   LoadstoreBackpatchInfo& info = iter->second;
-  Log_DevFmt("Backpatching {} at {}[{}] (pc {:08X} addr {:08X}): Bitmask {:08X} Addr {} Data {} Size {} Signed {:02X}",
-             info.is_load ? "load" : "store", exception_pc, info.code_size, info.guest_pc, guest_address,
-             info.gpr_bitmask, static_cast<unsigned>(info.address_register), static_cast<unsigned>(info.data_register),
-             info.AccessSizeInBytes(), static_cast<unsigned>(info.is_signed));
+  DEV_LOG("Backpatching {} at {}[{}] (pc {:08X} addr {:08X}): Bitmask {:08X} Addr {} Data {} Size {} Signed {:02X}",
+          info.is_load ? "load" : "store", exception_pc, info.code_size, info.guest_pc, guest_address, info.gpr_bitmask,
+          static_cast<unsigned>(info.address_register), static_cast<unsigned>(info.data_register),
+          info.AccessSizeInBytes(), static_cast<unsigned>(info.is_signed));
 
   MemMap::BeginCodeWrite();
 
@@ -1656,7 +1747,7 @@ Common::PageFaultHandler::HandlerResult CPU::CodeCache::HandleFastmemException(v
     if (block)
     {
       // This is a bit annoying, we have to remove it from the page list if it's a RAM block.
-      Log_DevFmt("Queuing block {:08X} for recompilation due to backpatch", block->pc);
+      DEV_LOG("Queuing block {:08X} for recompilation due to backpatch", block->pc);
       RemoveBlockFromPageList(block);
       InvalidateBlock(block, BlockState::NeedsRecompile);
 
@@ -1671,7 +1762,7 @@ Common::PageFaultHandler::HandlerResult CPU::CodeCache::HandleFastmemException(v
   // and store the pc in the faulting list, so that we don't emit another fastmem loadstore
   s_fastmem_faulting_pcs.insert(info.guest_pc);
   s_fastmem_backpatch_info.erase(iter);
-  return Common::PageFaultHandler::HandlerResult::ContinueExecution;
+  return PageFaultHandler::HandlerResult::ContinueExecution;
 }
 
 bool CPU::CodeCache::HasPreviouslyFaultedOnPC(u32 guest_pc)
@@ -1683,7 +1774,7 @@ void CPU::CodeCache::BackpatchLoadStore(void* host_pc, const LoadstoreBackpatchI
 {
 #ifdef ENABLE_RECOMPILER
   if (g_settings.cpu_execution_mode == CPUExecutionMode::Recompiler)
-    Recompiler::CodeGenerator::BackpatchLoadStore(host_pc, &s_code_buffer, info);
+    Recompiler::CodeGenerator::BackpatchLoadStore(host_pc, info);
 #endif
 #ifdef ENABLE_NEWREC
   if (g_settings.cpu_execution_mode == CPUExecutionMode::NewRec)
@@ -1714,5 +1805,3 @@ void CPU::CodeCache::RemoveBackpatchInfoForRange(const void* host_code, u32 size
   // erase the whole range at once
   s_fastmem_backpatch_info.erase(start_iter, end_iter);
 }
-
-#endif // ENABLE_RECOMPILER_SUPPORT

@@ -179,9 +179,18 @@ void CPU::NewRec::X64Compiler::GenerateBlockProtectCheck(const u8* ram_ptr, cons
 
 void CPU::NewRec::X64Compiler::GenerateICacheCheckAndUpdate()
 {
-  if (GetSegmentForAddress(m_block->pc) >= Segment::KSEG1)
+  if (!m_block->HasFlag(CodeCache::BlockFlags::IsUsingICache))
   {
-    cg->add(cg->dword[PTR(&g_state.pending_ticks)], static_cast<u32>(m_block->uncached_fetch_ticks));
+    if (m_block->HasFlag(CodeCache::BlockFlags::NeedsDynamicFetchTicks))
+    {
+      cg->mov(cg->eax, m_block->size);
+      cg->mul(cg->dword[cg->rip + GetFetchMemoryAccessTimePtr()]);
+      cg->add(cg->dword[PTR(&g_state.pending_ticks)], cg->eax);
+    }
+    else
+    {
+      cg->add(cg->dword[PTR(&g_state.pending_ticks)], static_cast<u32>(m_block->uncached_fetch_ticks));
+    }
   }
   else if (m_block->icache_line_count > 0)
   {
@@ -214,9 +223,9 @@ void CPU::NewRec::X64Compiler::GenerateCall(const void* func, s32 arg1reg /*= -1
 {
   if (arg1reg >= 0 && arg1reg != static_cast<s32>(RXARG1.getIdx()))
     cg->mov(RXARG1, Reg64(arg1reg));
-  if (arg1reg >= 0 && arg2reg != static_cast<s32>(RXARG2.getIdx()))
+  if (arg2reg >= 0 && arg2reg != static_cast<s32>(RXARG2.getIdx()))
     cg->mov(RXARG2, Reg64(arg2reg));
-  if (arg1reg >= 0 && arg3reg != static_cast<s32>(RXARG3.getIdx()))
+  if (arg3reg >= 0 && arg3reg != static_cast<s32>(RXARG3.getIdx()))
     cg->mov(RXARG3, Reg64(arg3reg));
   cg->call(func);
 }
@@ -312,7 +321,7 @@ void CPU::NewRec::X64Compiler::EndAndLinkBlock(const std::optional<u32>& newpc, 
     if (newpc.value() == m_block->pc)
     {
       // Special case: ourselves! No need to backlink then.
-      Log_DebugPrintf("Linking block at %08X to self", m_block->pc);
+      DEBUG_LOG("Linking block at {:08X} to self", m_block->pc);
       cg->jmp(cg->getCode());
     }
     else
@@ -610,6 +619,8 @@ void CPU::NewRec::X64Compiler::Flush(u32 flags)
 
 void CPU::NewRec::X64Compiler::Compile_Fallback()
 {
+  WARNING_LOG("Compiling instruction fallback at PC=0x{:08X}, instruction=0x{:08X}", iinfo->pc, inst->bits);
+
   Flush(FLUSH_FOR_INTERPRETER);
 
   cg->call(&CPU::Recompiler::Thunks::InterpretInstruction);
@@ -1604,6 +1615,8 @@ void CPU::NewRec::X64Compiler::Compile_lwx(CompileFlags cf, MemoryAccessSize siz
 
   if (g_settings.gpu_pgxp_enable)
   {
+    Flush(FLUSH_FOR_C_CALL);
+
     DebugAssert(value != RWARG3);
     cg->mov(RWARG3, value);
     cg->mov(RWARG2, addr);
@@ -1623,7 +1636,7 @@ void CPU::NewRec::X64Compiler::Compile_lwc2(CompileFlags cf, MemoryAccessSize si
                                           std::optional<Reg32>();
   FlushForLoadStore(address, false, use_fastmem);
   const Reg32 addr = ComputeLoadStoreAddressArg(cf, address, addr_reg);
-  const Reg32 value = GenerateLoad(addr, MemoryAccessSize::Word, false, use_fastmem, [this, action]() {
+  const Reg32 value = GenerateLoad(addr, MemoryAccessSize::Word, false, use_fastmem, [this, action = action]() {
     return (action == GTERegisterAccessAction::CallHandler && g_settings.gpu_pgxp_enable) ?
              Reg32(AllocateTempHostReg(HR_CALLEE_SAVED)) :
              RWRET;
@@ -1877,7 +1890,7 @@ void CPU::NewRec::X64Compiler::Compile_mtc0(CompileFlags cf)
   if (mask == 0)
   {
     // if it's a read-only register, ignore
-    Log_DebugPrintf("Ignoring write to read-only cop0 reg %u", static_cast<u32>(reg));
+    DEBUG_LOG("Ignoring write to read-only cop0 reg {}", static_cast<u32>(reg));
     return;
   }
 
@@ -1940,7 +1953,7 @@ void CPU::NewRec::X64Compiler::Compile_mtc0(CompileFlags cf)
   if (reg == Cop0Reg::DCIC && g_settings.cpu_recompiler_memory_exceptions)
   {
     // TODO: DCIC handling for debug breakpoints
-    Log_WarningPrintf("TODO: DCIC handling for debug breakpoints");
+    WARNING_LOG("TODO: DCIC handling for debug breakpoints");
   }
 }
 

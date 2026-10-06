@@ -21,6 +21,7 @@ enum class MemoryAccessSize : u32
 };
 
 using TickCount = s32;
+using GlobalTicks = u64;
 
 enum class ConsoleRegion
 {
@@ -155,12 +156,22 @@ enum class DisplayAlignment : u8
   Count
 };
 
+enum class DisplayRotation : u8
+{
+  Normal,
+  Rotate90,
+  Rotate180,
+  Rotate270,
+  Count
+};
+
 enum class DisplayScalingMode : u8
 {
   Nearest,
-  BilinearSmooth,
   NearestInteger,
+  BilinearSmooth,
   BilinearSharp,
+  BilinearInteger,
   Count
 };
 
@@ -188,29 +199,7 @@ enum class DisplayScreenshotFormat : u8
   Count
 };
 
-enum class AudioBackend : u8
-{
-  Null,
-#ifdef ENABLE_CUBEB
-  Cubeb,
-#endif
-#ifdef ENABLE_SDL2
-  SDL,
-#endif
-#ifdef _WIN32
-  XAudio2,
-#endif
-#ifdef __ANDROID__
-  AAudio,
-  OpenSLES,
-#endif
-#ifdef __SWITCH__
-  Switch,
-#endif
-  Count
-};
-
-enum class ControllerType
+enum class ControllerType : u8
 {
   None,
   DigitalController,
@@ -220,6 +209,7 @@ enum class ControllerType
   PlayStationMouse,
   NeGcon,
   NeGconRumble,
+  Justifier,
   Count
 };
 
@@ -249,7 +239,7 @@ enum : u32
   NUM_MULTITAPS = 2
 };
 
-enum class CPUFastmemMode
+enum class CPUFastmemMode : u8
 {
   Disabled,
   MMap,
@@ -272,6 +262,19 @@ enum class CDROMMechaconVersion : u8
   VC3A,
   VC3B,
   VC3C,
+
+  Count,
+};
+
+enum class SaveStateCompressionMode : u8
+{
+  Uncompressed,
+  DeflateLow,
+  DeflateDefault,
+  DeflateHigh,
+  ZstLow,
+  ZstDefault,
+  ZstHigh,
 
   Count,
 };

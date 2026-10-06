@@ -24,12 +24,6 @@
     <ClCompile Include="src\rhash\md5.c">
       <Filter>rhash</Filter>
     </ClCompile>
-    <ClCompile Include="src\rhash\cdreader.c">
-      <Filter>rhash</Filter>
-    </ClCompile>
-    <ClCompile Include="src\rhash\hash.c">
-      <Filter>rhash</Filter>
-    </ClCompile>
     <ClCompile Include="src\rapi\rc_api_editor.c">
       <Filter>rapi</Filter>
     </ClCompile>
@@ -46,9 +40,6 @@
       <Filter>rapi</Filter>
     </ClCompile>
     <ClCompile Include="src\rcheevos\operand.c">
-      <Filter>rcheevos</Filter>
-    </ClCompile>
-    <ClCompile Include="src\rcheevos\rc_validate.c">
       <Filter>rcheevos</Filter>
     </ClCompile>
     <ClCompile Include="src\rcheevos\richpresence.c">
@@ -138,9 +129,6 @@
       <Filter>include</Filter>
     </ClInclude>
     <ClInclude Include="src\rcheevos\rc_internal.h">
-      <Filter>rcheevos</Filter>
-    </ClInclude>
-    <ClInclude Include="src\rcheevos\rc_validate.h">
       <Filter>rcheevos</Filter>
     </ClInclude>
     <ClInclude Include="src\rc_compat.h" />

@@ -29,15 +29,28 @@ detect_operating_system()
 detect_compiler()
 detect_architecture()
 detect_page_size()
+detect_cache_line_size()
 
 # Build options. Depends on system attributes.
 include(DuckStationBuildOptions)
+
+# Enable PIC on Linux, otherwise the builds do not support ASLR.
+if(LINUX OR BSD)
+  include(CheckPIESupported)
+  check_pie_supported()
+  set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
+endif()
 
 # The tico Switch build brings its own libraries (build_duckstation_nro.sh):
 # uam for deko3D's shaders, and glslang standing in for shaderc on Vulkan.
 # DUCK_DEBUG=1 builds log everything to sdmc:/tico/debug/duckstation.txt
 if(TICO_DEBUG_LOG)
   add_compile_definitions(TICO_DEBUG_LOG=1)
+endif()
+
+if(NINTENDO_SWITCH)
+  # DuckStation's NEON code mixes vector types the way Clang allows; devkitA64 is GCC
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-flax-vector-conversions>)
 endif()
 
 if(NINTENDO_SWITCH AND TICO_DEPS_DIR)

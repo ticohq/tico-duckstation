@@ -1,10 +1,8 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClInclude Include="jit_code_buffer.h" />
     <ClInclude Include="state_wrapper.h" />
     <ClInclude Include="audio_stream.h" />
-    <ClInclude Include="cd_xa.h" />
     <ClInclude Include="iso_reader.h" />
     <ClInclude Include="cd_image.h" />
     <ClInclude Include="cd_subchannel_replacement.h" />
@@ -72,13 +70,14 @@
     <ClInclude Include="opengl_context_egl_x11.h" />
     <ClInclude Include="opengl_context_wgl.h" />
     <ClInclude Include="image.h" />
+    <ClInclude Include="sockets.h" />
+    <ClInclude Include="media_capture.h" />
+    <ClInclude Include="compress_helpers.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="jit_code_buffer.cpp" />
     <ClCompile Include="state_wrapper.cpp" />
     <ClCompile Include="cd_image.cpp" />
     <ClCompile Include="audio_stream.cpp" />
-    <ClCompile Include="cd_xa.cpp" />
     <ClCompile Include="cd_image_cue.cpp" />
     <ClCompile Include="cd_image_bin.cpp" />
     <ClCompile Include="iso_reader.cpp" />
@@ -105,7 +104,6 @@
     <ClCompile Include="platform_misc_win32.cpp" />
     <ClCompile Include="sdl_input_source.cpp" />
     <ClCompile Include="win32_raw_input_source.cpp" />
-    <ClCompile Include="xaudio2_audio_stream.cpp" />
     <ClCompile Include="xinput_source.cpp" />
     <ClCompile Include="dinput_source.cpp" />
     <ClCompile Include="input_manager.cpp" />
@@ -146,7 +144,6 @@
     <ClCompile Include="http_downloader.cpp" />
     <ClCompile Include="metal_device.mm" />
     <ClCompile Include="metal_stream_buffer.mm" />
-    <ClCompile Include="zstd_byte_stream.cpp" />
     <ClCompile Include="opengl_context.cpp" />
     <ClCompile Include="opengl_context_egl.cpp" />
     <ClCompile Include="opengl_context_egl_wayland.cpp" />
@@ -154,6 +151,9 @@
     <ClCompile Include="opengl_context_wgl.cpp" />
     <ClCompile Include="image.cpp" />
     <ClCompile Include="sdl_audio_stream.cpp" />
+    <ClCompile Include="sockets.cpp" />
+    <ClCompile Include="media_capture.cpp" />
+    <ClCompile Include="compress_helpers.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="metal_shaders.metal" />

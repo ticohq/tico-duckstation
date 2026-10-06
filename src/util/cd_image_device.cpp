@@ -10,6 +10,7 @@
 #include "common/assert.h"
 #include "common/error.h"
 #include "common/log.h"
+#include "common/path.h"
 #include "common/small_string.h"
 #include "common/string_util.h"
 
@@ -100,7 +101,7 @@ enum class SCSIReadMode : u8
   const u32 expected_size = SCSIReadCommandOutputSize(mode);
   if (buffer.size() != expected_size)
   {
-    Log_ErrorFmt("SCSI returned {} bytes, expected {}", buffer.size(), expected_size);
+    ERROR_LOG("SCSI returned {} bytes, expected {}", buffer.size(), expected_size);
     return false;
   }
 
@@ -114,14 +115,14 @@ enum class SCSIReadMode : u8
     CDImage::DeinterleaveSubcode(buffer.data() + CDImage::RAW_SECTOR_SIZE, deinterleaved_subcode);
     std::memcpy(&subq, &deinterleaved_subcode[CDImage::SUBCHANNEL_BYTES_PER_FRAME], sizeof(subq));
 
-    Log_DevFmt("SCSI full subcode read returned [{}] for {:02d}:{:02d}:{:02d}",
-               StringUtil::EncodeHex(subq.data.data(), static_cast<int>(subq.data.size())), expected_pos.minute,
-               expected_pos.second, expected_pos.frame);
+    DEV_LOG("SCSI full subcode read returned [{}] for {:02d}:{:02d}:{:02d}",
+            StringUtil::EncodeHex(subq.data.data(), static_cast<int>(subq.data.size())), expected_pos.minute,
+            expected_pos.second, expected_pos.frame);
 
     if (!subq.IsCRCValid())
     {
-      Log_WarningFmt("SCSI full subcode read returned invalid SubQ CRC (got {:02X} expected {:02X})", subq.crc,
-                     CDImage::SubChannelQ::ComputeCRC(subq.data));
+      WARNING_LOG("SCSI full subcode read returned invalid SubQ CRC (got {:02X} expected {:02X})", subq.crc,
+                  CDImage::SubChannelQ::ComputeCRC(subq.data));
       return false;
     }
 
@@ -129,7 +130,7 @@ enum class SCSIReadMode : u8
       CDImage::Position::FromBCD(subq.absolute_minute_bcd, subq.absolute_second_bcd, subq.absolute_frame_bcd);
     if (expected_pos != got_pos)
     {
-      Log_WarningFmt(
+      WARNING_LOG(
         "SCSI full subcode read returned invalid MSF (got {:02x}:{:02x}:{:02x}, expected {:02d}:{:02d}:{:02d})",
         subq.absolute_minute_bcd, subq.absolute_second_bcd, subq.absolute_frame_bcd, expected_pos.minute,
         expected_pos.second, expected_pos.frame);
@@ -142,14 +143,14 @@ enum class SCSIReadMode : u8
   {
     CDImage::SubChannelQ subq;
     std::memcpy(&subq, buffer.data() + CDImage::RAW_SECTOR_SIZE, sizeof(subq));
-    Log_DevFmt("SCSI subq read returned [{}] for {:02d}:{:02d}:{:02d}",
-               StringUtil::EncodeHex(subq.data.data(), static_cast<int>(subq.data.size())), expected_pos.minute,
-               expected_pos.second, expected_pos.frame);
+    DEV_LOG("SCSI subq read returned [{}] for {:02d}:{:02d}:{:02d}",
+            StringUtil::EncodeHex(subq.data.data(), static_cast<int>(subq.data.size())), expected_pos.minute,
+            expected_pos.second, expected_pos.frame);
 
     if (!subq.IsCRCValid())
     {
-      Log_WarningFmt("SCSI subq read returned invalid SubQ CRC (got {:02X} expected {:02X})", subq.crc,
-                     CDImage::SubChannelQ::ComputeCRC(subq.data));
+      WARNING_LOG("SCSI subq read returned invalid SubQ CRC (got {:02X} expected {:02X})", subq.crc,
+                  CDImage::SubChannelQ::ComputeCRC(subq.data));
       return false;
     }
 
@@ -157,9 +158,9 @@ enum class SCSIReadMode : u8
       CDImage::Position::FromBCD(subq.absolute_minute_bcd, subq.absolute_second_bcd, subq.absolute_frame_bcd);
     if (expected_pos != got_pos)
     {
-      Log_WarningFmt("SCSI subq read returned invalid MSF (got {:02x}:{:02x}:{:02x}, expected {:02d}:{:02d}:{:02d})",
-                     subq.absolute_minute_bcd, subq.absolute_second_bcd, subq.absolute_frame_bcd, expected_pos.minute,
-                     expected_pos.second, expected_pos.frame);
+      WARNING_LOG("SCSI subq read returned invalid MSF (got {:02x}:{:02x}:{:02x}, expected {:02d}:{:02d}:{:02d})",
+                  subq.absolute_minute_bcd, subq.absolute_second_bcd, subq.absolute_frame_bcd, expected_pos.minute,
+                  expected_pos.second, expected_pos.frame);
       return false;
     }
 
@@ -256,12 +257,12 @@ bool CDImageDeviceWin32::Open(const char* filename, Error* error)
     m_hDevice = CreateFile(filename, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, NULL);
     if (m_hDevice != INVALID_HANDLE_VALUE)
     {
-      Log_WarningFmt("Could not open '{}' as read/write, can't use SPTD", filename);
+      WARNING_LOG("Could not open '{}' as read/write, can't use SPTD", filename);
       try_sptd = false;
     }
     else
     {
-      Log_ErrorFmt("CreateFile('{}') failed: %08X", filename, GetLastError());
+      ERROR_LOG("CreateFile('{}') failed: %08X", filename, GetLastError());
       if (error)
         error->SetWin32(GetLastError());
 
@@ -274,7 +275,7 @@ bool CDImageDeviceWin32::Open(const char* filename, Error* error)
   static constexpr u32 READ_SPEED_KBS = (DATA_SECTOR_SIZE * FRAMES_PER_SECOND * READ_SPEED_MULTIPLIER) / 1024;
   CDROM_SET_SPEED set_speed = {CdromSetSpeed, READ_SPEED_KBS, 0, CdromDefaultRotation};
   if (!DeviceIoControl(m_hDevice, IOCTL_CDROM_SET_SPEED, &set_speed, sizeof(set_speed), nullptr, 0, nullptr, nullptr))
-    Log_WarningFmt("DeviceIoControl(IOCTL_CDROM_SET_SPEED) failed: {:08X}", GetLastError());
+    WARNING_LOG("DeviceIoControl(IOCTL_CDROM_SET_SPEED) failed: {:08X}", GetLastError());
 
   CDROM_READ_TOC_EX read_toc_ex = {};
   read_toc_ex.Format = CDROM_READ_TOC_EX_FORMAT_TOC;
@@ -289,7 +290,7 @@ bool CDImageDeviceWin32::Open(const char* filename, Error* error)
                        &bytes_returned, nullptr) ||
       toc.LastTrack < toc.FirstTrack)
   {
-    Log_ErrorPrintf("DeviceIoCtl(IOCTL_CDROM_READ_TOC_EX) failed: %08X", GetLastError());
+    ERROR_LOG("DeviceIoCtl(IOCTL_CDROM_READ_TOC_EX) failed: {:08X}", GetLastError());
     if (error)
       error->SetWin32(GetLastError());
 
@@ -298,7 +299,7 @@ bool CDImageDeviceWin32::Open(const char* filename, Error* error)
 
   DWORD last_track_address = 0;
   LBA disc_lba = 0;
-  Log_DevPrintf("FirstTrack=%u, LastTrack=%u", toc.FirstTrack, toc.LastTrack);
+  DEV_LOG("FirstTrack={}, LastTrack={}", toc.FirstTrack, toc.LastTrack);
 
   const u32 num_tracks_to_check = (toc.LastTrack - toc.FirstTrack) + 1 + 1;
   for (u32 track_index = 0; track_index < num_tracks_to_check; track_index++)
@@ -306,14 +307,14 @@ bool CDImageDeviceWin32::Open(const char* filename, Error* error)
     const TRACK_DATA& td = toc.TrackData[track_index];
     const u8 track_num = td.TrackNumber;
     const DWORD track_address = BEToU32(td.Address);
-    Log_DevPrintf("  [%u]: Num=%02X, Address=%u", track_index, track_num, track_address);
+    DEV_LOG("  [{}]: Num={:02X}, Address={}", track_index, track_num, track_address);
 
     // fill in the previous track's length
     if (!m_tracks.empty())
     {
       if (track_num < m_tracks.back().track_number)
       {
-        Log_ErrorPrintf("Invalid TOC, track %u less than %u", track_num, m_tracks.back().track_number);
+        ERROR_LOG("Invalid TOC, track {} less than {}", track_num, m_tracks.back().track_number);
         return false;
       }
 
@@ -381,32 +382,29 @@ bool CDImageDeviceWin32::Open(const char* filename, Error* error)
 
   if (m_tracks.empty())
   {
-    Log_ErrorPrintf("File '%s' contains no tracks", filename);
+    ERROR_LOG("File '{}' contains no tracks", filename);
     Error::SetString(error, fmt::format("File '{}' contains no tracks", filename));
     return false;
   }
 
   m_lba_count = disc_lba;
 
-  Log_DevPrintf("%u tracks, %u indices, %u lbas", static_cast<u32>(m_tracks.size()), static_cast<u32>(m_indices.size()),
-                static_cast<u32>(m_lba_count));
+  DEV_LOG("{} tracks, {} indices, {} lbas", m_tracks.size(), m_indices.size(), m_lba_count);
   for (u32 i = 0; i < m_tracks.size(); i++)
   {
-    Log_DevPrintf(" Track %u: Start %u, length %u, mode %u, control 0x%02X", static_cast<u32>(m_tracks[i].track_number),
-                  static_cast<u32>(m_tracks[i].start_lba), static_cast<u32>(m_tracks[i].length),
-                  static_cast<u32>(m_tracks[i].mode), static_cast<u32>(m_tracks[i].control.bits));
+    DEV_LOG(" Track {}: Start {}, length {}, mode {}, control 0x{:02X}", m_tracks[i].track_number,
+            m_tracks[i].start_lba, m_tracks[i].length, static_cast<u8>(m_tracks[i].mode), m_tracks[i].control.bits);
   }
   for (u32 i = 0; i < m_indices.size(); i++)
   {
-    Log_DevPrintf(" Index %u: Track %u, Index %u, Start %u, length %u, file sector size %u, file offset %" PRIu64, i,
-                  static_cast<u32>(m_indices[i].track_number), static_cast<u32>(m_indices[i].index_number),
-                  static_cast<u32>(m_indices[i].start_lba_on_disc), static_cast<u32>(m_indices[i].length),
-                  static_cast<u32>(m_indices[i].file_sector_size), m_indices[i].file_offset);
+    DEV_LOG(" Index {}: Track {}, Index [], Start {}, length {}, file sector size {}, file offset {}", i,
+            m_indices[i].track_number, m_indices[i].index_number, m_indices[i].start_lba_on_disc, m_indices[i].length,
+            m_indices[i].file_sector_size, m_indices[i].file_offset);
   }
 
   if (!DetermineReadMode(try_sptd))
   {
-    Log_ErrorPrintf("Could not determine read mode");
+    ERROR_LOG("Could not determine read mode");
     Error::SetString(error, "Could not determine read mode");
     return false;
   }
@@ -473,7 +471,7 @@ std::optional<u32> CDImageDeviceWin32::DoSCSICommand(u8 cmd[SCSI_CMD_LENGTH], st
   sptd.cmd.DataIn = out_buffer.empty() ? SCSI_IOCTL_DATA_UNSPECIFIED : SCSI_IOCTL_DATA_IN;
   sptd.cmd.DataTransferLength = static_cast<u32>(out_buffer.size());
   sptd.cmd.TimeOutValue = 10;
-  sptd.cmd.SenseInfoOffset = offsetof(SPTDBuffer, sense);
+  sptd.cmd.SenseInfoOffset = OFFSETOF(SPTDBuffer, sense);
   sptd.cmd.DataBuffer = out_buffer.empty() ? nullptr : out_buffer.data();
   std::memcpy(sptd.cmd.Cdb, cmd, SCSI_CMD_LENGTH);
 
@@ -481,18 +479,18 @@ std::optional<u32> CDImageDeviceWin32::DoSCSICommand(u8 cmd[SCSI_CMD_LENGTH], st
   if (!DeviceIoControl(m_hDevice, IOCTL_SCSI_PASS_THROUGH_DIRECT, &sptd, sizeof(sptd), &sptd, sizeof(sptd),
                        &bytes_returned, nullptr))
   {
-    Log_ErrorFmt("DeviceIoControl() for SCSI 0x{:02X} failed: {}", cmd[0], GetLastError());
+    ERROR_LOG("DeviceIoControl() for SCSI 0x{:02X} failed: {}", cmd[0], GetLastError());
     return std::nullopt;
   }
 
   if (sptd.cmd.ScsiStatus != 0)
   {
-    Log_ErrorFmt("SCSI command 0x{:02X} failed: {}", cmd[0], sptd.cmd.ScsiStatus);
+    ERROR_LOG("SCSI command 0x{:02X} failed: {}", cmd[0], sptd.cmd.ScsiStatus);
     return std::nullopt;
   }
 
   if (sptd.cmd.DataTransferLength != out_buffer.size())
-    Log_WarningFmt("Only read {} of {} bytes", sptd.cmd.DataTransferLength, out_buffer.size());
+    WARNING_LOG("Only read {} of {} bytes", sptd.cmd.DataTransferLength, out_buffer.size());
 
   return sptd.cmd.DataTransferLength;
 }
@@ -526,12 +524,12 @@ bool CDImageDeviceWin32::DoRawRead(LBA lba)
   if (!DeviceIoControl(m_hDevice, IOCTL_CDROM_RAW_READ, &rri, sizeof(rri), m_buffer.data(),
                        static_cast<DWORD>(m_buffer.size()), &bytes_returned, nullptr))
   {
-    Log_ErrorFmt("DeviceIoControl(IOCTL_CDROM_RAW_READ) for LBA {} failed: {:08X}", lba, GetLastError());
+    ERROR_LOG("DeviceIoControl(IOCTL_CDROM_RAW_READ) for LBA {} failed: {:08X}", lba, GetLastError());
     return false;
   }
 
   if (bytes_returned != expected_size)
-    Log_WarningFmt("Only read {} of {} bytes", bytes_returned, expected_size);
+    WARNING_LOG("Only read {} of {} bytes", bytes_returned, expected_size);
 
   return true;
 }
@@ -544,7 +542,7 @@ bool CDImageDeviceWin32::ReadSectorToBuffer(LBA lba)
     const u32 expected_size = SCSIReadCommandOutputSize(m_scsi_read_mode);
     if (size.value_or(0) != expected_size)
     {
-      Log_ErrorFmt("Read of LBA {} failed: only got {} of {} bytes", lba, size.value(), expected_size);
+      ERROR_LOG("Read of LBA {} failed: only got {} of {} bytes", lba, size.value(), expected_size);
       return false;
     }
   }
@@ -570,26 +568,26 @@ bool CDImageDeviceWin32::DetermineReadMode(bool try_sptd)
   {
     std::optional<u32> transfer_size;
 
-    Log_DevPrint("Trying SCSI read with full subcode...");
+    DEV_LOG("Trying SCSI read with full subcode...");
     if (check_subcode && (transfer_size = DoSCSIRead(track_1_lba, SCSIReadMode::Full)).has_value())
     {
       if (VerifySCSIReadData(std::span<u8>(m_buffer.data(), transfer_size.value()), SCSIReadMode::Full,
                              track_1_subq_lba))
       {
-        Log_VerbosePrint("Using SCSI reads with subcode");
+        VERBOSE_LOG("Using SCSI reads with subcode");
         m_scsi_read_mode = SCSIReadMode::Full;
         m_has_valid_subcode = true;
         return true;
       }
     }
 
-    Log_WarningPrint("Full subcode failed, trying SCSI read with only subq...");
+    WARNING_LOG("Full subcode failed, trying SCSI read with only subq...");
     if (check_subcode && (transfer_size = DoSCSIRead(track_1_lba, SCSIReadMode::SubQOnly)).has_value())
     {
       if (VerifySCSIReadData(std::span<u8>(m_buffer.data(), transfer_size.value()), SCSIReadMode::SubQOnly,
                              track_1_subq_lba))
       {
-        Log_VerbosePrint("Using SCSI reads with subq only");
+        VERBOSE_LOG("Using SCSI reads with subq only");
         m_scsi_read_mode = SCSIReadMode::SubQOnly;
         m_has_valid_subcode = true;
         return true;
@@ -597,13 +595,13 @@ bool CDImageDeviceWin32::DetermineReadMode(bool try_sptd)
     }
 
     // As a last ditch effort, try SCSI without subcode.
-    Log_WarningPrint("Subq only failed failed, trying SCSI without subcode...");
+    WARNING_LOG("Subq only failed failed, trying SCSI without subcode...");
     if ((transfer_size = DoSCSIRead(track_1_lba, SCSIReadMode::Raw)).has_value())
     {
       if (VerifySCSIReadData(std::span<u8>(m_buffer.data(), transfer_size.value()), SCSIReadMode::Raw,
                              track_1_subq_lba))
       {
-        Log_WarningPrint("Using SCSI raw reads, libcrypt games will not run correctly");
+        WARNING_LOG("Using SCSI raw reads, libcrypt games will not run correctly");
         m_scsi_read_mode = SCSIReadMode::Raw;
         m_has_valid_subcode = false;
         return true;
@@ -611,26 +609,26 @@ bool CDImageDeviceWin32::DetermineReadMode(bool try_sptd)
     }
   }
 
-  Log_WarningPrint("SCSI reads failed, trying raw read...");
+  WARNING_LOG("SCSI reads failed, trying raw read...");
   if (DoRawRead(track_1_lba))
   {
     // verify subcode
     if (VerifySCSIReadData(std::span<u8>(m_buffer.data(), SCSIReadCommandOutputSize(SCSIReadMode::Full)),
                            SCSIReadMode::Full, track_1_subq_lba))
     {
-      Log_VerbosePrint("Using raw reads with full subcode");
+      VERBOSE_LOG("Using raw reads with full subcode");
       m_scsi_read_mode = SCSIReadMode::None;
       m_has_valid_subcode = true;
       return true;
     }
 
-    Log_WarningPrint("Using raw reads without subcode, libcrypt games will not run correctly");
+    WARNING_LOG("Using raw reads without subcode, libcrypt games will not run correctly");
     m_scsi_read_mode = SCSIReadMode::None;
     m_has_valid_subcode = false;
     return true;
   }
 
-  Log_ErrorPrint("No read modes were successful, cannot use device.");
+  ERROR_LOG("No read modes were successful, cannot use device.");
   return false;
 }
 
@@ -753,7 +751,7 @@ bool CDImageDeviceLinux::Open(const char* filename, Error* error)
   // Set it to 4x speed. A good balance between readahead and spinning up way too high.
   const int read_speed = 4;
   if (!DoSetSpeed(read_speed) && ioctl(m_fd, CDROM_SELECT_SPEED, &read_speed) != 0)
-    Log_WarningFmt("ioctl(CDROM_SELECT_SPEED) failed: {}", errno);
+    WARNING_LOG("ioctl(CDROM_SELECT_SPEED) failed: {}", errno);
 
   // Read ToC
   cdrom_tochdr toc_hdr = {};
@@ -763,7 +761,7 @@ bool CDImageDeviceLinux::Open(const char* filename, Error* error)
     return false;
   }
 
-  Log_DevFmt("FirstTrack={}, LastTrack={}", toc_hdr.cdth_trk0, toc_hdr.cdth_trk1);
+  DEV_LOG("FirstTrack={}, LastTrack={}", toc_hdr.cdth_trk0, toc_hdr.cdth_trk1);
   if (toc_hdr.cdth_trk1 < toc_hdr.cdth_trk0)
   {
     Error::SetStringFmt(error, "Last track {} is before first track {}", toc_hdr.cdth_trk1, toc_hdr.cdth_trk0);
@@ -787,14 +785,14 @@ bool CDImageDeviceLinux::Open(const char* filename, Error* error)
       return false;
     }
 
-    Log_DevFmt("  [{}]: Num={}, LBA={}", track_index, track_num, toc_ent.cdte_addr.lba);
+    DEV_LOG("  [{}]: Num={}, LBA={}", track_index, track_num, toc_ent.cdte_addr.lba);
 
     // fill in the previous track's length
     if (!m_tracks.empty())
     {
       if (track_num < m_tracks.back().track_number)
       {
-        Log_ErrorPrintf("Invalid TOC, track %u less than %u", track_num, m_tracks.back().track_number);
+        ERROR_LOG("Invalid TOC, track {} less than {}", track_num, m_tracks.back().track_number);
         return false;
       }
 
@@ -857,7 +855,7 @@ bool CDImageDeviceLinux::Open(const char* filename, Error* error)
 
   if (m_tracks.empty())
   {
-    Log_ErrorPrintf("File '%s' contains no tracks", filename);
+    ERROR_LOG("File '{}' contains no tracks", filename);
     Error::SetString(error, fmt::format("File '{}' contains no tracks", filename));
     return false;
   }
@@ -886,20 +884,17 @@ bool CDImageDeviceLinux::Open(const char* filename, Error* error)
 
   m_lba_count = disc_lba;
 
-  Log_DevPrintf("%u tracks, %u indices, %u lbas", static_cast<u32>(m_tracks.size()), static_cast<u32>(m_indices.size()),
-                static_cast<u32>(m_lba_count));
+  DEV_LOG("{} tracks, {} indices, {} lbas", m_tracks.size(), m_indices.size(), m_lba_count);
   for (u32 i = 0; i < m_tracks.size(); i++)
   {
-    Log_DevPrintf(" Track %u: Start %u, length %u, mode %u, control 0x%02X", static_cast<u32>(m_tracks[i].track_number),
-                  static_cast<u32>(m_tracks[i].start_lba), static_cast<u32>(m_tracks[i].length),
-                  static_cast<u32>(m_tracks[i].mode), static_cast<u32>(m_tracks[i].control.bits));
+    DEV_LOG(" Track {}: Start {}, length {}, mode {}, control 0x{:02X}", m_tracks[i].track_number,
+            m_tracks[i].start_lba, m_tracks[i].length, static_cast<u8>(m_tracks[i].mode), m_tracks[i].control.bits);
   }
   for (u32 i = 0; i < m_indices.size(); i++)
   {
-    Log_DevPrintf(" Index %u: Track %u, Index %u, Start %u, length %u, file sector size %u, file offset %" PRIu64, i,
-                  static_cast<u32>(m_indices[i].track_number), static_cast<u32>(m_indices[i].index_number),
-                  static_cast<u32>(m_indices[i].start_lba_on_disc), static_cast<u32>(m_indices[i].length),
-                  static_cast<u32>(m_indices[i].file_sector_size), m_indices[i].file_offset);
+    DEV_LOG(" Index {}: Track {}, Index [], Start {}, length {}, file sector size {}, file offset {}", i,
+            m_indices[i].track_number, m_indices[i].index_number, m_indices[i].start_lba_on_disc, m_indices[i].length,
+            m_indices[i].file_sector_size, m_indices[i].file_offset);
   }
 
   if (!DetermineReadMode(error))
@@ -969,12 +964,12 @@ std::optional<u32> CDImageDeviceLinux::DoSCSICommand(u8 cmd[SCSI_CMD_LENGTH], st
 
   if (ioctl(m_fd, SG_IO, &hdr) != 0)
   {
-    Log_ErrorFmt("ioctl(SG_IO) for command {:02X} failed: {}", cmd[0], errno);
+    ERROR_LOG("ioctl(SG_IO) for command {:02X} failed: {}", cmd[0], errno);
     return std::nullopt;
   }
   else if (hdr.status != 0)
   {
-    Log_ErrorFmt("SCSI command {:02X} failed with status {}", cmd[0], hdr.status);
+    ERROR_LOG("SCSI command {:02X} failed with status {}", cmd[0], hdr.status);
     return std::nullopt;
   }
 
@@ -1003,7 +998,7 @@ bool CDImageDeviceLinux::DoRawRead(LBA lba)
   std::memcpy(m_buffer.data(), &msf, sizeof(msf));
   if (ioctl(m_fd, CDROMREADRAW, m_buffer.data()) != 0)
   {
-    Log_ErrorFmt("CDROMREADRAW for LBA {} (MSF {}:{}:{}) failed: {}", lba, msf.minute, msf.second, msf.frame, errno);
+    ERROR_LOG("CDROMREADRAW for LBA {} (MSF {}:{}:{}) failed: {}", lba, msf.minute, msf.second, msf.frame, errno);
     return false;
   }
 
@@ -1018,7 +1013,7 @@ bool CDImageDeviceLinux::ReadSectorToBuffer(LBA lba)
     const u32 expected_size = SCSIReadCommandOutputSize(m_scsi_read_mode);
     if (size.value_or(0) != expected_size)
     {
-      Log_ErrorFmt("Read of LBA {} failed: only got {} of {} bytes", lba, size.value(), expected_size);
+      ERROR_LOG("Read of LBA {} failed: only got {} of {} bytes", lba, size.value(), expected_size);
       return false;
     }
   }
@@ -1039,50 +1034,50 @@ bool CDImageDeviceLinux::DetermineReadMode(Error* error)
   const bool check_subcode = ShouldTryReadingSubcode();
   std::optional<u32> transfer_size;
 
-  Log_DevPrint("Trying SCSI read with full subcode...");
+  DEV_LOG("Trying SCSI read with full subcode...");
   if (check_subcode && (transfer_size = DoSCSIRead(track_1_lba, SCSIReadMode::Full)).has_value())
   {
     if (VerifySCSIReadData(std::span<u8>(m_buffer.data(), transfer_size.value()), SCSIReadMode::Full, track_1_subq_lba))
     {
-      Log_VerbosePrint("Using SCSI reads with subcode");
+      VERBOSE_LOG("Using SCSI reads with subcode");
       m_scsi_read_mode = SCSIReadMode::Full;
       return true;
     }
   }
 
-  Log_WarningPrint("Full subcode failed, trying SCSI read with only subq...");
+  WARNING_LOG("Full subcode failed, trying SCSI read with only subq...");
   if (check_subcode && (transfer_size = DoSCSIRead(track_1_lba, SCSIReadMode::SubQOnly)).has_value())
   {
     if (VerifySCSIReadData(std::span<u8>(m_buffer.data(), transfer_size.value()), SCSIReadMode::SubQOnly,
                            track_1_subq_lba))
     {
-      Log_VerbosePrint("Using SCSI reads with subq only");
+      VERBOSE_LOG("Using SCSI reads with subq only");
       m_scsi_read_mode = SCSIReadMode::SubQOnly;
       return true;
     }
   }
 
-  Log_WarningPrint("SCSI subcode reads failed, trying CDROMREADRAW...");
+  WARNING_LOG("SCSI subcode reads failed, trying CDROMREADRAW...");
   if (DoRawRead(track_1_lba))
   {
-    Log_WarningPrint("Using CDROMREADRAW, libcrypt games will not run correctly");
+    WARNING_LOG("Using CDROMREADRAW, libcrypt games will not run correctly");
     m_scsi_read_mode = SCSIReadMode::None;
     return true;
   }
 
   // As a last ditch effort, try SCSI without subcode.
-  Log_WarningPrint("CDROMREADRAW failed, trying SCSI without subcode...");
+  WARNING_LOG("CDROMREADRAW failed, trying SCSI without subcode...");
   if ((transfer_size = DoSCSIRead(track_1_lba, SCSIReadMode::Raw)).has_value())
   {
     if (VerifySCSIReadData(std::span<u8>(m_buffer.data(), transfer_size.value()), SCSIReadMode::Raw, track_1_subq_lba))
     {
-      Log_WarningPrint("Using SCSI raw reads, libcrypt games will not run correctly");
+      WARNING_LOG("Using SCSI raw reads, libcrypt games will not run correctly");
       m_scsi_read_mode = SCSIReadMode::Raw;
       return true;
     }
   }
 
-  Log_ErrorPrint("No read modes were successful, cannot use device.");
+  ERROR_LOG("No read modes were successful, cannot use device.");
   return false;
 }
 
@@ -1141,6 +1136,484 @@ bool CDImage::IsDeviceName(const char* filename)
   const bool is_cdrom = (ioctl(fd, CDROM_GET_CAPABILITY, 0) >= 0);
   close(fd);
   return is_cdrom;
+}
+
+#elif defined(__APPLE__)
+
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOBSD.h>
+#include <IOKit/IOKitLib.h>
+#include <IOKit/storage/IOCDMedia.h>
+#include <IOKit/storage/IOCDMediaBSDClient.h>
+#include <IOKit/storage/IODVDMedia.h>
+#include <IOKit/storage/IODVDMediaBSDClient.h>
+#include <IOKit/storage/IOMedia.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+namespace {
+
+class CDImageDeviceMacOS : public CDImage
+{
+public:
+  CDImageDeviceMacOS();
+  ~CDImageDeviceMacOS() override;
+
+  bool Open(const char* filename, Error* error);
+
+  bool ReadSubChannelQ(SubChannelQ* subq, const Index& index, LBA lba_in_index) override;
+  bool HasNonStandardSubchannel() const override;
+
+protected:
+  bool ReadSectorFromIndex(void* buffer, const Index& index, LBA lba_in_index) override;
+
+private:
+  // Raw reads should subtract 00:02:00.
+  static constexpr u32 RAW_READ_OFFSET = 2 * FRAMES_PER_SECOND;
+
+  bool ReadSectorToBuffer(LBA lba);
+  bool DetermineReadMode(Error* error);
+
+  bool DoSetSpeed(u32 speed_multiplier);
+
+  int m_fd = -1;
+  LBA m_current_lba = ~static_cast<LBA>(0);
+
+  SCSIReadMode m_read_mode = SCSIReadMode::None;
+
+  std::array<u8, RAW_SECTOR_SIZE + ALL_SUBCODE_SIZE> m_buffer;
+};
+
+} // namespace
+
+static io_service_t GetDeviceMediaService(std::string_view devname)
+{
+  std::string_view filename = Path::GetFileName(devname);
+  if (filename.starts_with("r"))
+    filename = filename.substr(1);
+  if (filename.empty())
+    return 0;
+
+  TinyString rdevname(filename);
+  io_iterator_t iterator;
+  kern_return_t ret = IOServiceGetMatchingServices(0, IOBSDNameMatching(0, 0, rdevname.c_str()), &iterator);
+  if (ret != KERN_SUCCESS)
+  {
+    ERROR_LOG("IOServiceGetMatchingService() returned {}", ret);
+    return 0;
+  }
+
+  // search up the heirarchy
+  for (;;)
+  {
+    io_service_t service = IOIteratorNext(iterator);
+    IOObjectRelease(iterator);
+
+    if (IOObjectConformsTo(service, kIOCDMediaClass) || IOObjectConformsTo(service, kIODVDMediaClass))
+    {
+      return service;
+    }
+
+    ret = IORegistryEntryGetParentIterator(service, kIOServicePlane, &iterator);
+    IOObjectRelease(service);
+    if (ret != KERN_SUCCESS)
+      return 0;
+  }
+}
+
+CDImageDeviceMacOS::CDImageDeviceMacOS() = default;
+
+CDImageDeviceMacOS::~CDImageDeviceMacOS()
+{
+  if (m_fd >= 0)
+    close(m_fd);
+}
+
+bool CDImageDeviceMacOS::Open(const char* filename, Error* error)
+{
+  m_filename = filename;
+
+  m_fd = open(filename, O_RDONLY);
+  if (m_fd < 0)
+  {
+    Error::SetErrno(error, "Failed to open device: ", errno);
+    return false;
+  }
+
+  constexpr int read_speed = 8;
+  DoSetSpeed(read_speed);
+
+  // Read ToC
+  static constexpr u32 TOC_BUFFER_SIZE = 2048;
+  std::unique_ptr<CDTOC, void (*)(void*)> toc(static_cast<CDTOC*>(std::malloc(TOC_BUFFER_SIZE)), std::free);
+  dk_cd_read_toc_t toc_read = {};
+  toc_read.format = kCDTOCFormatTOC;
+  toc_read.formatAsTime = true;
+  toc_read.buffer = toc.get();
+  toc_read.bufferLength = TOC_BUFFER_SIZE;
+  if (ioctl(m_fd, DKIOCCDREADTOC, &toc_read) != 0)
+  {
+    Error::SetErrno(error, "ioctl(DKIOCCDREADTOC) failed: ", errno);
+    return false;
+  }
+
+  const u32 desc_count = CDTOCGetDescriptorCount(toc.get());
+  DEV_LOG("sessionFirst={}, sessionLast={}, count={}", toc->sessionFirst, toc->sessionLast, desc_count);
+  if (toc->sessionLast < toc->sessionFirst)
+  {
+    Error::SetStringFmt(error, "Last track {} is before first track {}", toc->sessionLast, toc->sessionFirst);
+    return false;
+  }
+
+  // find track range
+  u32 leadout_index = desc_count;
+  u32 first_track = MAX_TRACK_NUMBER;
+  u32 last_track = 1;
+  for (u32 i = 0; i < desc_count; i++)
+  {
+    const CDTOCDescriptor& desc = toc->descriptors[i];
+    DEV_LOG("  [{}]: Num={}, Point=0x{:02X} ADR={} MSF={}:{}:{}", i, desc.tno, desc.point, desc.adr, desc.p.minute,
+            desc.p.second, desc.p.frame);
+
+    // Why does MacOS use 0xA2 instead of 0xAA for leadout??
+    if (desc.point == 0xA2)
+    {
+      leadout_index = i;
+    }
+    else if (desc.point >= 1 && desc.point <= MAX_TRACK_NUMBER)
+    {
+      first_track = std::min<u32>(first_track, desc.point);
+      last_track = std::max<u32>(last_track, desc.point);
+    }
+  }
+  if (leadout_index == desc_count)
+  {
+    Error::SetStringView(error, "Lead-out track not found.");
+    return false;
+  }
+
+  LBA disc_lba = 0;
+  LBA last_track_lba = 0;
+  for (u32 track_num = first_track; track_num <= last_track; track_num++)
+  {
+    u32 toc_index;
+    for (toc_index = 0; toc_index < desc_count; toc_index++)
+    {
+      const CDTOCDescriptor& desc = toc->descriptors[toc_index];
+      if (desc.point == track_num)
+        break;
+    }
+    if (toc_index == desc_count)
+    {
+      Error::SetStringFmt(error, "Track {} not found in TOC", track_num);
+      return false;
+    }
+
+    const CDTOCDescriptor& desc = toc->descriptors[toc_index];
+    const u32 track_lba = Position{desc.p.minute, desc.p.second, desc.p.frame}.ToLBA();
+
+    // fill in the previous track's length
+    if (!m_tracks.empty())
+    {
+      const LBA previous_track_length = track_lba - last_track_lba;
+      m_tracks.back().length += previous_track_length;
+      m_indices.back().length += previous_track_length;
+      disc_lba += previous_track_length;
+    }
+
+    last_track_lba = track_lba;
+
+    // precompute subchannel q flags for the whole track
+    SubChannelQ::Control control{};
+    control.bits = desc.adr | (desc.control << 4);
+
+    const TrackMode track_mode = control.data ? CDImage::TrackMode::Mode2Raw : CDImage::TrackMode::Audio;
+
+    // TODO: How the hell do we handle pregaps here?
+    const u32 pregap_frames = (track_num == 1) ? 150 : 0;
+    if (pregap_frames > 0)
+    {
+      Index pregap_index = {};
+      pregap_index.start_lba_on_disc = disc_lba;
+      pregap_index.start_lba_in_track = static_cast<LBA>(-static_cast<s32>(pregap_frames));
+      pregap_index.length = pregap_frames;
+      pregap_index.track_number = track_num;
+      pregap_index.index_number = 0;
+      pregap_index.mode = track_mode;
+      pregap_index.submode = CDImage::SubchannelMode::None;
+      pregap_index.control.bits = control.bits;
+      pregap_index.is_pregap = true;
+      m_indices.push_back(pregap_index);
+      disc_lba += pregap_frames;
+    }
+
+    // index 1, will be filled in next iteration
+    if (track_num <= MAX_TRACK_NUMBER)
+    {
+      // add the track itself
+      m_tracks.push_back(
+        Track{track_num, disc_lba, static_cast<u32>(m_indices.size()), 0, track_mode, SubchannelMode::None, control});
+
+      Index index1;
+      index1.start_lba_on_disc = disc_lba;
+      index1.start_lba_in_track = 0;
+      index1.length = 0;
+      index1.track_number = track_num;
+      index1.index_number = 1;
+      index1.file_index = 0;
+      index1.file_sector_size = RAW_SECTOR_SIZE;
+      index1.file_offset = static_cast<u64>(track_lba);
+      index1.mode = track_mode;
+      index1.submode = CDImage::SubchannelMode::None;
+      index1.control.bits = control.bits;
+      index1.is_pregap = false;
+      m_indices.push_back(index1);
+    }
+  }
+
+  if (m_tracks.empty())
+  {
+    ERROR_LOG("File '{}' contains no tracks", filename);
+    Error::SetString(error, fmt::format("File '{}' contains no tracks", filename));
+    return false;
+  }
+
+  // Fill last track length from lead-out.
+  const CDTOCDescriptor& leadout_desc = toc->descriptors[leadout_index];
+  const u32 leadout_lba = Position{leadout_desc.p.minute, leadout_desc.p.second, leadout_desc.p.frame}.ToLBA();
+  const LBA previous_track_length = static_cast<LBA>(leadout_lba - last_track_lba);
+  m_tracks.back().length += previous_track_length;
+  m_indices.back().length += previous_track_length;
+  disc_lba += previous_track_length;
+
+  // And add the lead-out itself.
+  AddLeadOutIndex();
+
+  m_lba_count = disc_lba;
+
+  DEV_LOG("{} tracks, {} indices, {} lbas", m_tracks.size(), m_indices.size(), m_lba_count);
+  for (u32 i = 0; i < m_tracks.size(); i++)
+  {
+    DEV_LOG(" Track {}: Start {}, length {}, mode {}, control 0x{:02X}", m_tracks[i].track_number,
+            m_tracks[i].start_lba, m_tracks[i].length, static_cast<u8>(m_tracks[i].mode), m_tracks[i].control.bits);
+  }
+  for (u32 i = 0; i < m_indices.size(); i++)
+  {
+    DEV_LOG(" Index {}: Track {}, Index [], Start {}, length {}, file sector size {}, file offset {}", i,
+            m_indices[i].track_number, m_indices[i].index_number, m_indices[i].start_lba_on_disc, m_indices[i].length,
+            m_indices[i].file_sector_size, m_indices[i].file_offset);
+  }
+
+  if (!DetermineReadMode(error))
+    return false;
+
+  return Seek(1, Position{0, 0, 0});
+}
+
+bool CDImageDeviceMacOS::ReadSubChannelQ(SubChannelQ* subq, const Index& index, LBA lba_in_index)
+{
+  if (index.file_sector_size == 0 || m_read_mode < SCSIReadMode::Full)
+    return CDImage::ReadSubChannelQ(subq, index, lba_in_index);
+
+  const LBA disc_lba = static_cast<LBA>(index.file_offset) + lba_in_index;
+  if (m_current_lba != disc_lba && !ReadSectorToBuffer(disc_lba))
+    return false;
+
+  if (m_read_mode == SCSIReadMode::SubQOnly)
+  {
+    // copy out subq
+    std::memcpy(subq->data.data(), m_buffer.data() + RAW_SECTOR_SIZE, SUBCHANNEL_BYTES_PER_FRAME);
+    return true;
+  }
+  else // if (m_scsi_read_mode == SCSIReadMode::Full)
+  {
+    // need to deinterleave the subcode
+    u8 deinterleaved_subcode[ALL_SUBCODE_SIZE];
+    DeinterleaveSubcode(m_buffer.data() + RAW_SECTOR_SIZE, deinterleaved_subcode);
+
+    // P, Q, ...
+    std::memcpy(subq->data.data(), deinterleaved_subcode + SUBCHANNEL_BYTES_PER_FRAME, SUBCHANNEL_BYTES_PER_FRAME);
+    return true;
+  }
+}
+
+bool CDImageDeviceMacOS::HasNonStandardSubchannel() const
+{
+  // Can only read subchannel through SPTD.
+  return m_read_mode >= SCSIReadMode::Full;
+}
+
+bool CDImageDeviceMacOS::ReadSectorFromIndex(void* buffer, const Index& index, LBA lba_in_index)
+{
+  if (index.file_sector_size == 0)
+    return false;
+
+  const LBA disc_lba = static_cast<LBA>(index.file_offset) + lba_in_index;
+  if (m_current_lba != disc_lba && !ReadSectorToBuffer(disc_lba))
+    return false;
+
+  std::memcpy(buffer, m_buffer.data(), RAW_SECTOR_SIZE);
+  return true;
+}
+
+bool CDImageDeviceMacOS::DoSetSpeed(u32 speed_multiplier)
+{
+  const u16 speed = static_cast<u16>((FRAMES_PER_SECOND * RAW_SECTOR_SIZE * speed_multiplier) / 1024);
+  if (ioctl(m_fd, DKIOCCDSETSPEED, &speed) != 0)
+  {
+    ERROR_LOG("DKIOCCDSETSPEED for speed {} failed: {}", speed, errno);
+    return false;
+  }
+
+  return true;
+}
+
+bool CDImageDeviceMacOS::ReadSectorToBuffer(LBA lba)
+{
+  if (lba < RAW_READ_OFFSET)
+  {
+    ERROR_LOG("Out of bounds LBA {}", lba);
+    return false;
+  }
+
+  const u32 sector_size =
+    RAW_SECTOR_SIZE + ((m_read_mode == SCSIReadMode::Full) ?
+                         ALL_SUBCODE_SIZE :
+                         ((m_read_mode == SCSIReadMode::SubQOnly) ? SUBCHANNEL_BYTES_PER_FRAME : 0));
+  dk_cd_read_t desc = {};
+  desc.sectorArea =
+    kCDSectorAreaSync | kCDSectorAreaHeader | kCDSectorAreaSubHeader | kCDSectorAreaUser | kCDSectorAreaAuxiliary |
+    ((m_read_mode == SCSIReadMode::Full) ? kCDSectorAreaSubChannel :
+                                           ((m_read_mode == SCSIReadMode::SubQOnly) ? kCDSectorAreaSubChannelQ : 0));
+  desc.sectorType = kCDSectorTypeUnknown;
+  desc.offset = static_cast<u64>(lba - RAW_READ_OFFSET) * sector_size;
+  desc.buffer = m_buffer.data();
+  desc.bufferLength = sector_size;
+  if (ioctl(m_fd, DKIOCCDREAD, &desc) != 0)
+  {
+    const Position msf = Position::FromLBA(lba);
+    ERROR_LOG("DKIOCCDREAD for LBA {} (MSF {}:{}:{}) failed: {}", lba, msf.minute, msf.second, msf.frame, errno);
+    return false;
+  }
+
+  m_current_lba = lba;
+  return true;
+}
+
+bool CDImageDeviceMacOS::DetermineReadMode(Error* error)
+{
+  const LBA track_1_lba = static_cast<LBA>(m_indices[m_tracks[0].first_index].file_offset);
+  const bool check_subcode = ShouldTryReadingSubcode();
+
+  DEV_LOG("Trying read with full subcode...");
+  m_read_mode = SCSIReadMode::Full;
+  m_current_lba = m_lba_count;
+  if (check_subcode && ReadSectorToBuffer(track_1_lba))
+  {
+    if (VerifySCSIReadData(std::span<u8>(m_buffer.data(), RAW_SECTOR_SIZE + ALL_SUBCODE_SIZE), SCSIReadMode::Full,
+                           track_1_lba))
+    {
+      VERBOSE_LOG("Using reads with subcode");
+      return true;
+    }
+  }
+
+#if 0
+  // This seems to lock up on my drive... :/
+  WARNING_LOG("{}", "Full subcode failed, trying SCSI read with only subq...");
+  m_read_mode = SCSIReadMode::SubQOnly;
+  m_current_lba = m_lba_count;
+  if (check_subcode && ReadSectorToBuffer(track_1_lba))
+  {
+    if (VerifySCSIReadData(std::span<u8>(m_buffer.data(), RAW_SECTOR_SIZE + SUBCHANNEL_BYTES_PER_FRAME),
+                           SCSIReadMode::SubQOnly, track_1_lba))
+    {
+      VERBOSE_LOG("{}", "Using reads with subq only");
+      return true;
+    }
+  }
+#endif
+
+  WARNING_LOG("SCSI reads failed, trying without subcode...");
+  m_read_mode = SCSIReadMode::Raw;
+  m_current_lba = m_lba_count;
+  if (ReadSectorToBuffer(track_1_lba))
+  {
+    WARNING_LOG("Using non-subcode reads, libcrypt games will not run correctly");
+    return true;
+  }
+
+  ERROR_LOG("No read modes were successful, cannot use device.");
+  return false;
+}
+
+std::unique_ptr<CDImage> CDImage::OpenDeviceImage(const char* filename, Error* error)
+{
+  std::unique_ptr<CDImageDeviceMacOS> image = std::make_unique<CDImageDeviceMacOS>();
+  if (!image->Open(filename, error))
+    return {};
+
+  return image;
+}
+
+std::vector<std::pair<std::string, std::string>> CDImage::GetDeviceList()
+{
+  std::vector<std::pair<std::string, std::string>> ret;
+
+  // borrowed from PCSX2
+  auto append_list = [&ret](const char* classes_name) {
+    CFMutableDictionaryRef classes = IOServiceMatching(kIOCDMediaClass);
+    if (!classes)
+      return;
+
+    CFDictionarySetValue(classes, CFSTR(kIOMediaEjectableKey), kCFBooleanTrue);
+
+    io_iterator_t iter;
+    kern_return_t result = IOServiceGetMatchingServices(0, classes, &iter);
+    if (result != KERN_SUCCESS)
+    {
+      CFRelease(classes);
+      return;
+    }
+
+    while (io_object_t media = IOIteratorNext(iter))
+    {
+      CFTypeRef path = IORegistryEntryCreateCFProperty(media, CFSTR(kIOBSDNameKey), kCFAllocatorDefault, 0);
+      if (path)
+      {
+        char buf[PATH_MAX];
+        if (CFStringGetCString((CFStringRef)path, buf, sizeof(buf), kCFStringEncodingUTF8))
+        {
+          if (std::none_of(ret.begin(), ret.end(), [&buf](const auto& it) { return it.second == buf; }))
+            ret.emplace_back(fmt::format("/dev/r{}", buf), buf);
+        }
+        CFRelease(path);
+        IOObjectRelease(media);
+      }
+      IOObjectRelease(media);
+    }
+
+    IOObjectRelease(iter);
+  };
+
+  append_list(kIOCDMediaClass);
+  append_list(kIODVDMediaClass);
+
+  return ret;
+}
+
+bool CDImage::IsDeviceName(const char* filename)
+{
+  if (!std::string_view(filename).starts_with("/dev"))
+    return false;
+
+  io_service_t service = GetDeviceMediaService(filename);
+  const bool valid = (service != 0);
+  if (valid)
+    IOObjectRelease(service);
+
+  return valid;
 }
 
 #else

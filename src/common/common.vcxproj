@@ -7,7 +7,6 @@
     <ClInclude Include="bitfield.h" />
     <ClInclude Include="bitutils.h" />
     <ClInclude Include="build_timestamp.h" />
-    <ClInclude Include="byte_stream.h" />
     <ClInclude Include="crash_handler.h" />
     <ClInclude Include="dimensional_array.h" />
     <ClInclude Include="dynamic_library.h" />
@@ -16,6 +15,11 @@
     <ClInclude Include="fastjmp.h" />
     <ClInclude Include="fifo_queue.h" />
     <ClInclude Include="file_system.h" />
+    <ClInclude Include="gsvector.h" />
+    <ClInclude Include="gsvector_formatter.h" />
+    <ClInclude Include="gsvector_neon.h" />
+    <ClInclude Include="gsvector_nosimd.h" />
+    <ClInclude Include="gsvector_sse.h" />
     <ClInclude Include="hash_combine.h" />
     <ClInclude Include="heap_array.h" />
     <ClInclude Include="intrin.h" />
@@ -28,12 +32,12 @@
     <ClInclude Include="path.h" />
     <ClInclude Include="perf_scope.h" />
     <ClInclude Include="progress_callback.h" />
-    <ClInclude Include="rectangle.h" />
     <ClInclude Include="scoped_guard.h" />
     <ClInclude Include="settings_interface.h" />
     <ClInclude Include="sha1_digest.h" />
     <ClInclude Include="small_string.h" />
     <ClInclude Include="heterogeneous_containers.h" />
+    <ClInclude Include="binary_reader_writer.h" />
     <ClInclude Include="string_util.h" />
     <ClInclude Include="thirdparty\SmallVector.h" />
     <ClInclude Include="thirdparty\StackWalker.h" />
@@ -45,12 +49,12 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="assert.cpp" />
-    <ClCompile Include="byte_stream.cpp" />
     <ClCompile Include="crash_handler.cpp" />
     <ClCompile Include="dynamic_library.cpp" />
     <ClCompile Include="error.cpp" />
     <ClCompile Include="fastjmp.cpp" />
     <ClCompile Include="file_system.cpp" />
+    <ClCompile Include="gsvector.cpp" />
     <ClCompile Include="layered_settings_interface.cpp" />
     <ClCompile Include="log.cpp" />
     <ClCompile Include="memmap.cpp" />
@@ -60,6 +64,7 @@
     <ClCompile Include="progress_callback.cpp" />
     <ClCompile Include="sha1_digest.cpp" />
     <ClCompile Include="small_string.cpp" />
+    <ClCompile Include="binary_reader_writer.cpp" />
     <ClCompile Include="string_util.cpp" />
     <ClCompile Include="thirdparty\SmallVector.cpp" />
     <ClCompile Include="thirdparty\StackWalker.cpp" />
@@ -68,6 +73,7 @@
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="bitfield.natvis" />
+    <Natvis Include="gsvector.natvis" />
     <Natvis Include="thirdparty\llvm.natvis" />
   </ItemGroup>
   <ItemGroup>

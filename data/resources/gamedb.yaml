@@ -956,6 +956,10 @@ SLES-02089:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForceSoftwareRendererForReadbacks # 250+ readbacks per frame when loading...
+  settings:
+    displayLineStartOffset: 2 # Game doesn't fill the whole framebuffer, stops flicker.
   metadata:
     publisher: "Cryo Interactive"
     developer: "Smart Dog"
@@ -3177,7 +3181,8 @@ SCPS-10126:
     - AnalogController
     - DigitalController
   traits:
-    - ForceSoftwareRenderer
+    - ForceAccurateBlending # Requires 16-bit blend precision
+    - DisableTrueColor # to fix screen flicker.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -3199,6 +3204,9 @@ SLES-04108:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForceAccurateBlending # Requires 16-bit blend precision
+    - DisableTrueColor # to fix screen flicker.
   metadata:
     publisher: "Vivendi Universal Games, Inc"
     developer: "Coktel Vision / Neko Entertaiment"
@@ -3848,6 +3856,8 @@ SLPS-00269:
   name: "Air Management '96 (Japan)"
   controllers:
     - DigitalController
+  traits:
+    - ForceRecompilerICache # Prevents crashes.
   metadata:
     publisher: "Koei"
     developer: "Koei"
@@ -8679,7 +8689,7 @@ SLES-00578:
   name: "Area 51 (Europe) (En,Fr,De,Es)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
     - PlayStationMouse
   metadata:
     publisher: "GT Interactive / Midway"
@@ -8702,7 +8712,7 @@ SLES-03783:
   name: "Area 51 (Europe) (En,Fr,De,Es) (Midway Classics)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
     - PlayStationMouse
   metadata:
     publisher: "GT Interactive / Midway"
@@ -8725,7 +8735,7 @@ SLPS-00726:
   name: "Area 51 (Japan)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
     - PlayStationMouse
   metadata:
     publisher: "Soft Bank"
@@ -8745,7 +8755,7 @@ SLPS-00725:
   name: "Area 51 (Japan) (Special Pack)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
     - PlayStationMouse
   metadata:
     publisher: "Soft Bank"
@@ -8768,7 +8778,7 @@ SLUS-00164:
     versionTested: "0.1-986-gfc911de1"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
     - PlayStationMouse
   metadata:
     publisher: "Midway"
@@ -10713,6 +10723,8 @@ SLPS-91180:
     linkCable: false
 SLPM-80413:
   name: "Athena - Awakening from the Ordinary Life (Japan) (Demo)"
+  traits:
+    - DisableWidescreen # Pre-rendered backgrounds.
 SLPM-86185:
   name: "Athena - Awakening from the Ordinary Life (Japan) (Disc 1)"
   discSet:
@@ -10727,6 +10739,8 @@ SLPM-86185:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableWidescreen # Pre-rendered backgrounds.
   metadata:
     publisher: "SNK"
     developer: "Yumekobo Co., Ltd"
@@ -10752,6 +10766,8 @@ SLPM-86186:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableWidescreen # Pre-rendered backgrounds.
   metadata:
     publisher: "SNK"
     developer: "Yumekobo Co., Ltd"
@@ -10777,6 +10793,8 @@ SLPM-86187:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableWidescreen # Pre-rendered backgrounds.
   metadata:
     publisher: "SNK"
     developer: "Yumekobo Co., Ltd"
@@ -13736,6 +13754,8 @@ SLUS-01207:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Required for PGXP.
   metadata:
     publisher: "UBI Soft Entertainment"
     developer: "Kemco"
@@ -13936,6 +13956,8 @@ SCES-00700:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Sony"
     developer: "Takara"
@@ -13959,6 +13981,8 @@ SLUS-00483:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Playmates Interactive Entertainment"
     developer: "Takara"
@@ -14017,6 +14041,8 @@ SLPS-00650:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Takara"
     developer: "Takara"
@@ -14073,6 +14099,9 @@ SLPS-01548:
   controllers:
     - AnalogController
     - DigitalController
+  settings:
+    dmaMaxSliceTicks: 100 # Relies on GPU backpressure to limit frame rate.
+    dmaHaltTicks: 100 # Too fast DMA and cutscene frame rate will run at 60.
   metadata:
     publisher: "IPC Software"
     developer: "Exrays"
@@ -14092,6 +14121,9 @@ SLPM-86526:
   controllers:
     - AnalogController
     - DigitalController
+  settings:
+    dmaMaxSliceTicks: 100 # Relies on GPU backpressure to limit frame rate.
+    dmaHaltTicks: 100 # Too fast DMA and cutscene frame rate will run at 60.
   metadata:
     publisher: "Hamster"
     developer: "Exrays"
@@ -15410,6 +15442,8 @@ SLPS-01222:
       - SLPS-01223
   controllers:
     - DigitalController
+  traits:
+    - DisableWidescreen
   metadata:
     publisher: "Capcom"
     developer: "Capcom Production Studio 4"
@@ -15433,6 +15467,8 @@ SLPS-01223:
       - SLPS-01223
   controllers:
     - DigitalController
+  traits:
+    - DisableWidescreen
   metadata:
     publisher: "Capcom"
     developer: "Capcom Production Studio 4"
@@ -15449,6 +15485,8 @@ SLPS-01223:
     linkCable: false
 SLPS-00999:
   name: "Biohazard 2 (Japan) (Trial Edition)"
+  traits:
+    - DisableWidescreen
 SLPS-01510:
   name: "Biohazard 2 - Dual Shock Ver. (Japan) (Disc 1) (Leon-hen)"
   discSet:
@@ -15459,6 +15497,8 @@ SLPS-01510:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableWidescreen
   metadata:
     publisher: "Capcom"
     developer: "Capcom Production Studio 4"
@@ -15483,6 +15523,8 @@ SLPS-01511:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableWidescreen
   metadata:
     publisher: "Capcom"
     developer: "Capcom Production Studio 4"
@@ -15502,6 +15544,9 @@ SLPS-02300:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
   metadata:
     publisher: "Capcom"
     developer: "Capcom Production Studio 4"
@@ -15518,11 +15563,17 @@ SLPS-02300:
     linkCable: false
 SLPM-80485:
   name: "Biohazard 3 - Last Escape (Japan) (Demo)"
+  traits:
+    - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
 SLPM-87224:
   name: "Biohazard 3 - Last Escape (Japan) (Rev 1)"
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
   metadata:
     publisher: "Capcom"
     developer: "Capcom Production Studio 4"
@@ -18976,6 +19027,8 @@ SLES-01304:
   name: "Breath of Fire III (Europe)"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Fixes jittery sprites.
   metadata:
     publisher: "Infogrames"
     developer: "Capcom"
@@ -18994,6 +19047,8 @@ SLES-01319:
   name: "Breath of Fire III (France)"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Fixes jittery sprites.
   metadata:
     publisher: "Infogrames"
     developer: "Capcom"
@@ -19012,6 +19067,8 @@ SLES-01320:
   name: "Breath of Fire III (Germany)"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Fixes jittery sprites.
   metadata:
     publisher: "Infogrames"
     developer: "Capcom"
@@ -19030,6 +19087,8 @@ SLPS-00990:
   name: "Breath of Fire III (Japan)"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Fixes jittery sprites.
   metadata:
     publisher: "Capcom"
     developer: "Capcom"
@@ -19046,6 +19105,8 @@ SLPS-00990:
     linkCable: false
 SLPM-80115:
   name: "Breath of Fire III (Japan) (Demo)"
+  traits:
+    - ForcePGXPCPUMode # Fixes jittery sprites.
 SLUS-00422:
   name: "Breath of Fire III (USA)"
   compatibility:
@@ -19053,6 +19114,8 @@ SLUS-00422:
     versionTested: "0.1-1072-g840a806"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Fixes jittery sprites.
   metadata:
     publisher: "Capcom"
     developer: "Capcom"
@@ -19071,6 +19134,8 @@ SLPM-86720:
   name: "Breath of Fire III [PlayStation the Best] (aka Breath of Fire 3 [PlayStation the Best])"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Fixes jittery sprites.
   metadata:
     publisher: "Capcom"
     developer: "Capcom"
@@ -21945,6 +22010,8 @@ SLES-03889:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Capcom"
     developer: "Capcom"
@@ -21967,6 +22034,8 @@ SLPM-87053:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Capcom"
     developer: "Capcom"
@@ -21991,6 +22060,8 @@ SLUS-01476:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Capcom"
     developer: "Capcom"
@@ -22012,7 +22083,6 @@ SLPS-01567:
     versionTested: "0.1-2433-g9089c973"
     upscalingIssues: "There's garbage in right of the screen and the first boss sprite is corrupted."
   controllers:
-    - AnalogController
     - DigitalController
   settings:
     displayActiveStartOffset: -62
@@ -22747,12 +22817,15 @@ SLUS-01384:
     linkCable: false
 SLES-01182:
   name: "Castrol Honda Superbike Racing (Europe) (En,Fr,De,It)"
+  compatibility:
+    comments: "Intro logos require the software renderer to display correctly."
   controllers:
     - AnalogController
     - DigitalController
     - NeGcon
   settings:
-    dmaMaxSliceTicks: 100
+    dmaMaxSliceTicks: 500 # Needs smaller sizes to avoid menu corruption.
+    dmaHaltTicks: 250
   metadata:
     publisher: "THQ"
     developer: "Interactive Entertainment"
@@ -22774,8 +22847,10 @@ SLUS-00882:
   name: "Castrol Honda Superbike Racing (USA)"
   compatibility:
     rating: NoIssues
+    comments: "Intro logos require the software renderer to display correctly."
   settings:
-    dmaMaxSliceTicks: 100
+    dmaMaxSliceTicks: 500 # Needs smaller sizes to avoid menu corruption.
+    dmaHaltTicks: 250
   controllers:
     - AnalogController
     - DigitalController
@@ -25559,8 +25634,8 @@ SLPM-87395:
     - ForceRecompilerICache
     - DisableWidescreen
   settings:
-    dmaMaxSliceTicks: 100
-    dmaHaltTicks: 150
+    dmaMaxSliceTicks: 30 # Very sensitive to DMA timing, otherwise polygon flicker.
+    dmaHaltTicks: 100 # CPU needs to run significantly faster than DMA.
   codes:
     - SLPM-87395
     - HASH-753EB8647043CE02
@@ -25594,8 +25669,8 @@ SLPM-87396:
     - ForceRecompilerICache
     - DisableWidescreen
   settings:
-    dmaMaxSliceTicks: 100
-    dmaHaltTicks: 150
+    dmaMaxSliceTicks: 30 # Very sensitive to DMA timing, otherwise polygon flicker.
+    dmaHaltTicks: 100 # CPU needs to run significantly faster than DMA.
   codes:
     - SLPM-87396
     - HASH-BCEC05C9F299F1F9
@@ -25632,8 +25707,8 @@ SLUS-01041:
     - ForceRecompilerICache
     - DisableWidescreen
   settings:
-    dmaMaxSliceTicks: 100
-    dmaHaltTicks: 150
+    dmaMaxSliceTicks: 30 # Very sensitive to DMA timing, otherwise polygon flicker.
+    dmaHaltTicks: 100 # CPU needs to run significantly faster than DMA.
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -25664,8 +25739,8 @@ SLUS-01080:
     - ForceRecompilerICache
     - DisableWidescreen
   settings:
-    dmaMaxSliceTicks: 100
-    dmaHaltTicks: 150
+    dmaMaxSliceTicks: 30 # Very sensitive to DMA timing, otherwise polygon flicker.
+    dmaHaltTicks: 100 # CPU needs to run significantly faster than DMA.
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -27297,6 +27372,8 @@ SCUS-94409:
     versionTested: "0.1-3968-gd9151ceb"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode
   metadata:
     publisher: "Psygnosis"
     developer: "Psygnosis"
@@ -30018,6 +30095,8 @@ SCES-00344:
     rating: NoIssues
   controllers:
     - DigitalController
+  traits:
+    - ForceRoundTextureCoordinates
   metadata:
     publisher: "Sony"
     developer: "Naughty Dog, Inc"
@@ -30040,6 +30119,8 @@ SCPS-10031:
     rating: NoIssues
   controllers:
     - DigitalController
+  traits:
+    - ForceRoundTextureCoordinates
   codes:
     - SCPS-10031
     - SCPS-45026
@@ -30064,6 +30145,8 @@ SCUS-94900:
     rating: NoIssues
   controllers:
     - DigitalController
+  traits:
+    - ForceRoundTextureCoordinates
   metadata:
     publisher: "Sony"
     developer: "Naughty Dog, Inc"
@@ -30083,12 +30166,11 @@ SCUS-94244:
   compatibility:
     rating: NoIssues
     versionTested: "0.1-2499-g770dd5a6"
-    comments: "Last sound of the bios sound keeps looping until the first loading screen in the game starts. It's related with CD-ROM speeds and can be avoided with \"Fast Boot\"\
-      \ option on (Issue #407)."
   controllers:
     - AnalogController
     - DigitalController
   traits:
+    - ForceRoundTextureCoordinates
     - DisablePGXPColorCorrection
   metadata:
     publisher: "Sony"
@@ -30113,6 +30195,8 @@ SCES-00967:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForceRoundTextureCoordinates
   metadata:
     publisher: "Sony"
     developer: "Naughty Dog, Inc"
@@ -30138,6 +30222,8 @@ SCUS-94154:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForceRoundTextureCoordinates
   metadata:
     publisher: "Sony"
     developer: "Naughty Dog, Inc"
@@ -30159,6 +30245,8 @@ SCPS-10047:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForceRoundTextureCoordinates
   codes:
     - SCPS-10047
     - SCPS-91092
@@ -30187,6 +30275,7 @@ SCPS-10073:
     - AnalogController
     - DigitalController
   traits:
+    - ForceRoundTextureCoordinates
     - DisablePGXPColorCorrection
   codes:
     - SCPS-10073
@@ -30213,6 +30302,8 @@ SCPS-45350:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForceRoundTextureCoordinates
   metadata:
     publisher: "Sony"
     developer: "Naughty Dog, Inc"
@@ -30235,6 +30326,7 @@ SCES-01420:
     - AnalogController
     - DigitalController
   traits:
+    - ForceRoundTextureCoordinates
     - DisablePGXPColorCorrection
   metadata:
     publisher: "Sony"
@@ -30374,6 +30466,8 @@ SCPS-91304:
   name: "Crash Bandicoot [PSOne Books]"
   controllers:
     - DigitalController
+  traits:
+    - ForceRoundTextureCoordinates
   metadata:
     publisher: "Sony"
     developer: "Naughty Dog, Inc"
@@ -30654,8 +30748,16 @@ SLES-02495:
     linkCable: false
 SCPS-10003:
   name: "Crime Crackers (Japan)"
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
+  settings:
+    dmaMaxSliceTicks: 100 # Stops DMA from blazing past the deferred CDROM async interrupt.
+    displayActiveEndOffset: -1 # Fixes garbage on edge of screen in cutscenes.
+  codes:
+    - HASH-111C340E270B10A8
   metadata:
     publisher: "Sony"
     developer: "Media Vision Entertainment"
@@ -30720,11 +30822,11 @@ SLUS-00576:
   compatibility:
     rating: NoIssues
     versionTested: "0.1-1409-ge198e315"
-    comments: "This game drawns in the \"typical\" overscan area. These areas would not be visible in a typical TV of the era. To bypass some of these problems, you can change the\
-      \ Crop to \"none\" or change the screen positioning with the in-game buit function."
   controllers:
     - AnalogController
     - DigitalController
+  settings:
+    displayCropMode: None # Game draws in overscan area.
   metadata:
     publisher: "Interplay"
     developer: "Pixelogic"
@@ -30966,10 +31068,16 @@ SLUS-00530:
     linkCable: false
 SLED-02119:
   name: "Croc 2 (Europe) (Demo)"
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   traits:
     - ForcePGXPCPUMode
 SLES-02088:
   name: "Croc 2 (Europe) (En,Fr,De,Es,It,Nl,Sv)"
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - AnalogController
     - DigitalController
@@ -31509,7 +31617,7 @@ SLES-00292:
   name: "Crypt Killer (Europe)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Konami"
     developer: "Konami"
@@ -31528,7 +31636,7 @@ SLUS-00335:
   name: "Crypt Killer (USA)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Konami"
     developer: "Konami"
@@ -34362,6 +34470,8 @@ SLES-01719:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Virgin Interactive"
     developer: "Capcom"
@@ -34384,6 +34494,8 @@ SLUS-00745:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Capcom"
     developer: "Capcom"
@@ -34694,6 +34806,8 @@ SCPS-45190:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   codes:
     - SCPS-45190
     - SCPS-45191
@@ -34716,6 +34830,8 @@ SCES-01259:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Sony"
     developer: "Team Ninja"
@@ -34735,6 +34851,8 @@ SLPS-01289:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Tecmo"
     developer: "Team Ninja"
@@ -34751,6 +34869,11 @@ SLPS-01289:
     linkCable: false
 SCED-01372:
   name: "Dead or Alive (UK) (Demo)"
+  controllers:
+    - AnalogController
+    - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
 SLUS-00606:
   name: "Dead or Alive (USA)"
   compatibility:
@@ -34759,6 +34882,8 @@ SLUS-00606:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Tecmo"
     developer: "Team Ninja"
@@ -34775,6 +34900,11 @@ SLUS-00606:
     linkCable: false
 SLUS-80606:
   name: "Dead or Alive (USA) (En,Ja) (Demo)"
+  controllers:
+    - AnalogController
+    - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
 SLPS-00267:
   name: "Deadheat Road (Japan)"
   controllers:
@@ -37025,7 +37155,7 @@ SLES-00445:
   controllers:
     - DigitalController
     - PlayStationMouse
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Fox Interactive / Electronic Arts"
     developer: "Probe Entertainment Limited"
@@ -37050,7 +37180,7 @@ SLPS-00585:
   controllers:
     - DigitalController
     - PlayStationMouse
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Electronic Arts Victor"
     developer: "Probe Entertainment Limited"
@@ -37073,7 +37203,7 @@ SLUS-00119:
   controllers:
     - DigitalController
     - PlayStationMouse
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Fox Interactive"
     developer: "Probe Entertainment Limited"
@@ -37095,7 +37225,7 @@ SLES-02746:
     - DigitalController
     - PlayStationMouse
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Fox Interactive"
     developer: "N-Space"
@@ -37117,7 +37247,7 @@ SLES-02747:
     - DigitalController
     - PlayStationMouse
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Fox Interactive"
     developer: "N-Space"
@@ -37139,7 +37269,7 @@ SLES-02748:
     - DigitalController
     - PlayStationMouse
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Fox Interactive"
     developer: "N-Space"
@@ -37161,7 +37291,7 @@ SLES-02749:
     - DigitalController
     - PlayStationMouse
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Fox Interactive"
     developer: "N-Space"
@@ -37183,7 +37313,7 @@ SLUS-01015:
     - DigitalController
     - PlayStationMouse
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Fox Interactive"
     developer: "N-Space"
@@ -37495,6 +37625,8 @@ SLES-03936:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForceRoundTextureCoordinates
   metadata:
     publisher: "Bandai"
     developer: "Bandai"
@@ -37521,6 +37653,8 @@ SLUS-01436:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForceRoundTextureCoordinates
   metadata:
     publisher: "Bandai"
     developer: "Bandai"
@@ -43155,6 +43289,7 @@ SLES-00132:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
   metadata:
@@ -43179,6 +43314,7 @@ SLPS-00308:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
   metadata:
@@ -43204,6 +43340,7 @@ SLUS-00077:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
   metadata:
@@ -44988,6 +45125,9 @@ SCES-01705:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -45012,6 +45152,9 @@ SCES-11705:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -45036,6 +45179,9 @@ SCES-02565:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -45060,6 +45206,9 @@ SCES-12565:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -45084,6 +45233,9 @@ SCES-02566:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -45108,6 +45260,9 @@ SCES-12566:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -45132,6 +45287,9 @@ SCES-02567:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -45156,6 +45314,9 @@ SCES-12567:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -45180,6 +45341,9 @@ SLPS-02190:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Namco"
     developer: "Namco"
@@ -45204,6 +45368,9 @@ SLPS-02191:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Namco"
     developer: "Namco"
@@ -45228,6 +45395,9 @@ SCES-02568:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -45252,6 +45422,9 @@ SCES-12568:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -45279,6 +45452,9 @@ SLUS-01092:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Namco"
     developer: "Namco"
@@ -45303,6 +45479,9 @@ SLUS-01164:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves sprite positioning.
+    - DisableTrueColor # Stops flicker in some cutscenes.
   metadata:
     publisher: "Namco"
     developer: "Namco"
@@ -45330,6 +45509,8 @@ SLUS-01206:
   controllers:
     - AnalogController
     - DigitalController
+  codes:
+    - SLUSP01206
   metadata:
     publisher: "Enix"
     developer: "Heart Beat / Tamtam / Tose Software"
@@ -45354,6 +45535,8 @@ SLUS-01346:
   controllers:
     - AnalogController
     - DigitalController
+  codes:
+    - SLUSP01346
   metadata:
     publisher: "Enix"
     developer: "Heart Beat / Tamtam / Tose Software"
@@ -46173,9 +46356,10 @@ SLES-00703:
     - AnalogController
     - DigitalController
   traits:
-    - DisablePGXP # 2.5D, not beneficial.
+    - DisablePGXP # 2.5D, not beneficial, breaks rendering.
+    - DisableWidescreen # No effect.
   settings:
-    gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
+    gpuLineDetectMode: AggressiveTriangles # Fixes upscaled rendering.
   metadata:
     publisher: "GT Interactive"
     developer: "3D Realms Entertainment"
@@ -46196,9 +46380,10 @@ SLES-00987:
     - AnalogController
     - DigitalController
   traits:
-    - DisablePGXP # 2.5D, not beneficial.
+    - DisablePGXP # 2.5D, not beneficial, breaks rendering.
+    - DisableWidescreen # No effect.
   settings:
-    gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
+    gpuLineDetectMode: AggressiveTriangles # Fixes upscaled rendering.
   metadata:
     publisher: "GT Interactive"
     developer: "3D Realms Entertainment"
@@ -46216,14 +46401,17 @@ SLES-00987:
 SLED-01027:
   name: "Duke Nukem (France) (Demo)"
   traits:
-    - DisablePGXP # 2.5D, not beneficial.
+    - DisablePGXP # 2.5D, not beneficial, breaks rendering.
+    - DisableWidescreen # No effect.
   settings:
-    gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
+    gpuLineDetectMode: AggressiveTriangles # Fixes upscaled rendering.
 SLES-03405:
   name: "Duke Nukem - Land of the Babes (Europe) (En,Fr,De,Es,It)"
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves wall texture wobble.
   metadata:
     publisher: "GT Interactive Software Corp"
     developer: "N-Space"
@@ -46247,6 +46435,8 @@ SLES-03440:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves wall texture wobble.
   metadata:
     publisher: "GT Interactive Software Corp"
     developer: "N-Space"
@@ -46269,6 +46459,8 @@ SLUS-01002:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves wall texture wobble.
   metadata:
     publisher: "GT Interactive Software Corp"
     developer: "N-Space"
@@ -46288,6 +46480,8 @@ SLES-01515:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves wall texture wobble.
   metadata:
     publisher: "GT Interactive Software Corp"
     developer: "N-Space"
@@ -46307,6 +46501,8 @@ SLES-03517:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves wall texture wobble.
   metadata:
     publisher: "GT Interactive Software Corp"
     developer: "N-Space"
@@ -46326,6 +46522,8 @@ SLES-01619:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves wall texture wobble.
   metadata:
     publisher: "GT Interactive Software Corp"
     developer: "N-Space"
@@ -46345,6 +46543,8 @@ SLES-03518:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves wall texture wobble.
   metadata:
     publisher: "GT Interactive Software Corp"
     developer: "N-Space"
@@ -46367,6 +46567,8 @@ SLUS-00583:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Improves wall texture wobble.
   metadata:
     publisher: "GT Interactive Software Corp"
     developer: "N-Space"
@@ -46383,17 +46585,22 @@ SLUS-00583:
     linkCable: false
 SLUS-80583:
   name: "Duke Nukem - Time to Kill (USA) (Demo 1)"
+  traits:
+    - ForcePGXPCPUMode # Improves wall texture wobble.
 SLUS-90036:
   name: "Duke Nukem - Time to Kill (USA) (Demo 2)"
+  traits:
+    - ForcePGXPCPUMode # Improves wall texture wobble.
 SLPS-01557:
   name: "Duke Nukem - Total Meltdown (Japan)"
   controllers:
     - AnalogController
     - DigitalController
   traits:
-    - DisablePGXP # 2.5D, not beneficial.
+    - DisablePGXP # 2.5D, not beneficial, breaks rendering.
+    - DisableWidescreen # No effect.
   settings:
-    gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
+    gpuLineDetectMode: AggressiveTriangles # Fixes upscaled rendering.
   metadata:
     publisher: "King Record Co. Ltd"
     developer: "3D Realms Entertainment"
@@ -46417,9 +46624,10 @@ SLUS-00355:
     - AnalogController
     - DigitalController
   traits:
-    - DisablePGXP # 2.5D, not beneficial.
+    - DisablePGXP # 2.5D, not beneficial, breaks rendering.
+    - DisableWidescreen # No effect.
   settings:
-    gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
+    gpuLineDetectMode: AggressiveTriangles # Fixes upscaled rendering.
   metadata:
     publisher: "GT Interactive"
     developer: "3D Realms Entertainment"
@@ -48310,7 +48518,7 @@ SLUS-00654:
     - AnalogController
     - DigitalController
     - GunCon
-    - KonamiJustifier
+    - Justifier
     - PlayStationMouse
   metadata:
     publisher: "Working Designs"
@@ -50892,6 +51100,9 @@ SLES-00501:
   name: "Extreme Snow Break (Europe)"
   controllers:
     - DigitalController
+  settings:
+    dmaMaxSliceTicks: 10 # Very sensitive to DMA timing, otherwise polygon flicker.
+    dmaHaltTicks: 100 # CPU needs to run significantly faster than DMA.
   metadata:
     publisher: "Microids"
     developer: "Virtual Studio"
@@ -50908,6 +51119,9 @@ SLES-00501:
     linkCable: false
 SLED-01193:
   name: "Extreme Snow Break (Europe) (Demo)"
+  settings:
+    dmaMaxSliceTicks: 10 # Very sensitive to DMA timing, otherwise polygon flicker.
+    dmaHaltTicks: 100 # CPU needs to run significantly faster than DMA.
 PCPX-96178:
   name: "e-Jump (Japan) (Disc 1)"
   discSet:
@@ -54826,6 +55040,7 @@ SLES-00487:
     - PlayStationMouse
   traits:
     - DisablePGXP # 2.5D, not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
   metadata:
@@ -54849,6 +55064,7 @@ SLPS-00727:
     - PlayStationMouse
   traits:
     - DisablePGXP # 2.5D, not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
   metadata:
@@ -54875,6 +55091,7 @@ SLUS-00331:
     - PlayStationMouse
   traits:
     - DisablePGXP # 2.5D, not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
   metadata:
@@ -56100,6 +56317,8 @@ SCPS-45087:
   name: "Final Fantasy Tactics"
   controllers:
     - DigitalController
+  traits:
+    - DisableWidescreen
   codes:
     - SCPS-45087
     - SCPS-45088
@@ -56121,6 +56340,8 @@ SLPS-00770:
   name: "Final Fantasy Tactics (Japan)"
   controllers:
     - DigitalController
+  traits:
+    - DisableWidescreen
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -56139,6 +56360,8 @@ SLPM-87392:
   name: "Final Fantasy Tactics (Japan) (Rev 1)"
   controllers:
     - DigitalController
+  traits:
+    - DisableWidescreen
   codes:
     - SLPM-87392
     - SLPS-02768
@@ -56164,6 +56387,8 @@ SCUS-94221:
     versionTested: "0.1-1031-g47138aa"
   controllers:
     - DigitalController
+  traits:
+    - DisableWidescreen
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -56253,10 +56478,14 @@ SCES-00867:
       - SCES-00867
       - SCES-10867
       - SCES-20867
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56281,10 +56510,14 @@ SCES-10867:
       - SCES-00867
       - SCES-10867
       - SCES-20867
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56309,10 +56542,14 @@ SCES-20867:
       - SCES-00867
       - SCES-10867
       - SCES-20867
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56337,10 +56574,14 @@ SCES-00868:
       - SCES-00868
       - SCES-10868
       - SCES-20868
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56365,10 +56606,14 @@ SCES-10868:
       - SCES-00868
       - SCES-10868
       - SCES-20868
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56393,10 +56638,14 @@ SCES-20868:
       - SCES-00868
       - SCES-10868
       - SCES-20868
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56421,10 +56670,14 @@ SCES-00869:
       - SCES-00869
       - SCES-10869
       - SCES-20869
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56449,10 +56702,14 @@ SCES-10869:
       - SCES-00869
       - SCES-10869
       - SCES-20869
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56477,10 +56734,14 @@ SCES-20869:
       - SCES-00869
       - SCES-10869
       - SCES-20869
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56511,7 +56772,8 @@ SLPS-00700:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony / Squaresoft"
     developer: "Squaresoft"
@@ -56534,10 +56796,14 @@ SLPS-00701:
       - SLPS-00700
       - SLPS-00701
       - SLPS-00702
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-841-g777809b"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony / Squaresoft"
     developer: "Squaresoft"
@@ -56560,10 +56826,14 @@ SLPS-00702:
       - SLPS-00700
       - SLPS-00701
       - SLPS-00702
+  compatibility:
+    rating: NoIssues
+    versionTested: "0.1-841-g777809b"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony / Squaresoft"
     developer: "Squaresoft"
@@ -56592,7 +56862,8 @@ SCES-00900:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56623,7 +56894,8 @@ SCES-10900:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56654,7 +56926,8 @@ SCES-20900:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   settings:
     displayActiveStartOffset: -44
   metadata:
@@ -56685,7 +56958,8 @@ SCUS-94163:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony / Squaresoft"
     developer: "Squaresoft"
@@ -56714,7 +56988,8 @@ SCUS-94164:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony / Squaresoft"
     developer: "Squaresoft"
@@ -56743,7 +57018,8 @@ SCUS-94165:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony / Squaresoft"
     developer: "Squaresoft"
@@ -56761,17 +57037,20 @@ SCUS-94165:
 SCUS-94961:
   name: "Final Fantasy VII (USA) (Interactive Sampler CD)"
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
 SCUS-94179:
   name: "Final Fantasy VII (USA) (Square Soft on PlayStation Previews)"
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
 SCPS-45007:
   name: "Final Fantasy VII (aka Final Fantasy 7 or FF7)"
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   codes:
     - SCPS-45007
     - SCPS-45008
@@ -56802,7 +57081,8 @@ SLPM-84020:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   codes:
     - SLPM-84020
     - SLPM-87380
@@ -56834,7 +57114,8 @@ SLPM-84021:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   codes:
     - SLPM-84021
     - SLPM-87381
@@ -56866,7 +57147,8 @@ SLPM-84022:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   codes:
     - SLPM-84022
     - SLPM-87382
@@ -56898,7 +57180,8 @@ SLPM-87383:
   controllers:
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   codes:
     - SLPM-87383
     - SLPS-01060
@@ -58016,9 +58299,8 @@ SCES-03884:
 SLPS-00148:
   name: "Firemen 2, The - Pete & Danny (Japan)"
   compatibility:
-    rating: GraphicalAudioIssues
-    versionTested: "0.1-4693-gbbcf1c67"
-    comments: "Dialogue in certain cutscenes ends too early or is missing entirely (Issue #575)"
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - DigitalController
   codes:
@@ -60012,6 +60294,8 @@ SLES-02820:
     - AnalogController
     - DigitalController
     - NeGcon
+  traits:
+    - ForceRecompilerICache
   metadata:
     publisher: "Acclaim"
     developer: "Z-Axis, Ltd"
@@ -60034,6 +60318,8 @@ SLES-03363:
     - AnalogController
     - DigitalController
     - NeGcon
+  traits:
+    - ForceRecompilerICache
   metadata:
     publisher: "Ubi Soft / Crave Entertaiment"
     developer: "Shaba Studios"
@@ -60351,9 +60637,12 @@ SLPM-87331:
   name: "Front Mission 2 (Japan) (Front Mission History)"
   controllers:
     - DigitalController
+  traits:
+    # Pick your poison here. Disabling true colour fixes the sprite backgrounds,
+    # but if you're upscaling, leaves junk around the edges.
+    - ForceSoftwareRendererForReadbacks
   codes:
     - SLPM-87331
-    - SLPM-87397
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -60368,10 +60657,14 @@ SLPM-87331:
     vibration: false
     multitap: false
     linkCable: false
-SCPS-45116:
+SLPS-01000:
   name: "Front Mission 2 (Japan, Asia)"
   controllers:
     - DigitalController
+  traits:
+    # Pick your poison here. Disabling true colour fixes the sprite backgrounds,
+    # but if you're upscaling, leaves junk around the edges.
+    - ForceSoftwareRendererForReadbacks
   codes:
     - SCPS-45116
     - SLPS-01000
@@ -63836,7 +64129,7 @@ SCPS-10038:
     - AnalogController
     - DigitalController
     - GunCon
-    - KonamiJustifier
+    - Justifier
     - PlayStationMouse
   metadata:
     publisher: "Sony"
@@ -65464,6 +65757,8 @@ SLPS-00104:
   name: "Gouketsuji Ichizoku 2 - Chotto dake Saikyou Densetsu (Japan)"
   controllers:
     - DigitalController
+  codes:
+    - HASH-407D4E2254F5ABBE
   metadata:
     publisher: "Atlus Co"
     developer: "A.I"
@@ -65904,6 +66199,11 @@ SLUS-00127:
     linkCable: false
 SLES-00032:
   name: "Grand Theft Auto (Europe) (En,Fr,De,It)"
+  discSet:
+    name: "Grand Theft Auto (Europe) (En,Fr,De,It)"
+    serials:
+      - SLES-00032
+      - SLES-03389
   controllers:
     - AnalogController
     - DigitalController
@@ -65927,6 +66227,11 @@ SLES-00032:
     linkCable: false
 SLUS-00106:
   name: "Grand Theft Auto (USA)"
+  discSet:
+    name: "Grand Theft Auto (USA)"
+    serials:
+      - SLUS-00106
+      - SLUS-00846
   compatibility:
     rating: NoIssues
     versionTested: "0.1-1308-g622e50fa"
@@ -65949,6 +66254,11 @@ SLUS-00106:
     linkCable: false
 SLES-03389:
   name: "Grand Theft Auto - London 1969 (Europe) (En,Fr,De,It)"
+  discSet:
+    name: "Grand Theft Auto (Europe) (En,Fr,De,It)"
+    serials:
+      - SLES-00032
+      - SLES-03389
   controllers:
     - AnalogController
     - DigitalController
@@ -65995,6 +66305,11 @@ SLES-01714:
     linkCable: false
 SLUS-00846:
   name: "Grand Theft Auto - Mission Pack 1 - London 1969 (USA)"
+  discSet:
+    name: "Grand Theft Auto (USA)"
+    serials:
+      - SLUS-00106
+      - SLUS-00846
   controllers:
     - AnalogController
     - DigitalController
@@ -66497,6 +66812,8 @@ SLPS-00719:
   name: "Great Battle VI, The (Japan)"
   controllers:
     - DigitalController
+  codes:
+    - HASH-2A8D6A1D4C539B43
   metadata:
     publisher: "Banpresto"
     developer: "Aspect"
@@ -67835,6 +68152,8 @@ SCPS-10006:
   compatibility:
     rating: NoIssues
     versionTested: "0.1-4525-gdfd67664"
+  traits:
+    - DisableWidescreen # No effect.
   controllers:
     - DigitalController
   codes:
@@ -70483,7 +70802,7 @@ SLPM-86021:
   name: "Henry Explorers (Japan)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Konami"
     developer: "Konami"
@@ -70814,6 +71133,7 @@ SLES-00555:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
   metadata:
@@ -70839,6 +71159,7 @@ SLUS-00348:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
   metadata:
@@ -70861,6 +71182,7 @@ SLPS-00972:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled rendering.
   metadata:
@@ -71002,12 +71324,14 @@ SLUS-00830:
 SLUS-01244:
   name: "High Heat Major League Baseball 2002 (USA)"
   compatibility:
-    rating: GraphicalAudioIssues
-    versionTested: "0.1-4693-gbbcf1c67"
-    upscalingIssues: "Menus transparency is wrong (Issue #592)"
+    rating: NoIssues
+    versionTested: "0.1-7272-g143acca03"
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForceAccurateBlending # Requires 16-bit blend precision
+    - DisableTrueColor # to fix transparency in menu backgrounds.
   metadata:
     publisher: "The 3DO Company"
     developer: "Team .366"
@@ -72407,7 +72731,7 @@ SCPS-10016:
   name: "Horned Owl (Japan)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
     - PlayStationMouse
   codes:
     - SCPS-10016
@@ -74895,9 +75219,10 @@ SLUS-00172:
   compatibility:
     rating: NoIssues
     versionTested: "0.1-2862-g6fbffb6f"
-    comments: "Image cut off on top and bottom - can be fixed by disabling cropping"
   controllers:
     - DigitalController
+  settings:
+    displayCropMode: None # Overscan cuts off HUD.
   metadata:
     publisher: "Xing Entertaiment / Kokopeli"
     developer: "Irem / Tsuji Jimusho"
@@ -79170,7 +79495,7 @@ SLES-00755:
   controllers:
     - DigitalController
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Gremlin Graphics"
     developer: "Gremlin Graphics"
@@ -79193,7 +79518,7 @@ SLUS-00630:
   controllers:
     - DigitalController
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Activision"
     developer: "Gremlin Graphics"
@@ -80071,6 +80396,11 @@ SLPS-01384:
     linkCable: false
 SLPS-01972:
   name: "Kagayaku Kisetsu e (Japan) (Disc 1) (Genteiban)"
+  discSet:
+    name: "Kagayaku Kisetsu e (Japan)"
+    serials:
+      - SLPS-01972
+      - SLPS-01973
   controllers:
     - AnalogController
     - DigitalController
@@ -80090,6 +80420,11 @@ SLPS-01972:
     linkCable: false
 SLPS-01973:
   name: "Kagayaku Kisetsu e (Japan) (Disc 2) (Special Disc)"
+  discSet:
+    name: "Kagayaku Kisetsu e (Japan)"
+    serials:
+      - SLPS-01972
+      - SLPS-01973
   controllers:
     - AnalogController
     - DigitalController
@@ -80343,6 +80678,8 @@ SLPS-00086:
   name: "Kaitei Daisensou - In the Hunt (Japan)"
   controllers:
     - DigitalController
+  settings:
+    displayCropMode: None # Overscan cuts off HUD.
   metadata:
     publisher: "Xing Entertaiment"
     developer: "Irem / Tsuji Jimusho"
@@ -80361,6 +80698,8 @@ SLPS-02790:
   name: "Kaitei Daisensou - In the Hunt [Xing Maruyasu Series]"
   controllers:
     - DigitalController
+  settings:
+    displayCropMode: None # Overscan cuts off HUD.
   metadata:
     publisher: "Xing Entertaiment"
     developer: "Irem / Tsuji Jimusho"
@@ -80535,6 +80874,8 @@ SLPS-03344:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Bandai"
     developer: "Kaze"
@@ -80556,6 +80897,8 @@ SLPS-03529:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Bandai"
     developer: "Kaze"
@@ -87586,6 +87929,8 @@ SLES-01207:
     - AnalogController
     - DigitalController
     - NeGcon
+  traits:
+    - ForcePGXPCPUMode # Fixes holes in geometry.
   metadata:
     publisher: "LEGO Media International Inc"
     developer: "High Voltage Software"
@@ -87618,6 +87963,8 @@ SLUS-00581:
     - AnalogController
     - DigitalController
     - NeGcon
+  traits:
+    - ForcePGXPCPUMode # Fixes holes in geometry.
   metadata:
     publisher: "LEGO Media International Inc"
     developer: "High Voltage Software"
@@ -88727,7 +89074,8 @@ SCES-03043:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -88755,7 +89103,8 @@ SCES-13043:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -88783,7 +89132,8 @@ SCES-23043:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -88811,7 +89161,8 @@ SCES-33043:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -88839,7 +89190,8 @@ SCES-03044:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -88867,7 +89219,8 @@ SCES-13044:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -88895,7 +89248,8 @@ SCES-23044:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -88923,7 +89277,8 @@ SCES-33044:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -88951,7 +89306,8 @@ SCES-03045:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -88979,7 +89335,8 @@ SCES-13045:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89007,7 +89364,8 @@ SCES-23045:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89035,7 +89393,8 @@ SCES-33045:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89063,7 +89422,8 @@ SCES-03046:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89091,7 +89451,8 @@ SCES-13046:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89119,7 +89480,8 @@ SCES-23046:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89147,7 +89509,8 @@ SCES-33046:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89165,11 +89528,13 @@ SCES-33046:
 PAPX-90091:
   name: "Legend of Dragoon, The (Japan) (Demo 1)"
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
 PAPX-90103:
   name: "Legend of Dragoon, The (Japan) (Demo 2)"
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
 SCPS-10119:
   name: "Legend of Dragoon, The (Japan) (Disc 1)"
   discSet:
@@ -89183,7 +89548,8 @@ SCPS-10119:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89208,7 +89574,8 @@ SCPS-10120:
       - SCPS-10121
       - SCPS-10122
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
 SCPS-10121:
   name: "Legend of Dragoon, The (Japan) (Disc 3)"
   discSet:
@@ -89219,7 +89586,8 @@ SCPS-10121:
       - SCPS-10121
       - SCPS-10122
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
 SCPS-10122:
   name: "Legend of Dragoon, The (Japan) (Disc 4)"
   discSet:
@@ -89230,7 +89598,8 @@ SCPS-10122:
       - SCPS-10121
       - SCPS-10122
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
 SCES-03047:
   name: "Legend of Dragoon, The (Spain) (Disc 1)"
   discSet:
@@ -89247,7 +89616,8 @@ SCES-03047:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89278,7 +89648,8 @@ SCES-13047:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89309,7 +89680,8 @@ SCES-23047:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89340,7 +89712,8 @@ SCES-33047:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89371,7 +89744,8 @@ SCUS-94491:
     - AnalogController
     - DigitalController
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -89399,7 +89773,8 @@ SCUS-94584:
     rating: NoIssues
     versionTested: "0.1-2663-gfd39f09a"
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
 SCUS-94585:
   name: "Legend of Dragoon, The (USA) (Disc 3)"
   discSet:
@@ -89413,7 +89788,8 @@ SCUS-94585:
     rating: NoIssues
     versionTested: "0.1-2663-gfd39f09a"
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
 SCUS-94586:
   name: "Legend of Dragoon, The (USA) (Disc 4)"
   discSet:
@@ -89427,7 +89803,8 @@ SCUS-94586:
     rating: NoIssues
     versionTested: "0.1-2663-gfd39f09a"
   traits:
-    - DisableWidescreen
+    - DisableWidescreen # Breaks background rendering.
+    - DisableSpriteTextureFiltering # Breaks background rendering.
 SLES-01273:
   name: "Legend of Foresia - La Contree Interdite (France)"
   controllers:
@@ -89788,7 +90165,7 @@ SLES-00542:
   name: "Lethal Enforcers (Europe)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Konami"
     developer: "Konami"
@@ -89807,7 +90184,7 @@ SLPM-86025:
   name: "Lethal Enforcers Deluxe Pack (Japan)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Konami"
     developer: "Konami"
@@ -89826,7 +90203,7 @@ SLUS-00293:
   name: "Lethal Enforcers I & II (USA)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Konami"
     developer: "Konami"
@@ -90015,6 +90392,8 @@ SLES-00613:
     versionTested: "0.1-986-gfc911de1"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode
   metadata:
     publisher: "Psygnosis"
     developer: "Psygnosis"
@@ -90031,10 +90410,14 @@ SLES-00613:
     linkCable: false
 SLED-00690:
   name: "Lifeforce Tenka (Europe) (Demo)"
+  traits:
+    - ForcePGXPCPUMode
 SLES-00614:
   name: "Lifeforce Tenka (France)"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode
   metadata:
     publisher: "Psygnosis"
     developer: "Psygnosis"
@@ -90053,6 +90436,8 @@ SLES-00615:
   name: "Lifeforce Tenka (Germany)"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode
   metadata:
     publisher: "Psygnosis"
     developer: "Psygnosis"
@@ -90071,6 +90456,8 @@ SLES-00616:
   name: "Lifeforce Tenka (Italy)"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode
   metadata:
     publisher: "Psygnosis"
     developer: "Psygnosis"
@@ -90089,6 +90476,8 @@ SLES-00617:
   name: "Lifeforce Tenka (Spain)"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode
   metadata:
     publisher: "Psygnosis"
     developer: "Psygnosis"
@@ -93817,6 +94206,8 @@ SLES-00211:
   name: "Magic Carpet (Europe) (En,Fr,De,Es,Sv)"
   controllers:
     - DigitalController
+  settings:
+    displayDeinterlacingMode: Disabled # Isn't actually interlaced, uses 240p buffers, they just left 480i enabled...
   metadata:
     publisher: "Electronic Arts"
     developer: "Bullfrog Productions / Krisalis"
@@ -93839,6 +94230,8 @@ SLPS-00587:
   name: "Magic Carpet (Japan)"
   controllers:
     - DigitalController
+  settings:
+    displayDeinterlacingMode: Disabled # Isn't actually interlaced, uses 240p buffers, they just left 480i enabled...
   metadata:
     publisher: "Electronic Arts"
     developer: "Bullfrog Productions / Krisalis"
@@ -93857,6 +94250,8 @@ SLUS-00029:
   name: "Magic Carpet (USA) (En,Fr,De,Es,Sv)"
   controllers:
     - DigitalController
+  settings:
+    displayDeinterlacingMode: Disabled # Isn't actually interlaced, uses 240p buffers, they just left 480i enabled...
   metadata:
     publisher: "Electronic Arts"
     developer: "Bullfrog Productions / Krisalis"
@@ -95724,6 +96119,8 @@ SLES-01792:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Virgin Interactive"
     developer: "Capcom"
@@ -95745,6 +96142,8 @@ SLUS-00793:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Capcom"
     developer: "Capcom"
@@ -95767,6 +96166,8 @@ SLPS-01915:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Capcom"
     developer: "Capcom"
@@ -95791,6 +96192,8 @@ SLES-02305:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Virgin Interactive"
     developer: "Capcom / Value Wave"
@@ -95813,6 +96216,8 @@ SLUS-01059:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Capcom"
     developer: "Capcom / Value Wave"
@@ -95832,6 +96237,8 @@ SLPS-02368:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   codes:
     - SLPS-02368
     - SLPS-02356
@@ -95854,6 +96261,8 @@ SLPS-02368:
     linkCable: false
 SLPM-80508:
   name: "Marvel vs. Capcom - Clash of Super Heroes - EX Edition (Japan) (Demo)"
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
 SLES-02379:
   name: "Mary King's Riding Star (Europe) (En,Fr,De,Es,It,Nl,Pt)"
   controllers:
@@ -96536,7 +96945,7 @@ SLES-01001:
     - AnalogController
     - DigitalController
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Midway"
     developer: "Tantalus Entertainment"
@@ -96563,7 +96972,7 @@ SLUS-00503:
     - AnalogController
     - DigitalController
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Midway"
     developer: "Tantalus Entertainment"
@@ -99112,6 +99521,12 @@ SLUS-00776:
     linkCable: false
 SCPS-45414:
   name: "Metal Gear Solid - Integral (Japan, Asia) (Disc 3) (VR-Disc)"
+  discSet:
+    name: "Metal Gear Solid - Integral (Japan, Asia) (En,Ja)"
+    serials:
+      - SCPS-45412
+      - SCPS-45413
+      - SCPS-45414
   controllers:
     - AnalogController
     - DigitalController
@@ -99142,6 +99557,7 @@ SCPS-45412:
     serials:
       - SCPS-45412
       - SCPS-45413
+      - SCPS-45414
   compatibility:
     rating: NoIssues
     versionTested: "0.1-3652-g4c3d2cd3"
@@ -99175,6 +99591,7 @@ SCPS-45413:
     serials:
       - SCPS-45412
       - SCPS-45413
+      - SCPS-45414
   compatibility:
     rating: NoIssues
     versionTested: "0.1-4011-g2bf0771a"
@@ -99864,7 +100281,7 @@ SLPS-00583:
   name: "Mighty Hits (Japan)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Altron"
     developer: "Altron"
@@ -99885,7 +100302,7 @@ SLES-02244:
     - AnalogController
     - DigitalController
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "JVC"
     developer: "Altron"
@@ -99908,7 +100325,7 @@ SLPS-02165:
     - AnalogController
     - DigitalController
     - GunCon
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Altron"
     developer: "Altron"
@@ -101050,8 +101467,7 @@ SLPS-00047:
   controllers:
     - DigitalController
   codes:
-    - SLPS-00047
-    - SLPS-02104
+    - HASH-F6005ABBC40728D4
   metadata:
     publisher: "Altron"
     developer: "Altron"
@@ -103685,9 +104101,10 @@ SCPS-10001:
     - NeGcon
   traits:
     - ForcePGXPCPUMode
-    - ForceRecompilerICache # Fixes crash in pause screen.
+    - ForceInterpreter # Fixes crash in pause screen and random hang on the 2nd track.
   settings:
-    dmaMaxSliceTicks: 400 # Fixes random hang.
+    dmaMaxSliceTicks: 400 # Fixes random hang on the 3rd track.
+    dmaHaltTicks: 155 # Fixes random hang on the 3rd track.
   codes:
     - HASH-58C38FDD4440E3DB
     - HASH-71CB04066AE13303
@@ -111395,6 +111812,8 @@ SLPS-02507:
   name: "Next Tetris DLX, The (Japan)"
   controllers:
     - DigitalController
+  traits:
+    - ForceRecompilerICache
   metadata:
     publisher: "Bullet Proof Software"
     developer: "Blue Planet Interactive"
@@ -111413,8 +111832,6 @@ SLES-01987:
   name: "Next Tetris, The (Europe) (En,Fr,De,Es,It,Nl)"
   controllers:
     - DigitalController
-  traits:
-    - ForceRecompilerICache
   metadata:
     publisher: "Atari / Hasbro Interactive"
     developer: "Blue Planet Interactive"
@@ -112391,6 +112808,7 @@ SLPS-00050:
 SCES-00582:
   name: "Nightmare Creatures (Europe)"
   controllers:
+    - AnalogController
     - DigitalController
   metadata:
     publisher: "Activision"
@@ -112409,6 +112827,7 @@ SCES-00582:
 SCES-00684:
   name: "Nightmare Creatures (Germany)"
   controllers:
+    - AnalogController
     - DigitalController
   metadata:
     publisher: "Activision"
@@ -112427,6 +112846,7 @@ SCES-00684:
 SIPS-60027:
   name: "Nightmare Creatures (Japan)"
   controllers:
+    - AnalogController
     - DigitalController
   metadata:
     publisher: "Sony"
@@ -112450,6 +112870,7 @@ SLUS-00582:
     rating: NoIssues
     versionTested: "0.1-986-gfc911de1"
   controllers:
+    - AnalogController
     - DigitalController
   metadata:
     publisher: "Activision"
@@ -115583,7 +116004,6 @@ SCUS-94449:
 SLPM-86439:
   name: "Omiai Commando - Ba-Couple ni Tsukkomi o (Japan)"
   controllers:
-    - AnalogController
     - DigitalController
   metadata:
     publisher: "Enix"
@@ -116072,6 +116492,8 @@ SLPS-02951:
     - AnalogController
     - DigitalController
     - NeGcon
+  settings:
+    displayDeinterlacingMode: Blend # Only used in menus, MAD flickers with fading.
   metadata:
     publisher: "MTO"
     developer: "MTO"
@@ -116650,6 +117072,21 @@ SLPS-00327:
     linkCable: true
 SLPM-80032:
   name: "Over Drivin' DX - Rally Edition (Japan)"
+  controllers:
+    - DigitalController
+    - NeGcon
+  metadata:
+    publisher: "Electronic Arts"
+    developer: "Pioneer Productions"
+    releaseDate: "1996-03-13"
+    genre: "Driving / Racing"
+    languages:
+      - Japanese
+    minPlayers: 1
+    maxPlayers: 1
+    vibration: false
+    multitap: false
+    linkCable: false
 SLPS-00895:
   name: "Over Drivin' II (Japan)"
   controllers:
@@ -126751,7 +127188,7 @@ SCUS-94408:
   name: "Project - Horned Owl (USA)"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
     - PlayStationMouse
   metadata:
     publisher: "Sony"
@@ -129720,6 +130157,8 @@ SLPM-80296:
   name: "Rally de Africa (Japan) (Taikenban)"
 SLPS-02679:
   name: "Rally de Europe (Japan)"
+  traits:
+    - DisableWidescreen # Speedometer breaks with WS rendering.
   controllers:
     - AnalogController
     - DigitalController
@@ -130006,6 +130445,8 @@ SCES-00004:
   compatibility:
     rating: NoIssues
     versionTested: "0.1-1308-g622e50fa"
+  traits:
+    - DisableWidescreen # No effect.
   controllers:
     - DigitalController
   metadata:
@@ -130112,6 +130553,8 @@ SLES-01103:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Fixes affine texture mapping on floor.
   metadata:
     publisher: "Mindscape"
     developer: "Pure Entertainment"
@@ -130141,6 +130584,7 @@ SLUS-00656:
     - DigitalController
   traits:
     - ForceInterlacing
+    - ForcePGXPCPUMode # Fixes affine texture mapping on floor.
   metadata:
     publisher: "Mindscape"
     developer: "Pure Entertainment"
@@ -131279,6 +131723,8 @@ SCPS-45276:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "SNK Corporation"
     developer: "SNK Corporation"
@@ -131298,6 +131744,8 @@ SLPM-86085:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "SNK Corporation"
     developer: "SNK Corporation"
@@ -131314,11 +131762,18 @@ SLPM-86085:
     linkCable: false
 SLPM-80246:
   name: "Real Bout Garou Densetsu Special - Dominated Mind (Japan) (Demo)"
+  controllers:
+    - AnalogController
+    - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
 SLPM-86090:
   name: "Real Bout Garou Densetsu Special - Dominated Mind (Japan) (Shokai Genteiban)"
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "SNK Corporation"
     developer: "SNK Corporation"
@@ -131338,6 +131793,8 @@ SLPM-86321:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "SNK Corporation"
     developer: "SNK Corporation"
@@ -132668,6 +133125,7 @@ SLES-02529:
     - DigitalController
   traits:
     - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
   libcrypt: true
   metadata:
     publisher: "Eidos Interactive"
@@ -132687,6 +133145,7 @@ SLED-02541:
   name: "Resident Evil 3 - Nemesis (Europe) (Demo)"
   traits:
     - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
 SLES-02530:
   name: "Resident Evil 3 - Nemesis (France)"
   controllers:
@@ -132694,6 +133153,7 @@ SLES-02530:
     - DigitalController
   traits:
     - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
   libcrypt: true
   metadata:
     publisher: "Eidos Interactive"
@@ -132716,6 +133176,7 @@ SLES-02531:
     - DigitalController
   traits:
     - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
   libcrypt: true
   metadata:
     publisher: "Eidos Interactive"
@@ -132738,6 +133199,7 @@ SLES-02698:
     - DigitalController
   traits:
     - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
   libcrypt: true
   metadata:
     publisher: "Eidos Interactive"
@@ -132760,6 +133222,7 @@ SLES-02533:
     - DigitalController
   traits:
     - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
   libcrypt: true
   metadata:
     publisher: "Eidos Interactive"
@@ -132785,6 +133248,7 @@ SLES-02532:
     - DigitalController
   traits:
     - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
   libcrypt: true
   metadata:
     publisher: "Proein / Eidos Interactive"
@@ -132810,6 +133274,7 @@ SLUS-00923:
     - DigitalController
   traits:
     - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
   metadata:
     publisher: "Capcom"
     developer: "Capcom Production Studio 4"
@@ -132828,6 +133293,7 @@ SLUS-90064:
   name: "Resident Evil 3 - Nemesis (USA) (Demo)"
   traits:
     - DisableWidescreen
+    - ForcePGXPCPUMode # Fixes jitter in character models.
 SLPS-01974:
   name: "Restaurant Dream (Japan)"
   controllers:
@@ -140953,6 +141419,8 @@ SLES-02282:
     linkCable: false
 SLES-00888:
   name: "Shadow Master (Europe) (En,Fr,De,Es,It)"
+  compatibility:
+    comments: "Intro logos require the software renderer to display correctly."
   controllers:
     - AnalogController
     - DigitalController
@@ -140981,8 +141449,7 @@ SLUS-00545:
   compatibility:
     rating: NoIssues
     versionTested: "0.1-2598-g9e198706"
-    comments: "The game first 2 screens (\"Shadow Master/Psygnosis all right reserved\" and Dolby Digital screens - yes, they are barely readable normally) just blink up in the\
-      \ screen, being barely redable. But this seems to happen in original console too (as seem in this capture e.g.: https://www.youtube.com/watch?v=9Inwdc4boHU)."
+    comments: "Intro logos require the software renderer to display correctly."
   controllers:
     - AnalogController
     - DigitalController
@@ -143580,7 +144047,7 @@ SCPS-45380:
   controllers:
     - AnalogController
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   metadata:
     publisher: "Konami"
     developer: "KCET"
@@ -143607,7 +144074,7 @@ SLES-01514:
   controllers:
     - AnalogController
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   traits:
     - ForceRecompilerICache
   metadata:
@@ -143638,7 +144105,7 @@ SLPM-86192:
   controllers:
     - AnalogController
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   traits:
     - ForceRecompilerICache
   metadata:
@@ -143662,7 +144129,7 @@ SLPM-86498:
   controllers:
     - AnalogController
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   codes:
     - SLPM-86498
     - SLPM-87029
@@ -143689,7 +144156,7 @@ SLUS-00707:
   controllers:
     - AnalogController
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   traits:
     - ForceRecompilerICache
   metadata:
@@ -147334,6 +147801,11 @@ SLPS-03522:
     linkCable: false
 SLPS-03556:
   name: "Sister Princess 2 - Premium Fan Disc (Japan) (Disc A)"
+  discSet:
+    name: "Sister Princess 2 - Premium Fan Disc (Japan)"
+    serials:
+      - SLPS-03556
+      - SLPS-03557
   controllers:
     - DigitalController
   metadata:
@@ -147352,6 +147824,11 @@ SLPS-03556:
     linkCable: false
 SLPS-03557:
   name: "Sister Princess 2 - Premium Fan Disc (Japan) (Disc B)"
+  discSet:
+    name: "Sister Princess 2 - Premium Fan Disc (Japan)"
+    serials:
+      - SLPS-03556
+      - SLPS-03557
   controllers:
     - DigitalController
   metadata:
@@ -147690,6 +148167,8 @@ SLPS-02789:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   codes:
     - SLPS-02789
     - SLPS-91460
@@ -149550,9 +150029,14 @@ SCES-00577:
     rating: NoIssues
     versionTested: "0.1-2949-gcd2c581f"
   controllers:
+    - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled water rendering.
+    dmaMaxSliceTicks: 100 # Tight timing required for DMA modified after start.
+    dmaHaltTicks: 150 # Fixes sprites in menus.
   metadata:
     publisher: "Sony Computer Entertaiment Europe"
     developer: "Namco"
@@ -149573,9 +150057,14 @@ SLUS-00240:
     rating: NoIssues
     versionTested: "0.1-1409-ge198e315"
   controllers:
+    - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   settings:
     gpuLineDetectMode: BasicTriangles # Fixes upscaled water rendering.
+    dmaMaxSliceTicks: 100 # Tight timing required for DMA modified after start.
+    dmaHaltTicks: 150 # Fixes sprites in menus.
   metadata:
     publisher: "Namco"
     developer: "Namco"
@@ -149596,7 +150085,14 @@ SLPS-00555:
     rating: NoIssues
     versionTested: "0.1-2202-ga17e15f1"
   controllers:
+    - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
+  settings:
+    gpuLineDetectMode: BasicTriangles # Fixes upscaled water rendering.
+    dmaMaxSliceTicks: 100 # Tight timing required for DMA modified after start.
+    dmaHaltTicks: 150 # Fixes sprites in menus.
   metadata:
     publisher: "Namco"
     developer: "Namco"
@@ -149617,7 +150113,14 @@ SLPS-00545:
     rating: NoIssues
     versionTested: "0.1-2202-ga17e15f1"
   controllers:
+    - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
+  settings:
+    gpuLineDetectMode: BasicTriangles # Fixes upscaled water rendering.
+    dmaMaxSliceTicks: 100 # Tight timing required for DMA modified after start.
+    dmaHaltTicks: 150 # Fixes sprites in menus.
   metadata:
     publisher: "Namco"
     developer: "Namco"
@@ -149635,10 +150138,17 @@ SLPS-00545:
 SLPS-91168:
   name: "Soul Edge (Japan) (Rev 1)"
   controllers:
+    - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   codes:
     - SLPS-91168
     - SLPS-91454
+  settings:
+    gpuLineDetectMode: BasicTriangles # Fixes upscaled water rendering.
+    dmaMaxSliceTicks: 100 # Tight timing required for DMA modified after start.
+    dmaHaltTicks: 150 # Fixes sprites in menus.
   metadata:
     publisher: "Namco"
     developer: "Namco"
@@ -152020,7 +152530,7 @@ SCES-02835:
     - AnalogController
     - DigitalController
   traits:
-    - ForcePGXPCPUMode
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
   libcrypt: true
   metadata:
     publisher: "Sony"
@@ -152049,7 +152559,7 @@ SCUS-94467:
     - AnalogController
     - DigitalController
   traits:
-    - ForcePGXPCPUMode
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
   metadata:
     publisher: "Sony"
     developer: "Insomniac Games"
@@ -152066,6 +152576,8 @@ SCUS-94467:
     linkCable: false
 SCUS-94615:
   name: "Spyro - Year of the Dragon (USA) (Demo)"
+  traits:
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
 SCES-02104:
   name: "Spyro 2 - Gateway to Glimmer (Europe) (En,Fr,De,Es,It)"
   compatibility:
@@ -152074,7 +152586,7 @@ SCES-02104:
     - AnalogController
     - DigitalController
   traits:
-    - ForcePGXPCPUMode
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
   libcrypt: true
   metadata:
     publisher: "Sony"
@@ -152103,7 +152615,7 @@ SCUS-94425:
     - AnalogController
     - DigitalController
   traits:
-    - ForcePGXPCPUMode
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
   metadata:
     publisher: "Sony"
     developer: "Insomniac Games"
@@ -152120,13 +152632,19 @@ SCUS-94425:
     linkCable: false
 SCUS-94460:
   name: "Spyro 2 - Ripto's Rage! (USA) (Demo)"
+  traits:
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
 SCUS-94632:
   name: "Spyro 2 - Ripto's Rage! + Crash Team Racing (USA)"
+  traits:
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
 SCPS-45395:
   name: "Spyro the Dragon"
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
   metadata:
     publisher: "Sony Computer Entertaiment Japan"
     developer: "Insomniac Games"
@@ -152149,8 +152667,7 @@ SCES-01438:
     - AnalogController
     - DigitalController
   traits:
-    - DisablePGXPCulling
-    - ForcePGXPCPUMode
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
   metadata:
     publisher: "Sony Computer Entertainment Europe"
     developer: "Insomniac Games"
@@ -152178,7 +152695,7 @@ SCPS-10085:
     - AnalogController
     - DigitalController
   traits:
-    - ForcePGXPCPUMode
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
   metadata:
     publisher: "Sony Computer Entertaiment Japan"
     developer: "Insomniac Games"
@@ -152195,11 +152712,15 @@ SCPS-10085:
     linkCable: false
 PAPX-90078:
   name: "Spyro the Dragon (Japan) (Demo)"
+  traits:
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
 SCPS-10083:
   name: "Spyro the Dragon (Japan) (Shokai Genteiban)"
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
   metadata:
     publisher: "Sony Computer Entertaiment Japan"
     developer: "Insomniac Games"
@@ -152223,8 +152744,7 @@ SCUS-94228:
     - AnalogController
     - DigitalController
   traits:
-    - DisablePGXPCulling
-    - ForcePGXPCPUMode
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
   metadata:
     publisher: "Sony Computer Entertaiment America"
     developer: "Insomniac Games"
@@ -152242,11 +152762,15 @@ SCUS-94228:
 SCUS-94290:
   name: "Spyro the Dragon (USA) (Demo 1)"
   traits:
-    - ForcePGXPCPUMode
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
 SCUS-94439:
   name: "Spyro the Dragon (USA) (Demo 2)"
+  traits:
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
 SCED-01637:
   name: "Spyro the Dragon Speciale (France)"
+  traits:
+    - ForcePGXPCPUMode # Required, but not perfect. Game messes with geometry.
 SCPS-10128:
   name: "Spyro x Sparx - Tondemo Tours (Japan)"
   controllers:
@@ -153170,6 +153694,7 @@ SLES-00585:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, PGXP is not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: AggressiveTriangles # Fixes upscaled rendering.
   metadata:
@@ -153192,6 +153717,7 @@ SLES-00640:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, PGXP is not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: AggressiveTriangles # Fixes upscaled rendering.
   metadata:
@@ -153215,6 +153741,7 @@ SLPS-00685:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, PGXP is not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: AggressiveTriangles # Fixes upscaled rendering.
   metadata:
@@ -153237,6 +153764,7 @@ SLES-00646:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, PGXP is not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: AggressiveTriangles # Fixes upscaled rendering.
   metadata:
@@ -153263,6 +153791,7 @@ SLUS-00297:
     - DigitalController
   traits:
     - DisablePGXP # 2.5D, PGXP is not beneficial.
+    - DisableWidescreen # No effect.
   settings:
     gpuLineDetectMode: AggressiveTriangles # Fixes upscaled rendering.
   metadata:
@@ -153682,7 +154211,7 @@ SLES-00654:
       - SLES-10654
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153709,7 +154238,7 @@ SLES-10654:
       - SLES-10654
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153736,7 +154265,7 @@ SLES-00656:
       - SLES-10656
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153763,7 +154292,7 @@ SLES-10656:
       - SLES-10656
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153790,7 +154319,7 @@ SLES-00584:
       - SLES-10584
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153817,7 +154346,7 @@ SLES-10584:
       - SLES-10584
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153844,7 +154373,7 @@ SLES-00643:
       - SLES-10643
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153871,7 +154400,7 @@ SLES-10643:
       - SLES-10643
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153898,7 +154427,7 @@ SLPS-00638:
       - SLPS-00639
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153925,7 +154454,7 @@ SLPS-00639:
       - SLPS-00639
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153955,7 +154484,7 @@ SLES-00644:
     versionTested: "0.1-4423-g32ab7c13"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -153985,7 +154514,7 @@ SLES-10644:
     versionTested: "0.1-4423-g32ab7c13"
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -154012,7 +154541,7 @@ SLUS-00381:
       - SLUS-00386
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -154042,7 +154571,7 @@ SLUS-00386:
       - SLUS-00386
   controllers:
     - DigitalController
-    - KonamiJustifier
+    - Justifier
   settings:
     dmaMaxSliceTicks: 200
     gpuMaxRunAhead: 1
@@ -154166,6 +154695,8 @@ SLPS-00022:
     - DigitalController
     - NeGcon
     - PlayStationMouse
+  codes:
+    - HASH-F864E385DC3A1F79
   metadata:
     publisher: "Namco"
     developer: "High-Tech Lab Japan"
@@ -154836,6 +155367,8 @@ SLES-01863:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog controls do nothing.
   metadata:
     publisher: "Virgin Interactive"
     developer: "Capcom"
@@ -154858,6 +155391,8 @@ SLUS-00821:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog controls do nothing.
   metadata:
     publisher: "Capcom"
     developer: "Capcom"
@@ -155170,7 +155705,6 @@ SLES-02598:
 SLPS-02508:
   name: "Street Fighter EX2 Plus (Japan)"
   controllers:
-    - AnalogController
     - DigitalController
   metadata:
     publisher: "Capcom"
@@ -155318,6 +155852,8 @@ SLPM-86877:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - DisableAutoAnalogMode # Analog controls do nothing.
   codes:
     - SLPM-86877
     - SLPS-01777
@@ -161244,6 +161780,8 @@ SCES-03697:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPVertexCache
   metadata:
     publisher: "Sony / 989 Studios"
     developer: "Eidetic, Inc"
@@ -161263,6 +161801,8 @@ SCES-03698:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPVertexCache
   metadata:
     publisher: "Sony / 989 Studios"
     developer: "Eidetic, Inc"
@@ -161282,6 +161822,8 @@ SCES-03699:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPVertexCache
   metadata:
     publisher: "Sony / 989 Studios"
     developer: "Eidetic, Inc"
@@ -161301,6 +161843,8 @@ SCES-03700:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPVertexCache
   metadata:
     publisher: "Sony / 989 Studios"
     developer: "Eidetic, Inc"
@@ -161323,6 +161867,8 @@ SCUS-94640:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPVertexCache
   metadata:
     publisher: "989 Studios"
     developer: "Eidetic, Inc"
@@ -161339,6 +161885,8 @@ SCUS-94640:
     linkCable: false
 SCUS-94661:
   name: "Syphon Filter 3 (USA) (Demo)"
+  traits:
+    - ForcePGXPVertexCache
 SCES-03701:
   name: "Syphon Filter 3 - Sentencia Final (Spain)"
   compatibility:
@@ -161347,6 +161895,8 @@ SCES-03701:
   controllers:
     - AnalogController
     - DigitalController
+  traits:
+    - ForcePGXPVertexCache
   metadata:
     publisher: "Sony / 989 Studios"
     developer: "Eidetic, Inc"
@@ -161363,6 +161913,8 @@ SCES-03701:
     linkCable: false
 SCED-03780:
   name: "Syphon Filter 3 - Sentencia Final (Spain) (Demo)"
+  traits:
+    - ForcePGXPVertexCache
 SLPM-87041:
   name: "Söldnerschild Special [Koei Teiban Series]"
   controllers:
@@ -163803,6 +164355,8 @@ SCES-01237:
     - AnalogController
     - DigitalController
     - NeGcon
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Sony"
     developer: "Namco"
@@ -163819,14 +164373,20 @@ SCES-01237:
     linkCable: false
 SCED-01146:
   name: "Tekken 3 (Europe) (Demo)"
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
 SCED-01384:
   name: "Tekken 3 (France) (Demo)"
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
 SLPS-91202:
   name: "Tekken 3 (Japan) (Rev 1)"
   controllers:
     - AnalogController
     - DigitalController
     - NeGcon
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Namco"
     developer: "Namco"
@@ -163850,6 +164410,8 @@ SCPS-45213:
     - AnalogController
     - DigitalController
     - NeGcon
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   codes:
     - SCPS-45213
     - SCPS-45215
@@ -163877,6 +164439,8 @@ SLUS-00402:
     - AnalogController
     - DigitalController
     - NeGcon
+  traits:
+    - DisableAutoAnalogMode # Analog sticks do nothing.
   metadata:
     publisher: "Namco"
     developer: "Namco"
@@ -165486,6 +166050,7 @@ SCPS-45461:
     - DigitalController
   traits:
     - DisableWidescreen
+    - DisableTextureFiltering
   metadata:
     publisher: "Sony"
     developer: "Sony"
@@ -171782,6 +172347,9 @@ SLPS-00025:
     - DigitalController
   traits:
     - ForceRecompilerICache
+  settings:
+    dmaMaxSliceTicks: 500 # Stops a large GPU transfer breaking CD.
+    dmaHaltTicks: 300
   codes:
     - HASH-A8647D688C39B63F
     - HASH-21D86F0985C11667
@@ -186034,6 +186602,9 @@ SCPS-45170:
   codes:
     - SCPS-45170
     - SCPS-45171
+  traits:
+    - ForcePGXPCPUMode # Fixes battle shadows, radar jitter.
+    - DisablePGXPOn2DPolygons # Fixes misaligned text.
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -186055,6 +186626,9 @@ SLPS-02773:
   codes:
     - SLPS-02773
     - SLPS-02774
+  traits:
+    - ForcePGXPCPUMode # Fixes battle shadows, radar jitter.
+    - DisablePGXPOn2DPolygons # Fixes misaligned text.
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -186083,6 +186657,9 @@ SLPS-01160:
     - SLPS-02775
     - SLPS-91436
     - SLPS-91437
+  traits:
+    - ForcePGXPCPUMode # Fixes battle shadows, radar jitter.
+    - DisablePGXPOn2DPolygons # Fixes misaligned text.
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -186109,6 +186686,9 @@ SLPS-01161:
   codes:
     - SLPS-01161
     - SLPS-02776
+  traits:
+    - ForcePGXPCPUMode # Fixes battle shadows, radar jitter.
+    - DisablePGXPOn2DPolygons # Fixes misaligned text.
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -186135,6 +186715,9 @@ SLUS-00664:
     versionTested: "0.1-1308-g622e50fa"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Fixes battle shadows, radar jitter.
+    - DisablePGXPOn2DPolygons # Fixes misaligned text.
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -186161,6 +186744,9 @@ SLUS-00669:
     versionTested: "0.1-1308-g622e50fa"
   controllers:
     - DigitalController
+  traits:
+    - ForcePGXPCPUMode # Fixes battle shadows, radar jitter.
+    - DisablePGXPOn2DPolygons # Fixes misaligned text.
   metadata:
     publisher: "Squaresoft"
     developer: "Squaresoft"
@@ -189127,6 +189713,7 @@ PCPX-96184:
   name: "Legend of Dragoon, The (Japan) (Demo 2)"
   traits:
     - DisableWidescreen
+    - DisableTextureFiltering
 SLPM-80441:
   name: "Maria 2 - Jutai Kokuchi no Nazo (Japan) (Demo)"
 PAPX-90098:

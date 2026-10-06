@@ -7,6 +7,7 @@
 #include <uam.h>
 
 #include "deko3d_device.h"
+#include "fmt/printf.h"
 
 Log_SetChannel(Deko3D_Pipeline);
 
@@ -37,7 +38,8 @@ struct DkshHeader
   uint32_t num_programs;
 };
 
-std::unique_ptr<GPUShader> Deko3DDevice::CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data)
+std::unique_ptr<GPUShader> Deko3DDevice::CreateShaderFromBinary(GPUShaderStage stage, std::span<const u8> data,
+                                                                Error* error)
 {
   auto& device = Deko3DDevice::GetInstance();
   auto& shaderHeap = device.GetShaderHeap();
@@ -57,18 +59,26 @@ std::unique_ptr<GPUShader> Deko3DDevice::CreateShaderFromBinary(GPUShaderStage s
   return std::unique_ptr<Deko3DShader>(new Deko3DShader(stage, shader, memory));
 }
 
-std::unique_ptr<GPUShader> Deko3DDevice::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                                const char* entry_point,
-                                                                DynamicHeapArray<u8>* out_binary)
+std::unique_ptr<GPUShader> Deko3DDevice::CreateShaderFromSource(GPUShaderStage stage, GPUShaderLanguage language,
+                                                                std::string_view source, const char* entry_point,
+                                                                DynamicHeapArray<u8>* out_binary, Error* error)
 {
+  // uam compiles desktop GLSL; anything else (the post-processing shaders are
+  // Vulkan GLSL) goes through SPIR-V to GLSL 4.60 first
+  if (language != GPUShaderLanguage::GLSL)
+  {
+    return TranspileAndCreateShaderFromSource(stage, language, source, entry_point, GPUShaderLanguage::GLSL, 460,
+                                              out_binary, error);
+  }
+
   if (stage >= GPUShaderStage::MaxCount)
   {
-    Log_ErrorPrintf("Unknown shader stage %u\n", static_cast<u32>(stage));
+    ERROR_LOG("{}", fmt::sprintf("Unknown shader stage %u\n", static_cast<u32>(stage)));
     return {};
   }
   if (std::strcmp(entry_point, "main") != 0)
   {
-    Log_ErrorPrintf("Entry point must be 'main', but got '%s' instead.", entry_point);
+    ERROR_LOG("{}", fmt::sprintf("Entry point must be 'main', but got '%s' instead.", entry_point));
     return {};
   }
 
@@ -83,13 +93,18 @@ std::unique_ptr<GPUShader> Deko3DDevice::CreateShaderFromSource(GPUShaderStage s
                        &shader_size))
   {
     const char* const stageStrings[] = {"vertex", "fragment", "geometry", "compute"};
-    Log_ErrorPrintf("Failed to compile %s shader:\n%s", stageStrings[static_cast<u32>(stage)],
-                    source_null_terminated.c_str());
+    ERROR_LOG("{}", fmt::sprintf("Failed to compile %s shader:\n%s", stageStrings[static_cast<u32>(stage)],
+                    source_null_terminated.c_str()));
     return {};
   }
 
   auto result = CreateShaderFromBinary(
-    stage, std::span<const u8>(static_cast<u8* const>(shader_out), static_cast<size_t>(shader_size)));
+    stage, std::span<const u8>(static_cast<u8* const>(shader_out), static_cast<size_t>(shader_size)), error);
+  if (out_binary && result)
+  {
+    out_binary->resize(shader_size);
+    std::memcpy(out_binary->data(), shader_out, shader_size);
+  }
 
   std::free(shader_out);
 
@@ -101,7 +116,7 @@ Deko3DPipeline::~Deko3DPipeline()
   Deko3DDevice::GetInstance().UnbindPipeline(this);
 }
 
-void Deko3DPipeline::SetDebugName(const std::string_view& name)
+void Deko3DPipeline::SetDebugName(std::string_view name)
 {
   // not implementable
 }
@@ -118,7 +133,7 @@ Deko3DPipeline::Deko3DPipeline(Layout layout, const RasterizationState& rs, cons
 {
 }
 
-std::unique_ptr<GPUPipeline> Deko3DDevice::CreatePipeline(const GPUPipeline::GraphicsConfig& config)
+std::unique_ptr<GPUPipeline> Deko3DDevice::CreatePipeline(const GPUPipeline::GraphicsConfig& config, Error* error)
 {
   static constexpr std::array<DkPrimitive, static_cast<u32>(GPUPipeline::Primitive::MaxCount)> primitives = {{
     DkPrimitive_Points,        // Points
@@ -319,7 +334,7 @@ void Deko3DDevice::SetPipeline(GPUPipeline* pipeline)
   m_current_pipeline = P;
 }
 
-bool Deko3DDevice::ReadPipelineCache(const std::string& filename)
+bool Deko3DDevice::ReadPipelineCache(std::optional<DynamicHeapArray<u8>> data)
 {
   // we don't really need to cache anything besides
   // shaders which is already being taken care of

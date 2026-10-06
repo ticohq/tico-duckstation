@@ -9,6 +9,8 @@
 #include <cstdio> // snprintf
 #include <cassert>
 #include <algorithm> // std::find_if, std::max
+#include <locale>
+#include <sstream>
 #include <unordered_set>
 
 using namespace reshadefx;
@@ -108,7 +110,7 @@ private:
 			}
 			else
 			{
-				preamble += "layout(std140, binding = 1) uniform _Globals {\n" + _ubo_block + "};\n";
+				preamble += "layout(std140, binding = 0) uniform _Globals {\n" + _ubo_block + "};\n";
 			}
 		}
 
@@ -360,9 +362,12 @@ private:
 					s += std::signbit(data.as_float[i]) ? "1.0/0.0/*inf*/" : "-1.0/0.0/*-inf*/";
 					break;
 				}
-				char temp[64]; // Will be null-terminated by snprintf
-				std::snprintf(temp, sizeof(temp), "%1.8e", data.as_float[i]);
-				s += temp;
+				{
+					std::ostringstream ss;
+					ss.imbue(std::locale::classic());
+					ss << data.as_float[i];
+					s += ss.str();
+				}
 				break;
 			default:
 				assert(false);

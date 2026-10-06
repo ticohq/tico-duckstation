@@ -14,7 +14,6 @@
 #include "common/file_system.h"
 #include "common/log.h"
 #include "common/path.h"
-#include "common/rectangle.h"
 #include "common/string_util.h"
 
 #include "fmt/format.h"
@@ -31,7 +30,7 @@ static std::mutex s_instance_mutex;
 static constexpr std::array<float, 4> s_clear_color = {};
 static constexpr GPUTexture::Format s_swap_chain_format = GPUTexture::Format::RGBA8;
 
-void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view& name)
+void SetD3DDebugObjectName(ID3D11DeviceChild* obj, std::string_view name)
 {
 #ifdef _DEBUG
   // WKPDID_D3DDebugObjectName
@@ -64,7 +63,7 @@ bool D3D11Device::HasSurface() const
   return static_cast<bool>(m_swap_chain);
 }
 
-bool D3D11Device::CreateDevice(const std::string_view& adapter, bool threaded_presentation,
+bool D3D11Device::CreateDevice(std::string_view adapter, bool threaded_presentation,
                                std::optional<bool> exclusive_fullscreen_control, FeatureMask disabled_features,
                                Error* error)
 {
@@ -81,8 +80,8 @@ bool D3D11Device::CreateDevice(const std::string_view& adapter, bool threaded_pr
   ComPtr<IDXGIAdapter1> dxgi_adapter = D3DCommon::GetAdapterByName(m_dxgi_factory.Get(), adapter);
   m_max_feature_level = D3DCommon::GetDeviceMaxFeatureLevel(dxgi_adapter.Get());
 
-  static constexpr std::array<D3D_FEATURE_LEVEL, 3> requested_feature_levels = {
-    {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0}};
+  static constexpr std::array<D3D_FEATURE_LEVEL, 4> requested_feature_levels = {
+    {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0}};
 
   ComPtr<ID3D11Device> temp_device;
   ComPtr<ID3D11DeviceContext> temp_context;
@@ -126,10 +125,10 @@ bool D3D11Device::CreateDevice(const std::string_view& adapter, bool threaded_pr
   ComPtr<IDXGIDevice> dxgi_device;
   if (SUCCEEDED(m_device.As(&dxgi_device)) &&
       SUCCEEDED(dxgi_device->GetParent(IID_PPV_ARGS(dxgi_adapter.GetAddressOf()))))
-    Log_InfoPrintf("D3D Adapter: %s", D3DCommon::GetAdapterName(dxgi_adapter.Get()).c_str());
+    INFO_LOG("D3D Adapter: {}", D3DCommon::GetAdapterName(dxgi_adapter.Get()));
   else
-    Log_ErrorPrint("Failed to obtain D3D adapter name.");
-  Log_InfoFmt("Max device feature level: {}", D3DCommon::GetFeatureLevelString(m_max_feature_level));
+    ERROR_LOG("Failed to obtain D3D adapter name.");
+  INFO_LOG("Max device feature level: {}", D3DCommon::GetFeatureLevelString(m_max_feature_level));
 
   BOOL allow_tearing_supported = false;
   hr = m_dxgi_factory->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow_tearing_supported,
@@ -195,6 +194,21 @@ void D3D11Device::SetFeatures(FeatureMask disabled_features)
   m_features.shader_cache = true;
   m_features.pipeline_cache = false;
   m_features.prefer_unused_textures = false;
+  m_features.raster_order_views = false;
+  if (!(disabled_features & FEATURE_MASK_RASTER_ORDER_VIEWS))
+  {
+    D3D11_FEATURE_DATA_D3D11_OPTIONS2 data = {};
+    m_features.raster_order_views =
+      (SUCCEEDED(m_device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS2, &data, sizeof(data))) &&
+       data.ROVsSupported);
+  }
+}
+
+u32 D3D11Device::GetSwapChainBufferCount() const
+{
+  // With vsync off, we only need two buffers. Same for blocking vsync.
+  // With triple buffering, we need three.
+  return (m_vsync_mode == GPUVSyncMode::Mailbox) ? 3 : 2;
 }
 
 bool D3D11Device::CreateSwapChain()
@@ -219,6 +233,13 @@ bool D3D11Device::CreateSwapChain()
       D3DCommon::GetRequestedExclusiveFullscreenModeDesc(m_dxgi_factory.Get(), client_rc, fullscreen_width,
                                                          fullscreen_height, fullscreen_refresh_rate, dxgi_format,
                                                          &fullscreen_mode, fullscreen_output.GetAddressOf());
+
+    // Using mailbox-style no-allow-tearing causes tearing in exclusive fullscreen.
+    if (m_vsync_mode == GPUVSyncMode::Mailbox && m_is_exclusive_fullscreen)
+    {
+      WARNING_LOG("Using FIFO instead of Mailbox vsync due to exclusive fullscreen.");
+      m_vsync_mode = GPUVSyncMode::FIFO;
+    }
   }
   else
   {
@@ -233,7 +254,7 @@ bool D3D11Device::CreateSwapChain()
   swap_chain_desc.Height = static_cast<u32>(client_rc.bottom - client_rc.top);
   swap_chain_desc.Format = dxgi_format;
   swap_chain_desc.SampleDesc.Count = 1;
-  swap_chain_desc.BufferCount = 3;
+  swap_chain_desc.BufferCount = GetSwapChainBufferCount();
   swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
   swap_chain_desc.SwapEffect = m_using_flip_model_swap_chain ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_DISCARD;
 
@@ -256,12 +277,12 @@ bool D3D11Device::CreateSwapChain()
     fs_desc.Scaling = fullscreen_mode.Scaling;
     fs_desc.Windowed = FALSE;
 
-    Log_VerbosePrintf("Creating a %dx%d exclusive fullscreen swap chain", fs_sd_desc.Width, fs_sd_desc.Height);
+    VERBOSE_LOG("Creating a {}x{} exclusive fullscreen swap chain", fs_sd_desc.Width, fs_sd_desc.Height);
     hr = m_dxgi_factory->CreateSwapChainForHwnd(m_device.Get(), window_hwnd, &fs_sd_desc, &fs_desc,
                                                 fullscreen_output.Get(), m_swap_chain.ReleaseAndGetAddressOf());
     if (FAILED(hr))
     {
-      Log_WarningPrintf("Failed to create fullscreen swap chain, trying windowed.");
+      WARNING_LOG("Failed to create fullscreen swap chain, trying windowed.");
       m_is_exclusive_fullscreen = false;
       m_using_allow_tearing = m_allow_tearing_supported && m_using_flip_model_swap_chain;
     }
@@ -269,15 +290,15 @@ bool D3D11Device::CreateSwapChain()
 
   if (!m_is_exclusive_fullscreen)
   {
-    Log_VerbosePrintf("Creating a %dx%d %s windowed swap chain", swap_chain_desc.Width, swap_chain_desc.Height,
-                      m_using_flip_model_swap_chain ? "flip-discard" : "discard");
+    VERBOSE_LOG("Creating a {}x{} {} windowed swap chain", swap_chain_desc.Width, swap_chain_desc.Height,
+                m_using_flip_model_swap_chain ? "flip-discard" : "discard");
     hr = m_dxgi_factory->CreateSwapChainForHwnd(m_device.Get(), window_hwnd, &swap_chain_desc, nullptr, nullptr,
                                                 m_swap_chain.ReleaseAndGetAddressOf());
   }
 
   if (FAILED(hr) && m_using_flip_model_swap_chain)
   {
-    Log_WarningPrintf("Failed to create a flip-discard swap chain, trying discard.");
+    WARNING_LOG("Failed to create a flip-discard swap chain, trying discard.");
     swap_chain_desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
     swap_chain_desc.Flags = 0;
     m_using_flip_model_swap_chain = false;
@@ -285,9 +306,9 @@ bool D3D11Device::CreateSwapChain()
 
     hr = m_dxgi_factory->CreateSwapChainForHwnd(m_device.Get(), window_hwnd, &swap_chain_desc, nullptr, nullptr,
                                                 m_swap_chain.ReleaseAndGetAddressOf());
-    if (FAILED(hr))
+    if (FAILED(hr)) [[unlikely]]
     {
-      Log_ErrorPrintf("CreateSwapChainForHwnd failed: 0x%08X", hr);
+      ERROR_LOG("CreateSwapChainForHwnd failed: 0x{:08X}", static_cast<unsigned>(hr));
       return false;
     }
   }
@@ -297,7 +318,7 @@ bool D3D11Device::CreateSwapChain()
   if (FAILED(m_swap_chain->GetParent(IID_PPV_ARGS(parent_factory.GetAddressOf()))) ||
       FAILED(parent_factory->MakeWindowAssociation(window_hwnd, DXGI_MWA_NO_WINDOW_CHANGES)))
   {
-    Log_WarningPrintf("MakeWindowAssociation() to disable ALT+ENTER failed");
+    WARNING_LOG("MakeWindowAssociation() to disable ALT+ENTER failed");
   }
 
   if (!CreateSwapChainRTV())
@@ -316,9 +337,9 @@ bool D3D11Device::CreateSwapChainRTV()
 {
   ComPtr<ID3D11Texture2D> backbuffer;
   HRESULT hr = m_swap_chain->GetBuffer(0, IID_PPV_ARGS(backbuffer.GetAddressOf()));
-  if (FAILED(hr))
+  if (FAILED(hr)) [[unlikely]]
   {
-    Log_ErrorPrintf("GetBuffer for RTV failed: 0x%08X", hr);
+    ERROR_LOG("GetBuffer for RTV failed: 0x{:08X}", static_cast<unsigned>(hr));
     return false;
   }
 
@@ -328,9 +349,9 @@ bool D3D11Device::CreateSwapChainRTV()
   CD3D11_RENDER_TARGET_VIEW_DESC rtv_desc(D3D11_RTV_DIMENSION_TEXTURE2D, backbuffer_desc.Format, 0, 0,
                                           backbuffer_desc.ArraySize);
   hr = m_device->CreateRenderTargetView(backbuffer.Get(), &rtv_desc, m_swap_chain_rtv.ReleaseAndGetAddressOf());
-  if (FAILED(hr))
+  if (FAILED(hr)) [[unlikely]]
   {
-    Log_ErrorPrintf("CreateRenderTargetView for swap chain failed: 0x%08X", hr);
+    ERROR_LOG("CreateRenderTargetView for swap chain failed: 0x{:08X}", static_cast<unsigned>(hr));
     m_swap_chain_rtv.Reset();
     return false;
   }
@@ -338,7 +359,7 @@ bool D3D11Device::CreateSwapChainRTV()
   m_window_info.surface_width = backbuffer_desc.Width;
   m_window_info.surface_height = backbuffer_desc.Height;
   m_window_info.surface_format = s_swap_chain_format;
-  Log_VerbosePrintf("Swap chain buffer size: %ux%u", m_window_info.surface_width, m_window_info.surface_height);
+  VERBOSE_LOG("Swap chain buffer size: {}x{}", m_window_info.surface_width, m_window_info.surface_height);
 
   if (m_window_info.type == WindowInfo::Type::Win32)
   {
@@ -349,10 +370,6 @@ bool D3D11Device::CreateSwapChainRTV()
     {
       m_window_info.surface_refresh_rate = static_cast<float>(desc.BufferDesc.RefreshRate.Numerator) /
                                            static_cast<float>(desc.BufferDesc.RefreshRate.Denominator);
-    }
-    else
-    {
-      m_window_info.surface_refresh_rate = 0.0f;
     }
   }
 
@@ -384,7 +401,7 @@ bool D3D11Device::UpdateWindow()
 
   if (m_window_info.type != WindowInfo::Type::Surfaceless && !CreateSwapChain())
   {
-    Log_ErrorPrintf("Failed to create swap chain on updated window");
+    ERROR_LOG("Failed to create swap chain on updated window");
     return false;
   }
 
@@ -413,8 +430,8 @@ void D3D11Device::ResizeWindow(s32 new_window_width, s32 new_window_height, floa
 
   HRESULT hr = m_swap_chain->ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN,
                                            m_using_allow_tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
-  if (FAILED(hr))
-    Log_ErrorPrintf("ResizeBuffers() failed: 0x%08X", hr);
+  if (FAILED(hr)) [[unlikely]]
+    ERROR_LOG("ResizeBuffers() failed: 0x{:08X}", static_cast<unsigned>(hr));
 
   if (!CreateSwapChainRTV())
     Panic("Failed to recreate swap chain RTV after resize");
@@ -457,13 +474,18 @@ std::string D3D11Device::GetDriverInfo() const
   return ret;
 }
 
+void D3D11Device::ExecuteAndWaitForGPUIdle()
+{
+  m_context->Flush();
+}
+
 bool D3D11Device::CreateBuffers()
 {
   if (!m_vertex_buffer.Create(D3D11_BIND_VERTEX_BUFFER, VERTEX_BUFFER_SIZE, VERTEX_BUFFER_SIZE) ||
       !m_index_buffer.Create(D3D11_BIND_INDEX_BUFFER, INDEX_BUFFER_SIZE, INDEX_BUFFER_SIZE) ||
       !m_uniform_buffer.Create(D3D11_BIND_CONSTANT_BUFFER, MIN_UNIFORM_BUFFER_SIZE, MAX_UNIFORM_BUFFER_SIZE))
   {
-    Log_ErrorPrintf("Failed to create vertex/index/uniform buffers.");
+    ERROR_LOG("Failed to create vertex/index/uniform buffers.");
     return false;
   }
 
@@ -553,12 +575,15 @@ void D3D11Device::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u3
                                 src11->GetD3DTexture(), 0, dst11->GetDXGIFormat());
 }
 
-bool D3D11Device::IsRenderTargetBound(const GPUTexture* tex) const
+bool D3D11Device::IsRenderTargetBound(const D3D11Texture* tex) const
 {
-  for (u32 i = 0; i < m_num_current_render_targets; i++)
+  if (tex->IsRenderTarget() || tex->IsRWTexture())
   {
-    if (m_current_render_targets[i] == tex)
-      return true;
+    for (u32 i = 0; i < m_num_current_render_targets; i++)
+    {
+      if (m_current_render_targets[i] == tex)
+        return true;
+    }
   }
 
   return false;
@@ -566,45 +591,56 @@ bool D3D11Device::IsRenderTargetBound(const GPUTexture* tex) const
 
 void D3D11Device::ClearRenderTarget(GPUTexture* t, u32 c)
 {
-  GPUDevice::ClearRenderTarget(t, c);
-  if (IsRenderTargetBound(t))
-    static_cast<D3D11Texture*>(t)->CommitClear(m_context.Get());
+  D3D11Texture* const T = static_cast<D3D11Texture*>(t);
+  GPUDevice::ClearRenderTarget(T, c);
+  if (IsRenderTargetBound(T))
+    T->CommitClear(m_context.Get());
 }
 
 void D3D11Device::ClearDepth(GPUTexture* t, float d)
 {
-  GPUDevice::ClearDepth(t, d);
-  if (m_current_depth_target == t)
-    static_cast<D3D11Texture*>(t)->CommitClear(m_context.Get());
+  D3D11Texture* const T = static_cast<D3D11Texture*>(t);
+  GPUDevice::ClearDepth(T, d);
+  if (T == m_current_depth_target)
+    T->CommitClear(m_context.Get());
 }
 
 void D3D11Device::InvalidateRenderTarget(GPUTexture* t)
 {
-  GPUDevice::InvalidateRenderTarget(t);
-  if (t->IsRenderTarget() ? IsRenderTargetBound(t) : (m_current_depth_target == t))
-    static_cast<D3D11Texture*>(t)->CommitClear(m_context.Get());
+  D3D11Texture* const T = static_cast<D3D11Texture*>(t);
+  GPUDevice::InvalidateRenderTarget(T);
+  if (T->IsDepthStencil() ? (m_current_depth_target == T) : IsRenderTargetBound(T))
+    T->CommitClear(m_context.Get());
 }
 
-bool D3D11Device::GetHostRefreshRate(float* refresh_rate)
+void D3D11Device::SetVSyncMode(GPUVSyncMode mode, bool allow_present_throttle)
 {
-  if (m_swap_chain && m_is_exclusive_fullscreen)
+  m_allow_present_throttle = allow_present_throttle;
+
+  // Using mailbox-style no-allow-tearing causes tearing in exclusive fullscreen.
+  if (mode == GPUVSyncMode::Mailbox && m_is_exclusive_fullscreen)
   {
-    DXGI_SWAP_CHAIN_DESC desc;
-    if (SUCCEEDED(m_swap_chain->GetDesc(&desc)) && desc.BufferDesc.RefreshRate.Numerator > 0 &&
-        desc.BufferDesc.RefreshRate.Denominator > 0)
-    {
-      Log_InfoPrintf("using fs rr: %u %u", desc.BufferDesc.RefreshRate.Numerator,
-                     desc.BufferDesc.RefreshRate.Denominator);
-      *refresh_rate = static_cast<float>(desc.BufferDesc.RefreshRate.Numerator) /
-                      static_cast<float>(desc.BufferDesc.RefreshRate.Denominator);
-      return true;
-    }
+    WARNING_LOG("Using FIFO instead of Mailbox vsync due to exclusive fullscreen.");
+    mode = GPUVSyncMode::FIFO;
   }
 
-  return GPUDevice::GetHostRefreshRate(refresh_rate);
+  if (m_vsync_mode == mode)
+    return;
+
+  const u32 old_buffer_count = GetSwapChainBufferCount();
+  m_vsync_mode = mode;
+  if (!m_swap_chain)
+    return;
+
+  if (GetSwapChainBufferCount() != old_buffer_count)
+  {
+    DestroySwapChain();
+    if (!CreateSwapChain())
+      Panic("Failed to recreate swap chain after vsync change.");
+  }
 }
 
-bool D3D11Device::BeginPresent(bool skip_present)
+bool D3D11Device::BeginPresent(bool skip_present, u32 clear_color)
 {
   if (skip_present)
     return false;
@@ -612,7 +648,7 @@ bool D3D11Device::BeginPresent(bool skip_present)
   if (!m_swap_chain)
   {
     // Note: Really slow on Intel...
-    //m_context->Flush();
+    m_context->Flush();
     TrimTexturePool();
     return false;
   }
@@ -632,14 +668,14 @@ bool D3D11Device::BeginPresent(bool skip_present)
   // This blows our our GPU usage number considerably, so read the timestamp before the final blit
   // in this configuration. It does reduce accuracy a little, but better than seeing 100% all of
   // the time, when it's more like a couple of percent.
-  if (m_vsync_enabled && m_gpu_timing_enabled)
+  if (m_vsync_mode == GPUVSyncMode::FIFO && m_gpu_timing_enabled)
     PopTimestampQuery();
 
-  static constexpr float clear_color[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-  m_context->ClearRenderTargetView(m_swap_chain_rtv.Get(), clear_color);
+  m_context->ClearRenderTargetView(m_swap_chain_rtv.Get(), GSVector4::rgba32(clear_color).F32);
   m_context->OMSetRenderTargets(1, m_swap_chain_rtv.GetAddressOf(), nullptr);
   s_stats.num_render_passes++;
   m_num_current_render_targets = 0;
+  m_current_render_pass_flags = GPUPipeline::NoRenderPassFlags;
   std::memset(m_current_render_targets.data(), 0, sizeof(m_current_render_targets));
   m_current_depth_target = nullptr;
   return true;
@@ -650,16 +686,12 @@ void D3D11Device::EndPresent(bool explicit_present)
   DebugAssert(!explicit_present);
   DebugAssert(m_num_current_render_targets == 0 && !m_current_depth_target);
 
-  if (m_vsync_enabled && m_gpu_timing_enabled)
+  if (m_vsync_mode != GPUVSyncMode::FIFO && m_gpu_timing_enabled)
     PopTimestampQuery();
 
-  // DirectX has no concept of tear-or-sync. I guess if we measured times ourselves, we could implement it.
-  if (m_vsync_enabled)
-    m_swap_chain->Present(BoolToUInt32(1), 0);
-  else if (m_using_allow_tearing) // Disabled or VRR, VRR requires the allow tearing flag :/
-    m_swap_chain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
-  else
-    m_swap_chain->Present(0, 0);
+  const UINT sync_interval = static_cast<UINT>(m_vsync_mode == GPUVSyncMode::FIFO);
+  const UINT flags = (m_vsync_mode == GPUVSyncMode::Disabled && m_using_allow_tearing) ? DXGI_PRESENT_ALLOW_TEARING : 0;
+  m_swap_chain->Present(sync_interval, flags);
 
   if (m_gpu_timing_enabled)
     KickTimestampQuery();
@@ -670,39 +702,6 @@ void D3D11Device::EndPresent(bool explicit_present)
 void D3D11Device::SubmitPresent()
 {
   Panic("Not supported by this API.");
-}
-
-GPUDevice::AdapterAndModeList D3D11Device::StaticGetAdapterAndModeList()
-{
-  AdapterAndModeList ret;
-  std::unique_lock lock(s_instance_mutex);
-
-  // Device shouldn't be torn down since we have the lock.
-  if (g_gpu_device && g_gpu_device->GetRenderAPI() == RenderAPI::D3D11)
-  {
-    GetAdapterAndModeList(&ret, D3D11Device::GetInstance().m_dxgi_factory.Get());
-  }
-  else
-  {
-    ComPtr<IDXGIFactory5> factory = D3DCommon::CreateFactory(false, nullptr);
-    if (factory)
-      GetAdapterAndModeList(&ret, factory.Get());
-  }
-
-  return ret;
-}
-
-void D3D11Device::GetAdapterAndModeList(AdapterAndModeList* ret, IDXGIFactory5* factory)
-{
-  ret->adapter_names = D3DCommon::GetAdapterNames(factory);
-  ret->fullscreen_modes = D3DCommon::GetFullscreenModes(factory, {});
-}
-
-GPUDevice::AdapterAndModeList D3D11Device::GetAdapterAndModeList()
-{
-  AdapterAndModeList ret;
-  GetAdapterAndModeList(&ret, m_dxgi_factory.Get());
-  return ret;
 }
 
 bool D3D11Device::CreateTimestampQueries()
@@ -752,7 +751,7 @@ void D3D11Device::PopTimestampQuery()
 
     if (disjoint.Disjoint)
     {
-      Log_VerbosePrintf("GPU timing disjoint, resetting.");
+      VERBOSE_LOG("GPU timing disjoint, resetting.");
       m_read_timestamp_query = 0;
       m_write_timestamp_query = 0;
       m_waiting_timestamp_queries = 0;
@@ -772,6 +771,11 @@ void D3D11Device::PopTimestampQuery()
         m_accumulated_gpu_time += delta;
         m_read_timestamp_query = (m_read_timestamp_query + 1) % NUM_TIMESTAMP_QUERIES;
         m_waiting_timestamp_queries--;
+      }
+      else
+      {
+        // Data not ready yet.
+        break;
       }
     }
   }
@@ -943,21 +947,27 @@ void D3D11Device::UnmapUniformBuffer(u32 size)
   }
 }
 
-void D3D11Device::SetRenderTargets(GPUTexture* const* rts, u32 num_rts, GPUTexture* ds, GPUPipeline::RenderPassFlag feedback_loop)
+void D3D11Device::SetRenderTargets(GPUTexture* const* rts, u32 num_rts, GPUTexture* ds,
+                                   GPUPipeline::RenderPassFlag flags)
 {
-  ID3D11RenderTargetView* rtvs[MAX_RENDER_TARGETS];
-  DebugAssert(!feedback_loop);
+  DebugAssert(
+    !(flags & (GPUPipeline::RenderPassFlag::ColorFeedbackLoop | GPUPipeline::RenderPassFlag::SampleDepthBuffer)));
 
-  bool changed = (m_num_current_render_targets != num_rts || m_current_depth_target != ds);
-  m_current_depth_target = static_cast<D3D11Texture*>(ds);
+  // Make sure DSV isn't bound.
+  D3D11Texture* DS = static_cast<D3D11Texture*>(ds);
+  if (DS)
+    DS->CommitClear(m_context.Get());
 
-  // Make sure textures aren't bound.
+  bool changed =
+    (m_num_current_render_targets != num_rts || m_current_depth_target != DS || m_current_render_pass_flags != flags);
+  m_current_render_pass_flags = flags;
+  m_current_depth_target = DS;
   if (ds)
   {
     const ID3D11ShaderResourceView* srv = static_cast<D3D11Texture*>(ds)->GetD3DSRV();
     for (u32 i = 0; i < MAX_TEXTURE_SAMPLERS; i++)
     {
-      if (m_current_textures[i] == srv)
+      if (m_current_textures[i] && m_current_textures[i] == srv)
       {
         m_current_textures[i] = nullptr;
         m_context->PSSetShaderResources(i, 1, &m_current_textures[i]);
@@ -967,16 +977,15 @@ void D3D11Device::SetRenderTargets(GPUTexture* const* rts, u32 num_rts, GPUTextu
 
   for (u32 i = 0; i < num_rts; i++)
   {
-    D3D11Texture* const dt = static_cast<D3D11Texture*>(rts[i]);
-    changed |= m_current_render_targets[i] != dt;
-    m_current_render_targets[i] = dt;
-    rtvs[i] = dt->GetD3DRTV();
-    dt->CommitClear(m_context.Get());
+    D3D11Texture* const RT = static_cast<D3D11Texture*>(rts[i]);
+    changed |= m_current_render_targets[i] != RT;
+    m_current_render_targets[i] = RT;
+    RT->CommitClear(m_context.Get());
 
-    const ID3D11ShaderResourceView* srv = dt->GetD3DSRV();
+    const ID3D11ShaderResourceView* srv = RT->GetD3DSRV();
     for (u32 j = 0; j < MAX_TEXTURE_SAMPLERS; j++)
     {
-      if (m_current_textures[j] == srv)
+      if (m_current_textures[j] && m_current_textures[j] == srv)
       {
         m_current_textures[j] = nullptr;
         m_context->PSSetShaderResources(j, 1, &m_current_textures[j]);
@@ -990,7 +999,27 @@ void D3D11Device::SetRenderTargets(GPUTexture* const* rts, u32 num_rts, GPUTextu
     return;
 
   s_stats.num_render_passes++;
-  m_context->OMSetRenderTargets(num_rts, rtvs, ds ? static_cast<D3D11Texture*>(ds)->GetD3DDSV() : nullptr);
+
+  if (m_current_render_pass_flags & GPUPipeline::BindRenderTargetsAsImages)
+  {
+    std::array<ID3D11UnorderedAccessView*, MAX_RENDER_TARGETS> uavs;
+    for (u32 i = 0; i < m_num_current_render_targets; i++)
+      uavs[i] = m_current_render_targets[i]->GetD3DUAV();
+
+    m_context->OMSetRenderTargetsAndUnorderedAccessViews(
+      0, nullptr, m_current_depth_target ? m_current_depth_target->GetD3DDSV() : nullptr, 0,
+      m_num_current_render_targets, uavs.data(), nullptr);
+  }
+  else
+  {
+    std::array<ID3D11RenderTargetView*, MAX_RENDER_TARGETS> rtvs;
+    for (u32 i = 0; i < m_num_current_render_targets; i++)
+      rtvs[i] = m_current_render_targets[i]->GetD3DRTV();
+
+    m_context->OMSetRenderTargets(m_num_current_render_targets,
+                                  (m_num_current_render_targets > 0) ? rtvs.data() : nullptr,
+                                  m_current_depth_target ? m_current_depth_target->GetD3DDSV() : nullptr);
+  }
 }
 
 void D3D11Device::SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler)
@@ -1009,7 +1038,11 @@ void D3D11Device::SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* s
   ID3D11SamplerState* S = sampler ? static_cast<D3D11Sampler*>(sampler)->GetSamplerState() : nullptr;
 
   // Runtime will null these if we don't...
-  DebugAssert(!texture || !IsRenderTargetBound(texture) || m_current_depth_target != texture);
+  DebugAssert(!texture ||
+              !((texture->IsRenderTarget() || texture->IsRWTexture()) &&
+                IsRenderTargetBound(static_cast<D3D11Texture*>(texture))) ||
+              !(texture->IsDepthStencil() &&
+                (!m_current_depth_target || m_current_depth_target != static_cast<D3D11Texture*>(texture))));
 
   if (m_current_textures[slot] != T)
   {
@@ -1047,36 +1080,37 @@ void D3D11Device::UnbindTexture(D3D11Texture* tex)
     }
   }
 
-  if (tex->IsRenderTarget())
+  if (tex->IsRenderTarget() || tex->IsRWTexture())
   {
     for (u32 i = 0; i < m_num_current_render_targets; i++)
     {
       if (m_current_render_targets[i] == tex)
       {
-        Log_WarningPrint("Unbinding current RT");
+        WARNING_LOG("Unbinding current RT");
         SetRenderTargets(nullptr, 0, m_current_depth_target);
         break;
       }
     }
   }
-  else if (m_current_depth_target == tex)
+  else if (tex->IsDepthStencil() && m_current_depth_target == tex)
   {
-    Log_WarningPrint("Unbinding current DS");
+    WARNING_LOG("Unbinding current DS");
     SetRenderTargets(nullptr, 0, nullptr);
   }
 }
 
-void D3D11Device::SetViewport(s32 x, s32 y, s32 width, s32 height)
+void D3D11Device::SetViewport(const GSVector4i rc)
 {
-  const CD3D11_VIEWPORT vp(static_cast<float>(x), static_cast<float>(y), static_cast<float>(width),
-                           static_cast<float>(height), 0.0f, 1.0f);
+  const CD3D11_VIEWPORT vp(static_cast<float>(rc.left), static_cast<float>(rc.top), static_cast<float>(rc.width()),
+                           static_cast<float>(rc.height()), 0.0f, 1.0f);
   m_context->RSSetViewports(1, &vp);
 }
 
-void D3D11Device::SetScissor(s32 x, s32 y, s32 width, s32 height)
+void D3D11Device::SetScissor(const GSVector4i rc)
 {
-  const CD3D11_RECT rc(x, y, x + width, y + height);
-  m_context->RSSetScissorRects(1, &rc);
+  alignas(16) D3D11_RECT drc;
+  GSVector4i::store<true>(&drc, rc);
+  m_context->RSSetScissorRects(1, &drc);
 }
 
 void D3D11Device::Draw(u32 vertex_count, u32 base_vertex)

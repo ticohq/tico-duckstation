@@ -1,28 +1,27 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "cpu_types.h"
 #include "common/assert.h"
 #include <array>
 
-namespace CPU {
 static const std::array<const char*, 36> s_reg_names = {
   {"zero", "at", "v0", "v1", "a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "s0", "s1",
    "s2",   "s3", "s4", "s5", "s6", "s7", "t8", "t9", "k0", "k1", "gp", "sp", "fp", "ra", "hi", "lo", "pc", "npc"}};
 
-const char* GetRegName(Reg reg)
+const char* CPU::GetRegName(Reg reg)
 {
   DebugAssert(reg < Reg::count);
   return s_reg_names[static_cast<u8>(reg)];
 }
 
-bool IsNopInstruction(const Instruction& instruction)
+bool CPU::IsNopInstruction(const Instruction instruction)
 {
   // TODO: Handle other types of nop.
   return (instruction.bits == 0);
 }
 
-bool IsBranchInstruction(const Instruction& instruction)
+bool CPU::IsBranchInstruction(const Instruction instruction)
 {
   switch (instruction.op)
   {
@@ -53,7 +52,7 @@ bool IsBranchInstruction(const Instruction& instruction)
   }
 }
 
-bool IsUnconditionalBranchInstruction(const Instruction& instruction)
+bool CPU::IsUnconditionalBranchInstruction(const Instruction instruction)
 {
   switch (instruction.op)
   {
@@ -89,7 +88,7 @@ bool IsUnconditionalBranchInstruction(const Instruction& instruction)
   }
 }
 
-bool IsDirectBranchInstruction(const Instruction& instruction)
+bool CPU::IsDirectBranchInstruction(const Instruction instruction)
 {
   switch (instruction.op)
   {
@@ -107,7 +106,7 @@ bool IsDirectBranchInstruction(const Instruction& instruction)
   }
 }
 
-VirtualMemoryAddress GetDirectBranchTarget(const Instruction& instruction, VirtualMemoryAddress instruction_pc)
+VirtualMemoryAddress CPU::GetDirectBranchTarget(const Instruction instruction, VirtualMemoryAddress instruction_pc)
 {
   const VirtualMemoryAddress pc = instruction_pc + 4;
 
@@ -129,13 +128,13 @@ VirtualMemoryAddress GetDirectBranchTarget(const Instruction& instruction, Virtu
   }
 }
 
-bool IsCallInstruction(const Instruction& instruction)
+bool CPU::IsCallInstruction(const Instruction instruction)
 {
   return (instruction.op == InstructionOp::funct && instruction.r.funct == InstructionFunct::jalr) ||
          (instruction.op == InstructionOp::jal);
 }
 
-bool IsReturnInstruction(const Instruction& instruction)
+bool CPU::IsReturnInstruction(const Instruction instruction)
 {
   if (instruction.op != InstructionOp::funct)
     return false;
@@ -147,7 +146,7 @@ bool IsReturnInstruction(const Instruction& instruction)
   return false;
 }
 
-bool IsMemoryLoadInstruction(const Instruction& instruction)
+bool CPU::IsMemoryLoadInstruction(const Instruction instruction)
 {
   switch (instruction.op)
   {
@@ -168,7 +167,7 @@ bool IsMemoryLoadInstruction(const Instruction& instruction)
   }
 }
 
-bool IsMemoryStoreInstruction(const Instruction& instruction)
+bool CPU::IsMemoryStoreInstruction(const Instruction instruction)
 {
   switch (instruction.op)
   {
@@ -187,7 +186,8 @@ bool IsMemoryStoreInstruction(const Instruction& instruction)
   }
 }
 
-std::optional<VirtualMemoryAddress> GetLoadStoreEffectiveAddress(const Instruction& instruction, const Registers* regs)
+std::optional<VirtualMemoryAddress> CPU::GetLoadStoreEffectiveAddress(const Instruction instruction,
+                                                                      const Registers* regs)
 {
   switch (instruction.op)
   {
@@ -214,7 +214,7 @@ std::optional<VirtualMemoryAddress> GetLoadStoreEffectiveAddress(const Instructi
   }
 }
 
-bool InstructionHasLoadDelay(const Instruction& instruction)
+bool CPU::InstructionHasLoadDelay(const Instruction instruction)
 {
   switch (instruction.op)
   {
@@ -244,7 +244,7 @@ bool InstructionHasLoadDelay(const Instruction& instruction)
   }
 }
 
-bool IsExitBlockInstruction(const Instruction& instruction)
+bool CPU::IsExitBlockInstruction(const Instruction instruction)
 {
   switch (instruction.op)
   {
@@ -266,111 +266,107 @@ bool IsExitBlockInstruction(const Instruction& instruction)
   }
 }
 
-bool CanInstructionTrap(const Instruction& instruction, bool in_user_mode)
+bool CPU::IsValidInstruction(const Instruction instruction)
 {
-  switch (instruction.op)
-  {
-    case InstructionOp::lui:
-    case InstructionOp::andi:
-    case InstructionOp::ori:
-    case InstructionOp::xori:
-    case InstructionOp::addiu:
-    case InstructionOp::slti:
-    case InstructionOp::sltiu:
-      return false;
+  // No constexpr std::bitset until C++23 :(
+  static constexpr const std::array<u32, 64 / 32> valid_op_map = []() constexpr {
+    std::array<u32, 64 / 32> ret = {};
 
-    case InstructionOp::cop0:
-    case InstructionOp::cop2:
-    case InstructionOp::lwc2:
-    case InstructionOp::swc2:
-      return in_user_mode;
+#define SET(op) ret[static_cast<size_t>(op) / 32] |= (1u << (static_cast<size_t>(op) % 32));
 
-      // swc0/lwc0/cop1/cop3 are essentially no-ops
-    case InstructionOp::cop1:
-    case InstructionOp::cop3:
-    case InstructionOp::lwc0:
-    case InstructionOp::lwc1:
-    case InstructionOp::lwc3:
-    case InstructionOp::swc0:
-    case InstructionOp::swc1:
-    case InstructionOp::swc3:
-      return false;
+    SET(InstructionOp::b);
+    SET(InstructionOp::j);
+    SET(InstructionOp::jal);
+    SET(InstructionOp::beq);
+    SET(InstructionOp::bne);
+    SET(InstructionOp::blez);
+    SET(InstructionOp::bgtz);
+    SET(InstructionOp::addi);
+    SET(InstructionOp::addiu);
+    SET(InstructionOp::slti);
+    SET(InstructionOp::sltiu);
+    SET(InstructionOp::andi);
+    SET(InstructionOp::ori);
+    SET(InstructionOp::xori);
+    SET(InstructionOp::lui);
 
-    case InstructionOp::addi:
-    case InstructionOp::lb:
-    case InstructionOp::lh:
-    case InstructionOp::lw:
-    case InstructionOp::lbu:
-    case InstructionOp::lhu:
-    case InstructionOp::lwl:
-    case InstructionOp::lwr:
-    case InstructionOp::sb:
-    case InstructionOp::sh:
-    case InstructionOp::sw:
-    case InstructionOp::swl:
-    case InstructionOp::swr:
-      return true;
+    // Invalid COP0-3 ops don't raise #RI?
+    SET(InstructionOp::cop0);
+    SET(InstructionOp::cop1);
+    SET(InstructionOp::cop2);
+    SET(InstructionOp::cop3);
 
-      // These can fault on the branch address. Perhaps we should move this to the next instruction?
-    case InstructionOp::j:
-    case InstructionOp::jal:
-    case InstructionOp::b:
-    case InstructionOp::beq:
-    case InstructionOp::bgtz:
-    case InstructionOp::blez:
-    case InstructionOp::bne:
-      return false;
+    SET(InstructionOp::lb);
+    SET(InstructionOp::lh);
+    SET(InstructionOp::lwl);
+    SET(InstructionOp::lw);
+    SET(InstructionOp::lbu);
+    SET(InstructionOp::lhu);
+    SET(InstructionOp::lwr);
+    SET(InstructionOp::sb);
+    SET(InstructionOp::sh);
+    SET(InstructionOp::swl);
+    SET(InstructionOp::sw);
+    SET(InstructionOp::swr);
+    SET(InstructionOp::lwc0);
+    SET(InstructionOp::lwc1);
+    SET(InstructionOp::lwc2);
+    SET(InstructionOp::lwc3);
+    SET(InstructionOp::swc0);
+    SET(InstructionOp::swc1);
+    SET(InstructionOp::swc2);
+    SET(InstructionOp::swc3);
 
-    case InstructionOp::funct:
-    {
-      switch (instruction.r.funct)
-      {
-        case InstructionFunct::sll:
-        case InstructionFunct::srl:
-        case InstructionFunct::sra:
-        case InstructionFunct::sllv:
-        case InstructionFunct::srlv:
-        case InstructionFunct::srav:
-        case InstructionFunct::and_:
-        case InstructionFunct::or_:
-        case InstructionFunct::xor_:
-        case InstructionFunct::nor:
-        case InstructionFunct::addu:
-        case InstructionFunct::subu:
-        case InstructionFunct::slt:
-        case InstructionFunct::sltu:
-        case InstructionFunct::mfhi:
-        case InstructionFunct::mthi:
-        case InstructionFunct::mflo:
-        case InstructionFunct::mtlo:
-        case InstructionFunct::mult:
-        case InstructionFunct::multu:
-        case InstructionFunct::div:
-        case InstructionFunct::divu:
-          return false;
+#undef SET
 
-        case InstructionFunct::jr:
-        case InstructionFunct::jalr:
-          return true;
+    return ret;
+  }();
 
-        case InstructionFunct::add:
-        case InstructionFunct::sub:
-        case InstructionFunct::syscall:
-        case InstructionFunct::break_:
-        default:
-          return true;
-      }
-    }
+  static constexpr const std::array<u32, 64 / 32> valid_func_map = []() constexpr {
+    std::array<u32, 64 / 32> ret = {};
 
-    default:
-      return true;
-  }
+#define SET(op) ret[static_cast<size_t>(op) / 32] |= (1u << (static_cast<size_t>(op) % 32));
+
+    SET(InstructionFunct::sll);
+    SET(InstructionFunct::srl);
+    SET(InstructionFunct::sra);
+    SET(InstructionFunct::sllv);
+    SET(InstructionFunct::srlv);
+    SET(InstructionFunct::srav);
+    SET(InstructionFunct::jr);
+    SET(InstructionFunct::jalr);
+    SET(InstructionFunct::syscall);
+    SET(InstructionFunct::break_);
+    SET(InstructionFunct::mfhi);
+    SET(InstructionFunct::mthi);
+    SET(InstructionFunct::mflo);
+    SET(InstructionFunct::mtlo);
+    SET(InstructionFunct::mult);
+    SET(InstructionFunct::multu);
+    SET(InstructionFunct::div);
+    SET(InstructionFunct::divu);
+    SET(InstructionFunct::add);
+    SET(InstructionFunct::addu);
+    SET(InstructionFunct::sub);
+    SET(InstructionFunct::subu);
+    SET(InstructionFunct::and_);
+    SET(InstructionFunct::or_);
+    SET(InstructionFunct::xor_);
+    SET(InstructionFunct::nor);
+    SET(InstructionFunct::slt);
+    SET(InstructionFunct::sltu);
+
+#undef SET
+
+    return ret;
+  }();
+
+#define CHECK(arr, val) ((arr[static_cast<size_t>(val) / 32] & (1u << (static_cast<size_t>(val) % 32))) != 0u)
+
+  if (instruction.op == InstructionOp::funct)
+    return CHECK(valid_func_map, instruction.r.funct.GetValue());
+  else
+    return CHECK(valid_op_map, instruction.op.GetValue());
+
+#undef CHECK
 }
-
-bool IsInvalidInstruction(const Instruction& instruction)
-{
-  // TODO
-  return true;
-}
-
-} // namespace CPU

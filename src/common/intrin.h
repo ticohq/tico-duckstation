@@ -13,7 +13,21 @@
 #if defined(CPU_ARCH_X86) || defined(CPU_ARCH_X64)
 #define CPU_ARCH_SSE 1
 #include <emmintrin.h>
-#elif defined(CPU_ARCH_ARM64)
+#include <tmmintrin.h>
+#include <smmintrin.h>
+#include <immintrin.h>
+
+#if defined(__AVX2__)
+#define CPU_ARCH_AVX 1
+#define CPU_ARCH_AVX2 1
+#define CPU_ARCH_SSE41 1
+#elif defined(__AVX__)
+#define CPU_ARCH_AVX 1
+#define CPU_ARCH_SSE41 1
+#elif defined(__SSE4_1__) || defined(_MSC_VER)
+#define CPU_ARCH_SSE41 1
+#endif
+#elif defined(CPU_ARCH_ARM32) || defined(CPU_ARCH_ARM64)
 #define CPU_ARCH_NEON 1
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <arm64_neon.h>
@@ -52,8 +66,10 @@ ALWAYS_INLINE_RELEASE static void MemsetPtrs(T* ptr, T value, u32 count)
 
 #if defined(CPU_ARCH_SSE)
   const __m128i svalue = _mm_set1_epi64x(reinterpret_cast<intptr_t>(value));
-#elif defined(CPU_ARCH_NEON)
+#elif defined(CPU_ARCH_NEON) && defined(CPU_ARCH_ARM64)
   const uint64x2_t svalue = vdupq_n_u64(reinterpret_cast<uintptr_t>(value));
+#elif defined(CPU_ARCH_NEON) && defined(CPU_ARCH_ARM32)
+  const uint32x4_t svalue = vdupq_n_u32(reinterpret_cast<uintptr_t>(value));
 #endif
 
   // Clang gets way too eager and tries to unroll these, emitting thousands of instructions.
@@ -64,8 +80,10 @@ ALWAYS_INLINE_RELEASE static void MemsetPtrs(T* ptr, T value, u32 count)
   {
 #if defined(CPU_ARCH_SSE)
     _mm_store_si128(reinterpret_cast<__m128i*>(dest), svalue);
-#elif defined(CPU_ARCH_NEON)
+#elif defined(CPU_ARCH_NEON) && defined(CPU_ARCH_ARM64)
     vst1q_u64(reinterpret_cast<u64*>(dest), svalue);
+#elif defined(CPU_ARCH_NEON) && defined(CPU_ARCH_ARM32)
+    vst1q_u32(reinterpret_cast<u32*>(dest), svalue);
 #endif
     dest += PTRS_PER_VECTOR;
   }

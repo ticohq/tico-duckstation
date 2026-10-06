@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
@@ -10,6 +10,8 @@
 #include <d3d12.h>
 #include <string_view>
 #include <wrl/client.h>
+
+class Error;
 
 namespace D3D12 {
 class RootSignatureBuilder
@@ -25,7 +27,7 @@ public:
 
   void Clear();
 
-  Microsoft::WRL::ComPtr<ID3D12RootSignature> Create(bool clear = true);
+  Microsoft::WRL::ComPtr<ID3D12RootSignature> Create(Error* error, bool clear);
 
   void SetInputAssemblerFlag();
 
@@ -58,7 +60,7 @@ public:
 
   void Clear();
 
-  Microsoft::WRL::ComPtr<ID3D12PipelineState> Create(ID3D12Device* device, bool clear = true);
+  Microsoft::WRL::ComPtr<ID3D12PipelineState> Create(ID3D12Device* device, Error* error, bool clear);
 
   void SetRootSignature(ID3D12RootSignature* rs);
 
@@ -115,7 +117,7 @@ public:
 
   void Clear();
 
-  Microsoft::WRL::ComPtr<ID3D12PipelineState> Create(ID3D12Device* device, bool clear = true);
+  Microsoft::WRL::ComPtr<ID3D12PipelineState> Create(ID3D12Device* device, Error* error, bool clear);
 
   void SetRootSignature(ID3D12RootSignature* rs);
 
@@ -126,13 +128,9 @@ private:
 };
 
 #ifdef _DEBUG
-void SetObjectName(ID3D12Object* object, const std::string_view& name);
-void SetObjectNameFormatted(ID3D12Object* object, const char* format, ...);
+void SetObjectName(ID3D12Object* object, std::string_view name);
 #else
-static inline void SetObjectName(ID3D12Object* object, const std::string_view& name)
-{
-}
-static inline void SetObjectNameFormatted(ID3D12Object* object, const char* format, ...)
+static inline void SetObjectName(ID3D12Object* object, std::string_view name)
 {
 }
 #endif
