@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -51,5 +52,6 @@ private:
 
   std::deque<std::function<void()>> m_callback_queue;
   std::mutex m_callback_queue_mutex;
+  std::condition_variable m_callback_queue_cv;
   std::atomic_bool m_message_loop_running{false};
 };

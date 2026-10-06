@@ -6,6 +6,8 @@
 
 #include <switch.h>
 
+#include <chrono>
+
 namespace Common::PageFaultHandler {
 bool PageFaultHandler(ExceptionFrameA64* ctx);
 }
@@ -177,12 +179,19 @@ std::optional<std::string> SwitchNoGUIPlatform::ConvertHostKeyboardCodeToString(
 
 void SwitchNoGUIPlatform::RunMessageLoop()
 {
+  // appletMainLoop() does not block: without a wait here this thread spun at
+  // 100% of a core beside the emulation thread. Queued work wakes it at once;
+  // applet messages (HOME, suspend) are checked every 10 ms.
+  static constexpr auto APPLET_POLL_INTERVAL = std::chrono::milliseconds(10);
   while (m_message_loop_running.load(std::memory_order_acquire))
   {
     if (!appletMainLoop())
       NoGUIHost::StopRunning();
 
     std::unique_lock lock(m_callback_queue_mutex);
+    m_callback_queue_cv.wait_for(lock, APPLET_POLL_INTERVAL, [this]() {
+      return !m_callback_queue.empty() || !m_message_loop_running.load(std::memory_order_acquire);
+    });
     while (!m_callback_queue.empty())
     {
       std::function<void()> func = std::move(m_callback_queue.front());
@@ -196,13 +205,17 @@ void SwitchNoGUIPlatform::RunMessageLoop()
 
 void SwitchNoGUIPlatform::ExecuteInMessageLoop(std::function<void()> func)
 {
-  std::unique_lock lock(m_callback_queue_mutex);
-  m_callback_queue.push_back(std::move(func));
+  {
+    std::unique_lock lock(m_callback_queue_mutex);
+    m_callback_queue.push_back(std::move(func));
+  }
+  m_callback_queue_cv.notify_one();
 }
 
 void SwitchNoGUIPlatform::QuitMessageLoop()
 {
   m_message_loop_running.store(false, std::memory_order_release);
+  m_callback_queue_cv.notify_one();
 }
 
 void SwitchNoGUIPlatform::SetFullscreen(bool enabled)
