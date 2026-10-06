@@ -24,6 +24,7 @@
 #include <vector>
 
 class Error;
+struct ImDrawData;
 
 enum class RenderAPI : u32
 {
@@ -672,6 +673,10 @@ public:
 
   /// Renders ImGui screen elements. Call before EndPresent().
   void RenderImGui();
+
+  /// Draws draw data built in another ImGui context (e.g. an overlay with its own fonts) the way RenderImGui
+  /// draws the current one's. Its textures are GPUTextures too.
+  void RenderImGuiDrawData(const ImDrawData* draw_data);
 
   ALWAYS_INLINE bool IsVSyncEnabled() const { return m_vsync_enabled; }
   virtual void SetVSyncEnabled(bool enabled);

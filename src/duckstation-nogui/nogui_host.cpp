@@ -135,6 +135,11 @@ static void UpdateWindowTitle(const std::string& game_title);
 static void CancelAsyncOp();
 static void StartAsyncOp(std::function<void(ProgressCallback*)> callback);
 static void AsyncOpThreadEntryPoint(std::function<void(ProgressCallback*)> callback);
+#ifdef __SWITCH__
+/// Reads tico's settings into DuckStation's again (after a change in the
+/// overlay's menu) and applies them; the renderer only changes on a restart.
+static void ReloadTicoSettings();
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 // Local variable declarations
@@ -661,6 +666,19 @@ static void ApplyTicoCoreSettings(SettingsInterface& si)
 
   si.Save();
   Log_InfoPrint("Applied Tico DuckStation settings from sdmc:/tico/config/cores/duckstation.jsonc.");
+}
+
+void NoGUIHost::ReloadTicoSettings()
+{
+  {
+    auto lock = Host::GetSettingsLock();
+    SettingsInterface& si = *s_base_settings_interface;
+    const std::string renderer = si.GetStringValue("GPU", "Renderer");
+    ApplyTicoCoreSettings(si);
+    si.SetStringValue("GPU", "Renderer", renderer.c_str());
+  }
+  if (System::IsValid())
+    System::ApplySettings(false);
 }
 
 static bool TrimAutobootFilenameToExistingPath(SystemBootParameters& autoboot)
@@ -1225,11 +1243,6 @@ void NoGUIHost::CPUThreadEntryPoint()
     return;
   }
 
-#ifdef __SWITCH__
-  TicoDuck::Initialize();
-  TicoDuck::SetExitApplicationCallback(NoGUIHost::StopRunning);
-#endif
-
   // Switch is launched by Tico and should only expose the Tico overlay, not DuckStation's fullscreen UI.
   const bool display_ready =
     Host::CreateGPUDevice(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer))
@@ -1240,6 +1253,12 @@ void NoGUIHost::CPUThreadEntryPoint()
 
   if (display_ready)
   {
+#ifdef __SWITCH__
+    // the overlay draws through the GPU device
+    TicoDuck::SetExitApplicationCallback(NoGUIHost::StopRunning);
+    TicoDuck::SetSettingsReloadCallback(NoGUIHost::ReloadTicoSettings);
+    TicoDuck::Initialize();
+#endif
 #ifndef __SWITCH__
     // kick a game list refresh if we're not in batch mode
     if (!InBatchMode())
@@ -2039,6 +2058,11 @@ int main(int argc, char* argv[])
   if (!g_nogui_window)
     return EXIT_FAILURE;
 
+#ifdef __SWITCH__
+  // a USB game's path is resolved in argv before it is parsed
+  TicoDuck::PrepareLaunch(argc, argv);
+#endif
+
   std::optional<SystemBootParameters> autoboot;
   if (!NoGUIHost::ParseCommandLineParametersAndInitializeConfig(argc, argv, autoboot))
     return EXIT_FAILURE;
@@ -2056,7 +2080,7 @@ int main(int argc, char* argv[])
   NoGUIHost::StopCPUThread();
 
 #ifdef __SWITCH__
-  TicoDuck::ChainloadLauncherIfRequested();
+  TicoDuck::ExitApplication();
 #endif
 
   // Ensure log is flushed.

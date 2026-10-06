@@ -16,16 +16,26 @@ if(NINTENDO_SWITCH)
     switch_nogui_platform.cpp
     switch_nogui_platform.h
     switch_asm.S
-    ../tico/TicoChainload.cpp
-    ../tico/TicoChainload.h
-    ../tico/TicoConfig.h
-    ../tico/TicoDuckBridge.cpp
     ../tico/TicoDuckBridge.h
-    ../tico/TicoLogger.h
-    ../tico/TicoMain.h
-    ../tico/TicoOverlay.cpp
-    ../tico/TicoOverlay.h
   )
+  # the tico overlay (quick menu, settings, states, RetroAchievements toasts)
+  set(TICO_FRONTEND "${CMAKE_SOURCE_DIR}/tico/frontend")
+  target_sources(duckstation-nogui PRIVATE
+    ${TICO_FRONTEND}/DuckDiscs.cpp
+    ${TICO_FRONTEND}/TicoChainload.cpp
+    ${TICO_FRONTEND}/TicoDuckBridge.cpp
+    ${TICO_FRONTEND}/UsbStorage.cpp
+    ${TICO_FRONTEND}/overlay/imgui_overlay.cpp
+    ${TICO_FRONTEND}/overlay/overlay_ui.cpp
+    ${TICO_FRONTEND}/overlay/ra_alerts.cpp
+    ${TICO_FRONTEND}/overlay/tico_config.cpp
+    ${TICO_FRONTEND}/overlay/translation_manager.cpp
+  )
+  target_include_directories(duckstation-nogui PRIVATE
+    "${TICO_FRONTEND}" "${TICO_FRONTEND}/deps/usbhsfs/include")
+  # USB drives: FAT/exFAT, and NTFS read only
+  target_link_libraries(duckstation-nogui PRIVATE
+    "${TICO_FRONTEND}/deps/usbhsfs/lib/libusbhsfs.a" "${TICO_FRONTEND}/deps/usbhsfs/lib/libusbntfs.a")
   target_link_libraries(duckstation-nogui PUBLIC "${NX_LIBRARIES}")
   target_link_libraries(duckstation-nogui PRIVATE rapidjson)
 
@@ -58,8 +68,12 @@ if(NINTENDO_SWITCH)
   # Create folder early otherwise the CMake script complains
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/romfs)
   file(REMOVE ${CMAKE_BINARY_DIR}/romfs/LICENSE)
-  file(COPY ${CMAKE_SOURCE_DIR}/src/tico/romfs/assets DESTINATION ${CMAKE_BINARY_DIR}/romfs)
-  file(COPY ${CMAKE_SOURCE_DIR}/src/tico/romfs/fonts DESTINATION ${CMAKE_BINARY_DIR}/romfs)
+  # the overlay's pictures and fonts, its strings, and the settings it lists
+  # (the module's settings.json, which tico reads too)
+  file(COPY ${TICO_FRONTEND}/romfs/assets DESTINATION ${CMAKE_BINARY_DIR}/romfs)
+  file(COPY ${TICO_FRONTEND}/romfs/fonts DESTINATION ${CMAKE_BINARY_DIR}/romfs)
+  file(COPY ${CMAKE_SOURCE_DIR}/tico/lang DESTINATION ${CMAKE_BINARY_DIR}/romfs)
+  file(COPY ${CMAKE_SOURCE_DIR}/tico/module/settings.json DESTINATION ${CMAKE_BINARY_DIR}/romfs/module)
 
   if (CMAKE_BUILD_TYPE STREQUAL Debug)
     nx_create_nro(duckstation-nogui

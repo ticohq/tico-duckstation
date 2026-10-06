@@ -538,9 +538,12 @@ void GPUDevice::RenderImGui()
   GL_SCOPE("RenderImGui");
 
   ImGui::Render();
+  RenderImGuiDrawData(ImGui::GetDrawData());
+}
 
-  const ImDrawData* draw_data = ImGui::GetDrawData();
-  if (draw_data->CmdListsCount == 0)
+void GPUDevice::RenderImGuiDrawData(const ImDrawData* draw_data)
+{
+  if (!draw_data || draw_data->CmdListsCount == 0)
     return;
 
   SetPipeline(m_imgui_pipeline.get());

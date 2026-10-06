@@ -4969,6 +4969,9 @@ bool System::PresentDisplay(bool allow_skip_present, bool explicit_present)
   if (do_present)
   {
     g_gpu_device->RenderImGui();
+#ifdef __SWITCH__
+    TicoDuck::DrawOverlay();
+#endif
     g_gpu_device->EndPresent(explicit_present);
 
     if (g_gpu_device->IsGPUTimingEnabled())
