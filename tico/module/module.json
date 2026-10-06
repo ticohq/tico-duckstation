@@ -18,7 +18,12 @@
         ".cue",
         ".iso",
         ".chd",
-        ".m3u"
+        ".m3u",
+        ".pbp",
+        ".ecm",
+        ".exe",
+        ".psexe",
+        ".psf"
       ],
       "disc_based": true,
       "naming": "redump",
