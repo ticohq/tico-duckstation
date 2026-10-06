@@ -77,128 +77,6 @@
           ]
         },
         {
-          "title": "settings_duckstation_section_cpu",
-          "options": [
-            {
-              "key": "duckstation_CPU_ExecutionMode",
-              "label": "settings_duckstation_cpu_execution_mode",
-              "type": "enum",
-              "default": "Recompiler",
-              "choices": [
-                {
-                  "label": "Interpreter",
-                  "value": "Interpreter"
-                },
-                {
-                  "label": "Cached Interpreter",
-                  "value": "CachedInterpreter"
-                },
-                {
-                  "label": "Recompiler",
-                  "value": "Recompiler"
-                },
-                {
-                  "label": "New Recompiler (Experimental)",
-                  "value": "NewRec"
-                }
-              ],
-              "restart": true
-            },
-            {
-              "key": "duckstation_CPU_FastmemMode",
-              "label": "settings_duckstation_cpu_fastmem_mode",
-              "type": "enum",
-              "default": "MMap",
-              "choices": [
-                {
-                  "label": "Disabled",
-                  "value": "Disabled"
-                },
-                {
-                  "label": "LUT",
-                  "value": "LUT"
-                },
-                {
-                  "label": "MMap",
-                  "value": "MMap"
-                }
-              ],
-              "restart": true
-            },
-            {
-              "key": "duckstation_CPU_RecompilerBlockLinking",
-              "label": "settings_duckstation_recompiler_block_linking",
-              "type": "bool",
-              "default": "true",
-              "restart": true
-            },
-            {
-              "key": "duckstation_CPU_RecompilerICache",
-              "label": "settings_duckstation_recompiler_icache",
-              "type": "bool",
-              "default": "false",
-              "restart": true
-            },
-            {
-              "key": "duckstation_CPU_RecompilerMemoryExceptions",
-              "label": "settings_duckstation_recompiler_memory_exceptions",
-              "type": "bool",
-              "default": "false",
-              "restart": true
-            },
-            {
-              "key": "duckstation_CPU_OverclockEnable",
-              "label": "settings_duckstation_cpu_overclock_enable",
-              "type": "bool",
-              "default": "false"
-            },
-            {
-              "key": "duckstation_CPU_OverclockPercent",
-              "label": "settings_duckstation_cpu_overclock_percent",
-              "type": "enum",
-              "default": "100",
-              "depends_on": {
-                "key": "duckstation_CPU_OverclockEnable",
-                "value": "true"
-              },
-              "choices": [
-                {
-                  "label": "50%",
-                  "value": "50"
-                },
-                {
-                  "label": "75%",
-                  "value": "75"
-                },
-                {
-                  "label": "100%",
-                  "value": "100"
-                },
-                {
-                  "label": "125%",
-                  "value": "125"
-                },
-                {
-                  "label": "150%",
-                  "value": "150"
-                },
-                {
-                  "label": "175%",
-                  "value": "175"
-                },
-                {
-                  "label": "200%",
-                  "value": "200"
-                },
-                {
-                  "label": "300%",
-                  "value": "300"
-                }
-              ]
-            }
-          ]
-        },
-        {
           "title": "settings_duckstation_section_cd_rom",
           "options": [
             {
@@ -354,6 +232,138 @@
                 {
                   "label": "10x (20x)",
                   "value": "10"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_duckstation_tab_cpu",
+      "sections": [
+        {
+          "title": "settings_duckstation_section_recompiler",
+          "options": [
+            {
+              "key": "duckstation_CPU_ExecutionMode",
+              "label": "settings_duckstation_cpu_execution_mode",
+              "type": "enum",
+              "default": "Recompiler",
+              "choices": [
+                {
+                  "label": "Interpreter",
+                  "value": "Interpreter"
+                },
+                {
+                  "label": "Cached Interpreter",
+                  "value": "CachedInterpreter"
+                },
+                {
+                  "label": "Recompiler",
+                  "value": "Recompiler"
+                },
+                {
+                  "label": "New Recompiler (Experimental)",
+                  "value": "NewRec"
+                }
+              ],
+              "restart": true
+            },
+            {
+              "key": "duckstation_CPU_FastmemMode",
+              "label": "settings_duckstation_cpu_fastmem_mode",
+              "type": "enum",
+              "default": "MMap",
+              "choices": [
+                {
+                  "label": "Disabled",
+                  "value": "Disabled"
+                },
+                {
+                  "label": "LUT",
+                  "value": "LUT"
+                },
+                {
+                  "label": "MMap",
+                  "value": "MMap"
+                }
+              ],
+              "restart": true
+            },
+            {
+              "key": "duckstation_CPU_RecompilerBlockLinking",
+              "label": "settings_duckstation_recompiler_block_linking",
+              "type": "bool",
+              "default": "true",
+              "restart": true
+            },
+            {
+              "key": "duckstation_CPU_RecompilerICache",
+              "label": "settings_duckstation_recompiler_icache",
+              "type": "bool",
+              "default": "false",
+              "restart": true
+            },
+            {
+              "key": "duckstation_CPU_RecompilerMemoryExceptions",
+              "label": "settings_duckstation_recompiler_memory_exceptions",
+              "type": "bool",
+              "default": "false",
+              "restart": true
+            }
+          ]
+        },
+        {
+          "title": "settings_duckstation_section_overclock",
+          "options": [
+            {
+              "key": "duckstation_CPU_OverclockEnable",
+              "label": "settings_duckstation_cpu_overclock_enable",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_CPU_OverclockPercent",
+              "label": "settings_duckstation_cpu_overclock_percent",
+              "type": "enum",
+              "default": "100",
+              "depends_on": {
+                "key": "duckstation_CPU_OverclockEnable",
+                "value": "true"
+              },
+              "choices": [
+                {
+                  "label": "50%",
+                  "value": "50"
+                },
+                {
+                  "label": "75%",
+                  "value": "75"
+                },
+                {
+                  "label": "100%",
+                  "value": "100"
+                },
+                {
+                  "label": "125%",
+                  "value": "125"
+                },
+                {
+                  "label": "150%",
+                  "value": "150"
+                },
+                {
+                  "label": "175%",
+                  "value": "175"
+                },
+                {
+                  "label": "200%",
+                  "value": "200"
+                },
+                {
+                  "label": "300%",
+                  "value": "300"
                 }
               ]
             }
@@ -782,173 +792,6 @@
       ]
     },
     {
-      "name": "settings_duckstation_tab_audio",
-      "sections": [
-        {
-          "title": "settings_duckstation_section_audio",
-          "options": [
-            {
-              "key": "duckstation_Audio_StretchMode",
-              "label": "settings_duckstation_audio_stretch_mode",
-              "type": "enum",
-              "default": "TimeStretch",
-              "choices": [
-                {
-                  "label": "None",
-                  "value": "None"
-                },
-                {
-                  "label": "Resample",
-                  "value": "Resample"
-                },
-                {
-                  "label": "Time Stretch",
-                  "value": "TimeStretch"
-                }
-              ]
-            },
-            {
-              "key": "duckstation_Audio_OutputVolume",
-              "label": "settings_duckstation_audio_volume",
-              "type": "enum",
-              "default": "100",
-              "choices": [
-                {
-                  "label": "25%",
-                  "value": "25"
-                },
-                {
-                  "label": "50%",
-                  "value": "50"
-                },
-                {
-                  "label": "75%",
-                  "value": "75"
-                },
-                {
-                  "label": "100%",
-                  "value": "100"
-                },
-                {
-                  "label": "125%",
-                  "value": "125"
-                },
-                {
-                  "label": "150%",
-                  "value": "150"
-                }
-              ]
-            },
-            {
-              "key": "duckstation_Audio_FastForwardVolume",
-              "label": "settings_duckstation_fast_forward_volume",
-              "type": "enum",
-              "default": "100",
-              "choices": [
-                {
-                  "label": "Muted",
-                  "value": "0"
-                },
-                {
-                  "label": "25%",
-                  "value": "25"
-                },
-                {
-                  "label": "50%",
-                  "value": "50"
-                },
-                {
-                  "label": "75%",
-                  "value": "75"
-                },
-                {
-                  "label": "100%",
-                  "value": "100"
-                }
-              ]
-            },
-            {
-              "key": "duckstation_Audio_OutputMuted",
-              "label": "settings_duckstation_mute_audio",
-              "type": "bool",
-              "default": "false"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "settings_duckstation_tab_input",
-      "sections": [
-        {
-          "title": "settings_duckstation_section_controller_1",
-          "options": [
-            {
-              "key": "duckstation_Controller1_VibrationBias",
-              "label": "settings_duckstation_vibration_bias",
-              "type": "enum",
-              "default": "8",
-              "choices": [
-                {
-                  "label": "Off",
-                  "value": "0"
-                },
-                {
-                  "label": "Weak",
-                  "value": "4"
-                },
-                {
-                  "label": "Normal",
-                  "value": "8"
-                },
-                {
-                  "label": "Strong",
-                  "value": "12"
-                },
-                {
-                  "label": "Maximum",
-                  "value": "15"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "title": "settings_duckstation_section_controller_2",
-          "options": [
-            {
-              "key": "duckstation_Controller2_VibrationBias",
-              "label": "settings_duckstation_vibration_bias",
-              "type": "enum",
-              "default": "8",
-              "choices": [
-                {
-                  "label": "Off",
-                  "value": "0"
-                },
-                {
-                  "label": "Weak",
-                  "value": "4"
-                },
-                {
-                  "label": "Normal",
-                  "value": "8"
-                },
-                {
-                  "label": "Strong",
-                  "value": "12"
-                },
-                {
-                  "label": "Maximum",
-                  "value": "15"
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    },
-    {
       "name": "settings_duckstation_tab_display",
       "sections": [
         {
@@ -1076,6 +919,102 @@
       ]
     },
     {
+      "name": "settings_duckstation_tab_audio",
+      "sections": [
+        {
+          "title": "settings_duckstation_section_audio",
+          "options": [
+            {
+              "key": "duckstation_Audio_StretchMode",
+              "label": "settings_duckstation_audio_stretch_mode",
+              "type": "enum",
+              "default": "TimeStretch",
+              "choices": [
+                {
+                  "label": "None",
+                  "value": "None"
+                },
+                {
+                  "label": "Resample",
+                  "value": "Resample"
+                },
+                {
+                  "label": "Time Stretch",
+                  "value": "TimeStretch"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_Audio_OutputVolume",
+              "label": "settings_duckstation_audio_volume",
+              "type": "enum",
+              "default": "100",
+              "choices": [
+                {
+                  "label": "25%",
+                  "value": "25"
+                },
+                {
+                  "label": "50%",
+                  "value": "50"
+                },
+                {
+                  "label": "75%",
+                  "value": "75"
+                },
+                {
+                  "label": "100%",
+                  "value": "100"
+                },
+                {
+                  "label": "125%",
+                  "value": "125"
+                },
+                {
+                  "label": "150%",
+                  "value": "150"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_Audio_FastForwardVolume",
+              "label": "settings_duckstation_fast_forward_volume",
+              "type": "enum",
+              "default": "100",
+              "choices": [
+                {
+                  "label": "Muted",
+                  "value": "0"
+                },
+                {
+                  "label": "25%",
+                  "value": "25"
+                },
+                {
+                  "label": "50%",
+                  "value": "50"
+                },
+                {
+                  "label": "75%",
+                  "value": "75"
+                },
+                {
+                  "label": "100%",
+                  "value": "100"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_Audio_OutputMuted",
+              "label": "settings_duckstation_mute_audio",
+              "type": "bool",
+              "default": "false"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "settings_duckstation_tab_memory_cards",
       "sections": [
         {
@@ -1150,6 +1089,77 @@
               "label": "settings_duckstation_memory_cards_use_playlist_title",
               "type": "bool",
               "default": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_duckstation_tab_input",
+      "sections": [
+        {
+          "title": "settings_duckstation_section_controller_1",
+          "options": [
+            {
+              "key": "duckstation_Controller1_VibrationBias",
+              "label": "settings_duckstation_vibration_bias",
+              "type": "enum",
+              "default": "8",
+              "choices": [
+                {
+                  "label": "Off",
+                  "value": "0"
+                },
+                {
+                  "label": "Weak",
+                  "value": "4"
+                },
+                {
+                  "label": "Normal",
+                  "value": "8"
+                },
+                {
+                  "label": "Strong",
+                  "value": "12"
+                },
+                {
+                  "label": "Maximum",
+                  "value": "15"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "settings_duckstation_section_controller_2",
+          "options": [
+            {
+              "key": "duckstation_Controller2_VibrationBias",
+              "label": "settings_duckstation_vibration_bias",
+              "type": "enum",
+              "default": "8",
+              "choices": [
+                {
+                  "label": "Off",
+                  "value": "0"
+                },
+                {
+                  "label": "Weak",
+                  "value": "4"
+                },
+                {
+                  "label": "Normal",
+                  "value": "8"
+                },
+                {
+                  "label": "Strong",
+                  "value": "12"
+                },
+                {
+                  "label": "Maximum",
+                  "value": "15"
+                }
+              ]
             }
           ]
         }
