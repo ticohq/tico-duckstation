@@ -30,8 +30,11 @@ ShaderGen::ShaderGen(RenderAPI render_api, bool supports_dual_source_blend, bool
     if (m_render_api == RenderAPI::OpenGL || m_render_api == RenderAPI::OpenGLES)
       SetGLSLVersionString();
 
-    m_use_glsl_interface_blocks = (IsVulkan() || IsMetal() || GLAD_GL_ES_VERSION_3_2 || GLAD_GL_VERSION_3_2);
-    m_use_glsl_binding_layout = (IsVulkan() || IsMetal() || UseGLSLBindingLayout());
+    // deko3D (uam) needs interface blocks and explicit bindings, as Vulkan
+    // does; GLAD only describes an OpenGL context, and is not loaded then
+    m_use_glsl_interface_blocks =
+      (IsVulkan() || IsMetal() || IsDeko3D() || GLAD_GL_ES_VERSION_3_2 || GLAD_GL_VERSION_3_2);
+    m_use_glsl_binding_layout = (IsVulkan() || IsMetal() || IsDeko3D() || UseGLSLBindingLayout());
 
     if (m_render_api == RenderAPI::OpenGL)
     {
