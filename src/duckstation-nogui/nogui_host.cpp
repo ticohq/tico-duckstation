@@ -54,6 +54,7 @@
 #ifdef __SWITCH__
 #include <switch.h>
 #include "fmt/printf.h"
+#include "util/vulkan_lsfg.h"
 #endif
 
 Log_SetChannel(NoGUIHost);
@@ -560,6 +561,14 @@ static void ApplyTicoGenericSettings(SettingsInterface& si, const std::string& t
   }
 }
 
+// Only the Vulkan renderer generates frames; on another one LSFG's setting
+// changes nothing (the game's repeated frames are presented as usual).
+static void ApplyFrameGenerationPresenting(SettingsInterface& si)
+{
+  const bool generating = VulkanLSFG::IsRequested() && si.GetStringValue("GPU", "Renderer") == "Vulkan";
+  si.SetBoolValue("Display", "SkipPresentingDuplicateFrames", generating);
+}
+
 static void ApplyTicoCoreSettings(SettingsInterface& si)
 {
   std::ifstream input("sdmc:/tico/config/cores/duckstation.jsonc");
@@ -618,6 +627,17 @@ static void ApplyTicoCoreSettings(SettingsInterface& si)
   ApplyTicoBool(si, text, "duckstation_GPU_Debanding", "GPU", "Debanding");
   ApplyTicoBool(si, text, "duckstation_GPU_ScaledDithering", "GPU", "ScaledDithering");
   ApplyTicoBool(si, text, "duckstation_GPU_WidescreenHack", "GPU", "WidescreenHack");
+
+  // Frame generation (Vulkan, with the user's Lossless.dll). A 30 fps game
+  // still shows each frame twice at 60 Hz; only its new frames are presented
+  // then, so a frame can be generated between each two.
+  bool lsfg = false, lsfg_performance = true;
+  float lsfg_flow_scale = 0.25f;
+  ReadTicoBool(text, "duckstation_LSFG_Enabled", lsfg);
+  ReadTicoBool(text, "duckstation_LSFG_PerformanceMode", lsfg_performance);
+  ReadTicoFloat(text, "duckstation_LSFG_FlowScale", lsfg_flow_scale);
+  VulkanLSFG::SetOptions(lsfg, lsfg_flow_scale, lsfg_performance);
+  ApplyFrameGenerationPresenting(si);
   ApplyTicoBool(si, text, "duckstation_GPU_TrueColor", "GPU", "TrueColor");
   ApplyTicoBool(si, text, "duckstation_GPU_DisableInterlacing", "GPU", "DisableInterlacing");
   ApplyTicoBool(si, text, "duckstation_GPU_ForceNTSCTimings", "GPU", "ForceNTSCTimings");
@@ -664,7 +684,9 @@ void NoGUIHost::ReloadTicoSettings()
     SettingsInterface& si = *s_base_settings_interface;
     const std::string renderer = si.GetStringValue("GPU", "Renderer");
     ApplyTicoCoreSettings(si);
+    // the renderer changes at the next launch: this one stays
     si.SetStringValue("GPU", "Renderer", renderer.c_str());
+    ApplyFrameGenerationPresenting(si);
   }
   if (System::IsValid())
     System::ApplySettings(false);

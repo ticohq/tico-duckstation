@@ -4,6 +4,9 @@
 #include "vulkan_swap_chain.h"
 #include "vulkan_builders.h"
 #include "vulkan_device.h"
+#ifdef __SWITCH__
+#include "vulkan_lsfg.h"
+#endif
 
 #include "common/assert.h"
 #include "common/log.h"
@@ -419,6 +422,35 @@ bool VulkanSwapChain::CreateSwapChain()
     return false;
   }
 
+#ifdef __SWITCH__
+  const u32 plain_image_count = image_count;
+  const VkImageUsageFlags plain_image_usage = image_usage;
+  const VkPresentModeKHR plain_present_mode = m_present_mode;
+  // Frame generation copies the game's frame out of the image and its own in,
+  // presents one more image per frame (two more images to hold them), and
+  // needs every image shown (FIFO).
+  if (VulkanLSFG::IsPrepared())
+  {
+    VkFormatProperties format_properties = {};
+    vkGetPhysicalDeviceFormatProperties(dev.GetVulkanPhysicalDevice(), surface_format->format, &format_properties);
+    constexpr VkFormatFeatureFlags transfer_features =
+      VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    if (!(surface_capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) ||
+        (format_properties.optimalTilingFeatures & transfer_features) != transfer_features)
+    {
+      VulkanLSFG::Disable("the swapchain's images cannot be copied");
+    }
+    else
+    {
+      image_usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      image_count += 2;
+      if (surface_capabilities.maxImageCount > 0)
+        image_count = std::min(image_count, surface_capabilities.maxImageCount);
+      m_present_mode = VK_PRESENT_MODE_FIFO_KHR;
+    }
+  }
+#endif
+
   // Store the old/current swap chain when recreating for resize
   // Old swap chain is destroyed regardless of whether the create call succeeds
   VkSwapchainKHR old_swap_chain = m_swap_chain;
@@ -486,6 +518,19 @@ bool VulkanSwapChain::CreateSwapChain()
 #endif
 
   res = vkCreateSwapchainKHR(dev.GetVulkanDevice(), &swap_chain_info, nullptr, &m_swap_chain);
+#ifdef __SWITCH__
+  if (res != VK_SUCCESS && VulkanLSFG::IsPrepared())
+  {
+    // the driver will not make it ready for frame generation: a plain one
+    VulkanLSFG::Disable("the driver rejected the swapchain it needs");
+    image_count = plain_image_count;
+    m_present_mode = plain_present_mode;
+    swap_chain_info.minImageCount = plain_image_count;
+    swap_chain_info.imageUsage = plain_image_usage;
+    swap_chain_info.presentMode = plain_present_mode;
+    res = vkCreateSwapchainKHR(dev.GetVulkanDevice(), &swap_chain_info, nullptr, &m_swap_chain);
+  }
+#endif
   if (res != VK_SUCCESS)
   {
     LOG_VULKAN_ERROR(res, "vkCreateSwapchainKHR failed: ");
@@ -585,11 +630,19 @@ bool VulkanSwapChain::CreateSwapChain()
     }
   }
 
+#ifdef __SWITCH__
+  if (VulkanLSFG::IsPrepared())
+    VulkanLSFG::RegisterSwapChain(m_swap_chain, size, images);
+#endif
+
   return true;
 }
 
 void VulkanSwapChain::DestroySwapChainImages()
 {
+#ifdef __SWITCH__
+  VulkanLSFG::UnregisterSwapChain();
+#endif
   VulkanDevice& dev = VulkanDevice::GetInstance();
   for (const auto& it : m_images)
   {

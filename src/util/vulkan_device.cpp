@@ -7,6 +7,9 @@
 #include "vulkan_stream_buffer.h"
 #include "vulkan_swap_chain.h"
 #include "vulkan_texture.h"
+#ifdef __SWITCH__
+#include "vulkan_lsfg.h"
+#endif
 
 #include "core/host.h"
 
@@ -456,6 +459,14 @@ bool VulkanDevice::SelectDeviceExtensions(ExtensionList* extension_list, bool en
     m_optional_extensions.vk_khr_dynamic_rendering &&
     SupportsExtension(VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME, false);
   m_optional_extensions.vk_khr_push_descriptor = SupportsExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, false);
+#ifdef __SWITCH__
+  // frame generation synchronizes with timeline semaphores (core in 1.2)
+  if (VulkanLSFG::IsPrepared() && m_device_properties.apiVersion < VK_API_VERSION_1_2 &&
+      !SupportsExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME, false))
+  {
+    VulkanLSFG::Disable("VK_KHR_timeline_semaphore is unsupported");
+  }
+#endif
 
   // glslang generates debug info instructions before phi nodes at the beginning of blocks when non-semantic debug info
   // is enabled, triggering errors by spirv-val. Gate it by an environment variable if you want source debugging until
@@ -525,6 +536,13 @@ bool VulkanDevice::SelectDeviceExtensions(ExtensionList* extension_list, bool en
 bool VulkanDevice::CreateDevice(VkSurfaceKHR surface, bool enable_validation_layer, FeatureMask disabled_features,
                                 Error* error)
 {
+#ifdef __SWITCH__
+  // frame generation, when Lossless.dll is installed: the device and its
+  // swapchain are made ready for it here, so it can be switched on in game
+  if (surface != VK_NULL_HANDLE)
+    VulkanLSFG::Prepare();
+#endif
+
   u32 queue_family_count;
   vkGetPhysicalDeviceQueueFamilyProperties(m_physical_device, &queue_family_count, nullptr);
   if (queue_family_count == 0)
@@ -663,6 +681,22 @@ bool VulkanDevice::CreateDevice(VkSurfaceKHR surface, bool enable_validation_lay
 
   if (m_optional_extensions.vk_ext_rasterization_order_attachment_access)
     Vulkan::AddPointerToChain(&device_info, &rasterization_order_access_feature);
+#ifdef __SWITCH__
+  VkPhysicalDeviceTimelineSemaphoreFeatures timeline_semaphore_feature = {
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES, nullptr, VK_FALSE};
+  if (VulkanLSFG::IsPrepared())
+  {
+    VkPhysicalDeviceFeatures2 features2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline_semaphore_feature, {}};
+    if (vkGetPhysicalDeviceFeatures2)
+      vkGetPhysicalDeviceFeatures2(m_physical_device, &features2);
+    else if (vkGetPhysicalDeviceFeatures2KHR)
+      vkGetPhysicalDeviceFeatures2KHR(m_physical_device, &features2);
+    if (timeline_semaphore_feature.timelineSemaphore == VK_TRUE)
+      Vulkan::AddPointerToChain(&device_info, &timeline_semaphore_feature);
+    else
+      VulkanLSFG::Disable("timeline semaphores are unsupported");
+  }
+#endif
   if (m_optional_extensions.vk_ext_swapchain_maintenance1)
     Vulkan::AddPointerToChain(&device_info, &swapchain_maintenance1_feature);
   if (m_optional_extensions.vk_khr_dynamic_rendering)
@@ -1468,7 +1502,11 @@ void VulkanDevice::DoPresent(VulkanSwapChain* present_swap_chain)
 
   present_swap_chain->ResetImageAcquireResult();
 
+#ifdef __SWITCH__
+  const VkResult res = VulkanLSFG::Present(m_present_queue, present_info);
+#else
   const VkResult res = vkQueuePresentKHR(m_present_queue, &present_info);
+#endif
   if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)
   {
     // VK_ERROR_OUT_OF_DATE_KHR is not fatal, just means we need to recreate our swap chain.
@@ -2144,6 +2182,9 @@ bool VulkanDevice::CreateDevice(std::string_view adapter, bool threaded_presenta
 void VulkanDevice::DestroyDevice()
 {
   std::unique_lock lock(s_instance_mutex);
+#ifdef __SWITCH__
+  VulkanLSFG::Shutdown();
+#endif
 
   if (InRenderPass())
     EndRenderPass();

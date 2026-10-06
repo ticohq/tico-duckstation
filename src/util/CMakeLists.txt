@@ -174,6 +174,51 @@ if(NINTENDO_SWITCH)
   # linked statically: the tico build (build_duckstation_nro.sh) links them into the NRO
   target_include_directories(util PRIVATE "${TICO_GLSLANG_SOURCE}" "${TICO_GLSLANG_BUILD}/include")
   target_link_libraries(util PRIVATE freesurround)
+
+  # Frame generation (LSFG) for the Vulkan renderer: tico/deps/LSFG-VK, which
+  # reads Lossless Scaling's shaders from the user's Lossless.dll at runtime.
+  set(TICO_LSFG "${CMAKE_SOURCE_DIR}/tico/deps/LSFG-VK")
+  add_library(tico_lsfg STATIC
+    "${TICO_LSFG}/bridge/lsfg_bridge.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/helpers/errors.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/buffer.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/command_buffer.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/descriptor_pool.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/descriptor_set.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/fence.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/image.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/sampler.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/semaphore.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/shader.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/timeline_semaphore.cpp"
+    "${TICO_LSFG}/lsfg-vk-common/src/vulkan/vulkan.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/extraction/dll_reader.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/extraction/shader_registry.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/helpers/limits.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/helpers/managed_shader.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/helpers/utils.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/lsfgvk.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/alpha0.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/alpha1.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/beta0.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/beta1.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/delta0.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/delta1.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/gamma0.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/gamma1.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/generate.cpp"
+    "${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/mipmaps.cpp"
+  )
+  target_include_directories(tico_lsfg PUBLIC "${TICO_LSFG}/bridge")
+  target_include_directories(tico_lsfg PRIVATE
+    "${TICO_LSFG}/lsfg-vk-common/include" "${TICO_LSFG}/lsfg-vk-backend/include" "${TICO_LSFG}/lsfg-vk-backend/src")
+  # DuckStation builds without exceptions or RTTI; LSFG-VK reports errors with
+  # exceptions, all caught inside its bridge.
+  target_compile_options(tico_lsfg PRIVATE -fexceptions -frtti)
+  target_compile_definitions(tico_lsfg PRIVATE USE_VULKAN=1 VK_NO_PROTOTYPES=1)
+  target_link_libraries(tico_lsfg PUBLIC vulkan-headers)
+  target_sources(util PRIVATE vulkan_lsfg.cpp vulkan_lsfg.h)
+  target_link_libraries(util PRIVATE tico_lsfg)
 elseif(ENABLE_VULKAN OR APPLE)
   # shaderc is loaded dynamically to reduce module loads on startup.
   get_target_property(SHADERC_INCLUDE_DIR Shaderc::shaderc_shared INTERFACE_INCLUDE_DIRECTORIES)

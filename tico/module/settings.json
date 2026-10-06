@@ -907,6 +907,51 @@
               ]
             }
           ]
+        },
+        {
+          "title": "settings_duckstation_section_frame_generation",
+          "options": [
+            {
+              "key": "duckstation_LSFG_Enabled",
+              "label": "settings_duckstation_lsfg",
+              "type": "bool",
+              "default": "false",
+              "depends_on": {
+                "key": "duckstation_GPU_Renderer",
+                "value": "Vulkan"
+              }
+            },
+            {
+              "key": "duckstation_LSFG_FlowScale",
+              "label": "settings_duckstation_lsfg_flow_scale",
+              "type": "enum",
+              "default": "0.25",
+              "depends_on": {
+                "key": "duckstation_LSFG_Enabled",
+                "value": "true"
+              },
+              "choices": [
+                {
+                  "label": "25%",
+                  "value": "0.25"
+                },
+                {
+                  "label": "50%",
+                  "value": "0.5"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_LSFG_PerformanceMode",
+              "label": "settings_duckstation_lsfg_performance_mode",
+              "type": "bool",
+              "default": "true",
+              "depends_on": {
+                "key": "duckstation_LSFG_Enabled",
+                "value": "true"
+              }
+            }
+          ]
         }
       ]
     },
