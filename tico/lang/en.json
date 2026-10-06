@@ -59,6 +59,7 @@
     "settings_duckstation_readahead_sectors": "Readahead Sectors",
     "settings_duckstation_recompiler_block_linking": "Recompiler Block Linking",
     "settings_duckstation_recompiler_icache": "Recompiler ICache",
+    "settings_duckstation_recompiler_memory_exceptions": "Recompiler Memory Exceptions",
     "settings_duckstation_region_check": "Region Check",
     "settings_duckstation_renderer": "Renderer",
     "settings_duckstation_scaled_dithering": "Scaled Dithering",

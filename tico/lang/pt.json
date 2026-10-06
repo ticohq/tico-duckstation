@@ -59,6 +59,7 @@
     "settings_duckstation_readahead_sectors": "Readahead Sectors",
     "settings_duckstation_recompiler_block_linking": "Recompiler Block Linking",
     "settings_duckstation_recompiler_icache": "Recompiler ICache",
+    "settings_duckstation_recompiler_memory_exceptions": "Exceções de memória do recompilador",
     "settings_duckstation_region_check": "Verificação de Região",
     "settings_duckstation_renderer": "Renderer",
     "settings_duckstation_scaled_dithering": "Scaled Dithering",
@@ -91,8 +92,12 @@
     "settings_duckstation_texture_filter": "Texture Filtering",
     "settings_duckstation_true_color": "Cor Real",
     "settings_duckstation_twist_response": "Resposta de Torção",
-    "settings_duckstation_vibration_bias": "Vibration Bias",
-    "settings_duckstation_widescreen_hack": "Hack Tela Larga",
+    "settings_duckstation_value_cached_interpreter": "Interpretador com cache",
+    "settings_duckstation_value_interpreter": "Interpretador",
+    "settings_duckstation_value_new_recompiler_experimental": "Novo recompilador (experimental)",
+    "settings_duckstation_value_recompiler": "Recompilador",
+    "settings_duckstation_value_software": "Software",
     "settings_duckstation_value_zink_opengl_on_vulkan": "Zink (OpenGL sobre Vulkan)",
-    "settings_duckstation_value_software": "Software"
+    "settings_duckstation_vibration_bias": "Vibration Bias",
+    "settings_duckstation_widescreen_hack": "Hack Tela Larga"
 }

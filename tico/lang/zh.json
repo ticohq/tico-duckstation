@@ -59,6 +59,7 @@
     "settings_duckstation_readahead_sectors": "Readahead Sectors",
     "settings_duckstation_recompiler_block_linking": "Recompiler Block Linking",
     "settings_duckstation_recompiler_icache": "Recompiler ICache",
+    "settings_duckstation_recompiler_memory_exceptions": "重编译器内存异常",
     "settings_duckstation_region_check": "区域检查",
     "settings_duckstation_renderer": "Renderer",
     "settings_duckstation_scaled_dithering": "Scaled Dithering",
@@ -91,8 +92,12 @@
     "settings_duckstation_texture_filter": "Texture Filtering",
     "settings_duckstation_true_color": "真彩色",
     "settings_duckstation_twist_response": "扭转响应",
-    "settings_duckstation_vibration_bias": "Vibration Bias",
-    "settings_duckstation_widescreen_hack": "宽屏 Hack",
+    "settings_duckstation_value_cached_interpreter": "缓存解释器",
+    "settings_duckstation_value_interpreter": "解释器",
+    "settings_duckstation_value_new_recompiler_experimental": "新重编译器（实验性）",
+    "settings_duckstation_value_recompiler": "重编译器",
+    "settings_duckstation_value_software": "软件",
     "settings_duckstation_value_zink_opengl_on_vulkan": "Zink（基于 Vulkan 的 OpenGL）",
-    "settings_duckstation_value_software": "软件"
+    "settings_duckstation_vibration_bias": "Vibration Bias",
+    "settings_duckstation_widescreen_hack": "宽屏 Hack"
 }

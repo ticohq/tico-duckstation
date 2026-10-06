@@ -80,10 +80,71 @@
           "title": "settings_duckstation_section_cpu",
           "options": [
             {
+              "key": "duckstation_CPU_ExecutionMode",
+              "label": "settings_duckstation_cpu_execution_mode",
+              "type": "enum",
+              "default": "Recompiler",
+              "choices": [
+                {
+                  "label": "Interpreter",
+                  "value": "Interpreter"
+                },
+                {
+                  "label": "Cached Interpreter",
+                  "value": "CachedInterpreter"
+                },
+                {
+                  "label": "Recompiler",
+                  "value": "Recompiler"
+                },
+                {
+                  "label": "New Recompiler (Experimental)",
+                  "value": "NewRec"
+                }
+              ],
+              "restart": true
+            },
+            {
+              "key": "duckstation_CPU_FastmemMode",
+              "label": "settings_duckstation_cpu_fastmem_mode",
+              "type": "enum",
+              "default": "MMap",
+              "choices": [
+                {
+                  "label": "Disabled",
+                  "value": "Disabled"
+                },
+                {
+                  "label": "LUT",
+                  "value": "LUT"
+                },
+                {
+                  "label": "MMap",
+                  "value": "MMap"
+                }
+              ],
+              "restart": true
+            },
+            {
+              "key": "duckstation_CPU_RecompilerBlockLinking",
+              "label": "settings_duckstation_recompiler_block_linking",
+              "type": "bool",
+              "default": "true",
+              "restart": true
+            },
+            {
               "key": "duckstation_CPU_RecompilerICache",
               "label": "settings_duckstation_recompiler_icache",
               "type": "bool",
-              "default": "false"
+              "default": "false",
+              "restart": true
+            },
+            {
+              "key": "duckstation_CPU_RecompilerMemoryExceptions",
+              "label": "settings_duckstation_recompiler_memory_exceptions",
+              "type": "bool",
+              "default": "false",
+              "restart": true
             },
             {
               "key": "duckstation_CPU_OverclockEnable",

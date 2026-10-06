@@ -59,6 +59,7 @@
     "settings_duckstation_readahead_sectors": "Readahead Sectors",
     "settings_duckstation_recompiler_block_linking": "Recompiler Block Linking",
     "settings_duckstation_recompiler_icache": "Recompiler ICache",
+    "settings_duckstation_recompiler_memory_exceptions": "リコンパイラのメモリ例外",
     "settings_duckstation_region_check": "リージョンチェック",
     "settings_duckstation_renderer": "Renderer",
     "settings_duckstation_scaled_dithering": "Scaled Dithering",
@@ -91,8 +92,12 @@
     "settings_duckstation_texture_filter": "Texture Filtering",
     "settings_duckstation_true_color": "トゥルーカラー",
     "settings_duckstation_twist_response": "ツイスト応答",
-    "settings_duckstation_vibration_bias": "Vibration Bias",
-    "settings_duckstation_widescreen_hack": "ワイドスクリーンハック",
+    "settings_duckstation_value_cached_interpreter": "キャッシュ付きインタープリター",
+    "settings_duckstation_value_interpreter": "インタープリター",
+    "settings_duckstation_value_new_recompiler_experimental": "新リコンパイラ（実験的）",
+    "settings_duckstation_value_recompiler": "リコンパイラ",
+    "settings_duckstation_value_software": "ソフトウェア",
     "settings_duckstation_value_zink_opengl_on_vulkan": "Zink（Vulkan上のOpenGL）",
-    "settings_duckstation_value_software": "ソフトウェア"
+    "settings_duckstation_vibration_bias": "Vibration Bias",
+    "settings_duckstation_widescreen_hack": "ワイドスクリーンハック"
 }
