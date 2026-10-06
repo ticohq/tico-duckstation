@@ -3,16 +3,15 @@
 
 #include "core/host.h"
 
+#include "common/log.h"
+
 #include "util/page_fault_handler.h"
 #include "util/switch_exception_frame.h"
 
 #include <switch.h>
 
 #include <chrono>
-
-namespace Common::PageFaultHandler {
-bool PageFaultHandler(ExceptionFrameA64* ctx);
-}
+#include <cstdio>
 
 extern "C" {
 
@@ -21,28 +20,32 @@ extern char __rodata_start;
 
 void HandleFault(uint64_t pc, uint64_t lr, uint64_t fp, uint64_t fault_addr, Result desc)
 {
-  if (pc >= (uint64_t)&__start__ && pc < (uint64_t)&__rodata_start)
+  // into the log too (tico's debug log), not only the nxlink console
+  const uint64_t base = reinterpret_cast<uint64_t>(&__start__);
+  const bool pc_in_text = (pc >= base && pc < reinterpret_cast<uint64_t>(&__rodata_start));
+  char line[256];
+  if (pc_in_text)
   {
-    printf("Unintentional fault in .text at %p (type %d) (trying to access %p?)\n", (void*)(pc - (uint64_t)&__start__),
-           desc, (void*)fault_addr);
-
-    int frame_num = 0;
-    while (true)
-    {
-      printf("Stack frame %d %p\n", frame_num, (void*)(lr - (uint64_t)&__start__));
-      lr = *(uint64_t*)(fp + 8);
-      fp = *(uint64_t*)fp;
-
-      frame_num++;
-      if (frame_num > 16 || fp == 0 || (fp & 0x7) != 0)
-        break;
-    }
+    std::snprintf(line, sizeof(line), "Crash: fault in .text at +0x%llx (type 0x%x), accessing %p",
+                  static_cast<unsigned long long>(pc - base), desc, reinterpret_cast<void*>(fault_addr));
   }
   else
   {
-    printf("Unintentional fault somewhere in deep (address) space at %p (type %d)\n", (void*)pc, desc);
-    if (lr >= (uint64_t)&__start__ && lr < (uint64_t)&__rodata_start)
-      printf("LR in range: %p\n", (void*)(lr - (uint64_t)&__start__));
+    std::snprintf(line, sizeof(line), "Crash: fault at %p outside .text (JIT code?) (type 0x%x), accessing %p, LR +0x%llx",
+                  reinterpret_cast<void*>(pc), desc, reinterpret_cast<void*>(fault_addr),
+                  static_cast<unsigned long long>(lr - base));
+  }
+  std::puts(line);
+  Log::Write("Crash", LOGLEVEL_ERROR, line);
+
+  for (int frame_num = 0; frame_num <= 16 && fp != 0 && (fp & 0x7) == 0; frame_num++)
+  {
+    std::snprintf(line, sizeof(line), "Crash: stack frame %d +0x%llx", frame_num,
+                  static_cast<unsigned long long>(lr - base));
+    std::puts(line);
+    Log::Write("Crash", LOGLEVEL_ERROR, line);
+    lr = *reinterpret_cast<uint64_t*>(fp + 8);
+    fp = *reinterpret_cast<uint64_t*>(fp);
   }
 
   svcBreak(BreakReason_Panic, 0, 0);
