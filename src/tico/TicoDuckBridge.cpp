@@ -1415,9 +1415,23 @@ void ChainloadLauncherIfRequested()
 
 void RenderOverlay()
 {
-  EnsureTicoFolders();
-  RefreshOverlayModel();
+  // This runs on every presented frame, paused or not. The folders are made
+  // once (Initialize), and the menu's contents (state slots, the game's
+  // other discs: SD card lookups) are read when it opens and then once a
+  // second while it stays open: done every frame, they kept the system's
+  // file service busy (core 3 at 90%) all game long.
+  static bool s_menu_was_visible = false;
+  static Common::Timer::Value s_last_refresh = 0;
   Tico::TicoOverlay& overlay = Overlay();
+  const bool menu_visible = overlay.IsVisible();
+  const Common::Timer::Value now = Common::Timer::GetCurrentValue();
+  if (menu_visible &&
+      (!s_menu_was_visible || Common::Timer::ConvertValueToSeconds(now - s_last_refresh) >= 1.0))
+  {
+    RefreshOverlayModel();
+    s_last_refresh = now;
+  }
+  s_menu_was_visible = menu_visible;
   const float delta_time = ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : (1.0f / 60.0f);
   overlay.Update(delta_time);
   UpdateRANotifications(delta_time);
