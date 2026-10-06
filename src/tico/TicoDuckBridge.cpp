@@ -1472,7 +1472,9 @@ void PlayRATrophySound()
 bool HandleSwitchInput(unsigned controller_index, uint64_t buttons, const HidAnalogStickState& left,
                        const HidAnalogStickState& right)
 {
-  EnsureTicoFolders();
+  // no EnsureTicoFolders() here: this runs on every input poll, and its 18
+  // folder checks on the SD card kept the system's file service (core 3)
+  // busy on every renderer; the folders are made once, in Initialize()
   Tico::TicoOverlay& overlay = Overlay();
   if (controller_index != 0)
     return overlay.IsVisible();
