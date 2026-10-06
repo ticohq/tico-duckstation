@@ -29,6 +29,10 @@ using SettingsReloadCallback = void (*)();
 /// --from-library (a game started from the library) is taken out of argv.
 void PrepareLaunch(int& argc, char* argv[]);
 
+/// The game's own settings file (the quick menu's "Save current settings for
+/// this game"), whether or not it exists; empty without a game.
+std::string GameSettingsPath();
+
 /// Ends the session (the CPU thread's loop) after Exit Game or Restart.
 void SetExitApplicationCallback(ExitApplicationCallback callback);
 /// Reads tico's settings into DuckStation's again and applies them.

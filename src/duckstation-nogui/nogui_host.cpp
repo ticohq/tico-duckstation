@@ -569,38 +569,21 @@ static void ApplyFrameGenerationPresenting(SettingsInterface& si)
   si.SetBoolValue("Display", "SkipPresentingDuplicateFrames", generating);
 }
 
-static void ApplyTicoCoreSettings(SettingsInterface& si)
+static bool ReadTicoConfigFile(const char* path, std::string& text)
 {
-  std::ifstream input("sdmc:/tico/config/cores/duckstation.jsonc");
+  std::ifstream input(path);
   if (!input.is_open())
-    return;
-
+    return false;
   std::ostringstream ss;
   ss << input.rdbuf();
-  const std::string text = ss.str();
+  text = ss.str();
+  return true;
+}
 
-  si.SetStringValue("CPU", "ExecutionMode", "Recompiler");
-  si.SetStringValue("CPU", "FastmemMode", "MMap");
-  si.SetBoolValue("CPU", "RecompilerBlockLinking", true);
-  si.SetStringValue("GPU", "Renderer", "deko3D");
-  si.SetStringValue("ControllerPorts", "MultitapMode", "Disabled");
-  si.SetBoolValue("Main", "CompressSaveStates", false);
-  si.SetStringValue("Display", "Alignment", "Center");
-  si.SetBoolValue("Display", "Force4_3For24Bit", false);
-  si.SetBoolValue("Display", "ShowOSDMessages", true);
-  si.SetBoolValue("Display", "ShowFPS", false);
-  si.SetBoolValue("Display", "ShowSpeed", false);
-  si.SetBoolValue("Display", "ShowEnhancements", false);
-  si.SetIntValue("Display", "ActiveStartOffset", 0);
-  si.SetIntValue("Display", "ActiveEndOffset", 0);
-  si.SetIntValue("Display", "LineStartOffset", 0);
-  si.SetIntValue("Display", "LineEndOffset", 0);
-  // settings.ini keeps what tico set before, so logging is reset at every
-  // launch (a log left on writes every CD sector to the SD card); tico's
-  // config can still turn it on
-  si.SetBoolValue("Logging", "LogToFile", false);
-  si.SetStringValue("Logging", "LogLevel", "Info");
-
+// The values tico's config sets, from one config file's text (the core's, then
+// a game's own over it).
+static void ApplyTicoConfigText(SettingsInterface& si, const std::string& text)
+{
   ApplyTicoGenericSettings(si, text);
 
   ApplyTicoString(si, text, "duckstation_Console_Region", "Console", "Region");
@@ -628,16 +611,6 @@ static void ApplyTicoCoreSettings(SettingsInterface& si)
   ApplyTicoBool(si, text, "duckstation_GPU_ScaledDithering", "GPU", "ScaledDithering");
   ApplyTicoBool(si, text, "duckstation_GPU_WidescreenHack", "GPU", "WidescreenHack");
 
-  // Frame generation (Vulkan, with the user's Lossless.dll). A 30 fps game
-  // still shows each frame twice at 60 Hz; only its new frames are presented
-  // then, so a frame can be generated between each two.
-  bool lsfg = false, lsfg_performance = true;
-  float lsfg_flow_scale = 0.25f;
-  ReadTicoBool(text, "duckstation_LSFG_Enabled", lsfg);
-  ReadTicoBool(text, "duckstation_LSFG_PerformanceMode", lsfg_performance);
-  ReadTicoFloat(text, "duckstation_LSFG_FlowScale", lsfg_flow_scale);
-  VulkanLSFG::SetOptions(lsfg, lsfg_flow_scale, lsfg_performance);
-  ApplyFrameGenerationPresenting(si);
   ApplyTicoBool(si, text, "duckstation_GPU_TrueColor", "GPU", "TrueColor");
   ApplyTicoBool(si, text, "duckstation_GPU_DisableInterlacing", "GPU", "DisableInterlacing");
   ApplyTicoBool(si, text, "duckstation_GPU_ForceNTSCTimings", "GPU", "ForceNTSCTimings");
@@ -672,9 +645,66 @@ static void ApplyTicoCoreSettings(SettingsInterface& si)
 
   ApplyTicoControllerInt(si, text, "duckstation_Controller1_VibrationBias", 0, "VibrationBias");
   ApplyTicoControllerInt(si, text, "duckstation_Controller2_VibrationBias", 1, "VibrationBias");
+}
+
+static void ApplyTicoCoreSettings(SettingsInterface& si)
+{
+  std::string text;
+  if (!ReadTicoConfigFile("sdmc:/tico/config/cores/duckstation.jsonc", text))
+    return;
+  // a game with its own settings (the quick menu's Save current settings for
+  // this game): its file over the core's, which fills in what it lacks
+  std::string game_text;
+  const std::string game_file = TicoDuck::GameSettingsPath();
+  const bool has_game = !game_file.empty() && ReadTicoConfigFile(game_file.c_str(), game_text);
+
+  si.SetStringValue("CPU", "ExecutionMode", "Recompiler");
+  si.SetStringValue("CPU", "FastmemMode", "MMap");
+  si.SetBoolValue("CPU", "RecompilerBlockLinking", true);
+  si.SetStringValue("GPU", "Renderer", "deko3D");
+  si.SetStringValue("ControllerPorts", "MultitapMode", "Disabled");
+  si.SetBoolValue("Main", "CompressSaveStates", false);
+  si.SetStringValue("Display", "Alignment", "Center");
+  si.SetBoolValue("Display", "Force4_3For24Bit", false);
+  si.SetBoolValue("Display", "ShowOSDMessages", true);
+  si.SetBoolValue("Display", "ShowFPS", false);
+  si.SetBoolValue("Display", "ShowSpeed", false);
+  si.SetBoolValue("Display", "ShowEnhancements", false);
+  si.SetIntValue("Display", "ActiveStartOffset", 0);
+  si.SetIntValue("Display", "ActiveEndOffset", 0);
+  si.SetIntValue("Display", "LineStartOffset", 0);
+  si.SetIntValue("Display", "LineEndOffset", 0);
+  // settings.ini keeps what tico set before, so logging is reset at every
+  // launch (a log left on writes every CD sector to the SD card); tico's
+  // config can still turn it on
+  si.SetBoolValue("Logging", "LogToFile", false);
+  si.SetStringValue("Logging", "LogLevel", "Info");
+
+  ApplyTicoConfigText(si, text);
+  if (has_game)
+    ApplyTicoConfigText(si, game_text);
+
+  // Frame generation (Vulkan, with the user's Lossless.dll). A 30 fps game
+  // still shows each frame twice at 60 Hz; only its new frames are presented
+  // then, so a frame can be generated between each two.
+  bool lsfg = false, lsfg_performance = true;
+  float lsfg_flow_scale = 0.25f;
+  for (const std::string* t : {&text, has_game ? &game_text : nullptr})
+  {
+    if (!t)
+      continue;
+    ReadTicoBool(*t, "duckstation_LSFG_Enabled", lsfg);
+    ReadTicoBool(*t, "duckstation_LSFG_PerformanceMode", lsfg_performance);
+    ReadTicoFloat(*t, "duckstation_LSFG_FlowScale", lsfg_flow_scale);
+  }
+  VulkanLSFG::SetOptions(lsfg, lsfg_flow_scale, lsfg_performance);
+  ApplyFrameGenerationPresenting(si);
 
   si.Save();
-  INFO_LOG("{}", "Applied Tico DuckStation settings from sdmc:/tico/config/cores/duckstation.jsonc.");
+  if (has_game)
+    INFO_LOG("Applied Tico DuckStation settings from sdmc:/tico/config/cores/duckstation.jsonc and {}.", game_file);
+  else
+    INFO_LOG("{}", "Applied Tico DuckStation settings from sdmc:/tico/config/cores/duckstation.jsonc.");
 }
 
 void NoGUIHost::ReloadTicoSettings()

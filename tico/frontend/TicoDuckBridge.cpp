@@ -816,6 +816,13 @@ void PrepareLaunch(int& argc, char* argv[])
   s_standalone = s_rom_path.empty();
 }
 
+std::string GameSettingsPath()
+{
+  // named as the overlay names it (TicoConfig's per-game layer)
+  return s_rom_path.empty() ? std::string() :
+                              fmt::format("sdmc:/tico/config/games/duckstation/{}.jsonc", FileStem(s_rom_path));
+}
+
 void SetExitApplicationCallback(ExitApplicationCallback callback)
 {
   s_exit_callback = callback;
