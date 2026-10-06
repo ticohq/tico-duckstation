@@ -855,7 +855,9 @@ void Settings::UpdateLogSettings()
   // tico's debug log: always on in a debug build (TICO_DEBUG_LOG), else when
   // Logging/LogToFile is set
 #ifdef TICO_DEBUG_LOG
-  Log::SetLogLevel(LOGLEVEL_DEV);
+  // Info, not Dev: Dev logs every CD sector and more, which (flushed line by
+  // line to the SD card) halves the emulation speed
+  Log::SetLogLevel(log_level < LOGLEVEL_INFO ? log_level : LOGLEVEL_INFO);
   const bool to_file = true;
 #else
   const bool to_file = log_to_file;
