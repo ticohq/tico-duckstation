@@ -3614,6 +3614,104 @@ void System::ResetControllers()
   }
 }
 
+#ifdef __SWITCH__
+namespace {
+
+// The name without its disc tag: "Final Fantasy VII (USA) (Disc 2)" ->
+// "Final Fantasy VII (USA)"; unchanged when it has none.
+std::string WithoutDiscTag(std::string_view name)
+{
+  std::string out(name);
+  std::string lower(name);
+  for (char& c : lower)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  for (const char* tag : {"(disc", "(disk", "(cd"})
+  {
+    const size_t open = lower.find(tag);
+    if (open == std::string::npos)
+      continue;
+    const size_t close = lower.find(')', open);
+    size_t start = open;
+    while (start > 0 && out[start - 1] == ' ')
+      start--;
+    out.erase(start, (close == std::string::npos) ? std::string::npos : (close + 1 - start));
+    break;
+  }
+  return out;
+}
+
+// The card file `name` already has (slot 1 also as .mcr or .srm, as tico's
+// other cores and RetroArch name them), or empty.
+std::string ExistingTicoCard(std::string_view name, u32 slot)
+{
+  if (slot != 0)
+  {
+    std::string path = g_settings.GetGameMemoryCardPath(name, slot);
+    return FileSystem::FileExists(path.c_str()) ? path : std::string();
+  }
+  for (const char* ext : {"mcd", "mcr", "srm"})
+  {
+    std::string path = Path::Combine(EmuFolders::MemoryCards, fmt::format("{}.{}", name, ext));
+    if (FileSystem::FileExists(path.c_str()))
+      return path;
+  }
+  return {};
+}
+
+std::string NewTicoCard(std::string_view name, u32 slot)
+{
+  return (slot != 0) ? g_settings.GetGameMemoryCardPath(name, slot) :
+                       Path::Combine(EmuFolders::MemoryCards, fmt::format("{}.mcd", name));
+}
+
+// A game's card on tico: named after its file (sdmc:/tico/saves/psx/<game>.mcd).
+// A game on several discs shares one, named without the disc tag, so a save
+// made on disc 1 is there on disc 2 (DuckStation would open each disc's own
+// card, also when the disc is changed); the first time, the newest card one of
+// its discs used on its own is copied to that name, and the originals stay.
+std::string TicoMemoryCardPath(std::string_view file_title, u32 slot)
+{
+  const std::string shared = WithoutDiscTag(file_title);
+  if (shared == file_title)
+  {
+    std::string existing = ExistingTicoCard(file_title, slot);
+    return existing.empty() ? NewTicoCard(file_title, slot) : existing;
+  }
+
+  if (std::string existing = ExistingTicoCard(shared, slot); !existing.empty())
+    return existing;
+
+  std::vector<std::string> candidates = {ExistingTicoCard(file_title, slot)};
+  for (u32 disc = 1; disc <= 8; disc++)
+    candidates.push_back(ExistingTicoCard(fmt::format("{} (Disc {})", shared, disc), slot));
+
+  std::string newest;
+  std::time_t newest_time = 0;
+  for (const std::string& path : candidates)
+  {
+    FILESYSTEM_STAT_DATA sd;
+    if (!path.empty() && FileSystem::StatFile(path.c_str(), &sd) && (newest.empty() || sd.ModificationTime > newest_time))
+    {
+      newest = path;
+      newest_time = sd.ModificationTime;
+    }
+  }
+
+  std::string path = NewTicoCard(shared, slot);
+  if (!newest.empty())
+  {
+    if (FileSystem::CopyFilePath(newest.c_str(), path.c_str(), false))
+      INFO_LOG("Memory card {} is now shared by the game's discs as {}", Path::GetFileName(newest),
+               Path::GetFileName(path));
+    else
+      return newest; // could not copy: keep using the disc's own
+  }
+  return path;
+}
+
+} // namespace
+#endif
+
 std::unique_ptr<MemoryCard> System::GetMemoryCardForSlot(u32 slot, MemoryCardType type)
 {
   // Disable memory cards when running PSFs.
@@ -3718,22 +3816,7 @@ std::unique_ptr<MemoryCard> System::GetMemoryCardForSlot(u32 slot, MemoryCardTyp
         Host::RemoveKeyedOSDMessage(std::move(message_key));
         const std::string sanitized_file_title = Path::SanitizeFileName(file_title);
 #ifdef __SWITCH__
-        if (slot == 0)
-        {
-          const std::string legacy_mcd = Path::Combine(EmuFolders::MemoryCards, fmt::format("{}.mcd", sanitized_file_title));
-          if (FileSystem::FileExists(legacy_mcd.c_str()))
-            return MemoryCard::Open(legacy_mcd);
-
-          const std::string legacy_mcr = Path::Combine(EmuFolders::MemoryCards, fmt::format("{}.mcr", sanitized_file_title));
-          if (FileSystem::FileExists(legacy_mcr.c_str()))
-            return MemoryCard::Open(legacy_mcr);
-
-          const std::string legacy_srm = Path::Combine(EmuFolders::MemoryCards, fmt::format("{}.srm", sanitized_file_title));
-          if (FileSystem::FileExists(legacy_srm.c_str()))
-            return MemoryCard::Open(legacy_srm);
-
-          return MemoryCard::Open(legacy_mcd);
-        }
+        return MemoryCard::Open(TicoMemoryCardPath(sanitized_file_title, slot));
 #endif
         return MemoryCard::Open(g_settings.GetGameMemoryCardPath(sanitized_file_title.c_str(), slot));
       }
@@ -3785,6 +3868,25 @@ void System::UpdatePerGameMemoryCards()
     const MemoryCardType type = g_settings.memory_card_types[i];
     if (!Settings::IsPerGameMemoryCardType(type))
       continue;
+
+#ifdef __SWITCH__
+    // A game's discs share its card on tico: changing disc leaves it plugged
+    // in, instead of the game seeing a card pulled out and another put in
+    // while it waits for the next disc.
+    if (const MemoryCard* current = Pad::GetMemoryCard(i); current && !current->GetFilename().empty())
+    {
+      std::unique_ptr<MemoryCard> next = GetMemoryCardForSlot(i, type);
+      if (next && next->GetFilename() == current->GetFilename())
+        continue;
+      Pad::SetMemoryCard(i, nullptr);
+      if (next)
+      {
+        INFO_LOG("Memory Card Slot {}: {}", i + 1, next->GetFilename());
+        Pad::SetMemoryCard(i, std::move(next));
+      }
+      continue;
+    }
+#endif
 
     Pad::SetMemoryCard(i, nullptr);
 
