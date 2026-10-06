@@ -231,6 +231,9 @@ RenderAPI GPUDevice::GetPreferredAPI()
 #elif defined(__APPLE__)
     // Prefer Metal on MacOS.
     preferred_renderer = RenderAPI::Metal;
+#elif defined(__SWITCH__)
+    // deko3D is the Switch's native API (and the display API for Software)
+    preferred_renderer = RenderAPI::Deko3D;
 #elif defined(ENABLE_OPENGL) && defined(ENABLE_VULKAN)
     // On Linux, if we have both GL and Vulkan, prefer VK if the driver isn't software.
     preferred_renderer = VulkanDevice::IsSuitableDefaultRenderer() ? RenderAPI::Vulkan : RenderAPI::OpenGL;
@@ -238,8 +241,6 @@ RenderAPI GPUDevice::GetPreferredAPI()
     preferred_renderer = RenderAPI::OpenGL;
 #elif defined(ENABLE_VULKAN)
     preferred_renderer = RenderAPI::Vulkan;
-#elif defined(__SWITCH__)
-  return RenderAPI::Deko3D;
 #else
     // Uhhh, what?
     Log_ErrorPrint("Somehow don't have any renderers available...");

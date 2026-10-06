@@ -15,7 +15,9 @@
 
 Log_SetChannel(OpenGLContext);
 
+#ifndef __SWITCH__
 static DynamicLibrary s_egl_library;
+#endif
 static std::atomic_uint32_t s_egl_refcount = 0;
 
 #ifdef __SWITCH__

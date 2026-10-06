@@ -25,6 +25,8 @@
 
 #ifdef __SWITCH__
 #include "tico/TicoDuckBridge.h"
+
+#include "rapidjson/document.h"
 #endif
 
 #include "imgui.h"
@@ -509,6 +511,60 @@ static void ApplyTicoAchievementSettings(SettingsInterface& si)
     si.DeleteValue("Cheevos", "Password");
 }
 
+// Every duckstation_<Section>_<Key> in tico's config sets that key of
+// DuckStation's settings, so settings.json alone defines what tico shows.
+// The renderer is the one exception: Zink is DuckStation's OpenGL renderer
+// with Mesa's GL driver switched to Zink, which has to be chosen before EGL
+// starts.
+static void ApplyTicoGenericSettings(SettingsInterface& si, const std::string& text)
+{
+  static constexpr std::string_view prefix = "duckstation_";
+  rapidjson::Document doc;
+  doc.Parse<rapidjson::kParseCommentsFlag | rapidjson::kParseTrailingCommasFlag>(text.c_str(), text.size());
+  if (doc.HasParseError() || !doc.IsObject())
+  {
+    Log_WarningPrint("tico config is not valid JSON; its settings are not applied");
+    return;
+  }
+
+  for (auto it = doc.MemberBegin(); it != doc.MemberEnd(); ++it)
+  {
+    const std::string_view name(it->name.GetString(), it->name.GetStringLength());
+    if (name.size() <= prefix.size() || name.substr(0, prefix.size()) != prefix)
+      continue;
+    const std::string_view rest = name.substr(prefix.size());
+    const size_t split = rest.find('_');
+    if (split == std::string_view::npos || split == 0 || split + 1 >= rest.size())
+      continue;
+    const std::string section(rest.substr(0, split));
+    const std::string key(rest.substr(split + 1));
+
+    std::string value;
+    if (it->value.IsString())
+      value.assign(it->value.GetString(), it->value.GetStringLength());
+    else if (it->value.IsBool())
+      value = it->value.GetBool() ? "true" : "false";
+    else if (it->value.IsInt64())
+      value = std::to_string(it->value.GetInt64());
+    else if (it->value.IsNumber())
+      value = std::to_string(it->value.GetDouble());
+    else
+      continue;
+
+    if (section == "GPU" && key == "Renderer")
+    {
+      const bool zink = (value == "Zink");
+      if (zink || value == "OpenGL")
+      {
+        setenv("MESA_SWITCH_GL_DRIVER", zink ? "zink" : "nvc0", 1);
+        setenv("MESA_LOADER_DRIVER_OVERRIDE", zink ? "zink" : "nouveau", 1);
+        value = "OpenGL";
+      }
+    }
+    si.SetStringValue(section.c_str(), key.c_str(), value.c_str());
+  }
+}
+
 static void ApplyTicoCoreSettings(SettingsInterface& si)
 {
   std::ifstream input("sdmc:/tico/config/cores/duckstation.jsonc");
@@ -535,6 +591,8 @@ static void ApplyTicoCoreSettings(SettingsInterface& si)
   si.SetIntValue("Display", "ActiveEndOffset", 0);
   si.SetIntValue("Display", "LineStartOffset", 0);
   si.SetIntValue("Display", "LineEndOffset", 0);
+
+  ApplyTicoGenericSettings(si, text);
 
   ApplyTicoString(si, text, "duckstation_Console_Region", "Console", "Region");
   ApplyTicoString(si, text, "duckstation_Audio_StretchMode", "Audio", "StretchMode");

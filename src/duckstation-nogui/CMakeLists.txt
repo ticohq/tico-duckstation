@@ -27,6 +27,27 @@ if(NINTENDO_SWITCH)
     ../tico/TicoOverlay.h
   )
   target_link_libraries(duckstation-nogui PUBLIC "${NX_LIBRARIES}")
+  target_link_libraries(duckstation-nogui PRIVATE rapidjson)
+
+  # The renderers' drivers, linked statically (build_duckstation_nro.sh):
+  # deko3D's shader compiler, glslang for Vulkan's shaders, Mesa's NVK for
+  # Vulkan, and Mesa's EGL and desktop GL (nvc0, or Zink on NVK) for OpenGL.
+  if(TICO_DEPS_DIR)
+    target_link_libraries(duckstation-nogui PRIVATE
+      "${TICO_GLSLANG_BUILD}/glslang/libglslang.a"
+      "${TICO_GLSLANG_BUILD}/glslang/libglslang-default-resource-limits.a"
+      "${TICO_DEPS_DIR}/lib/libuam.a"
+      "-Wl,--start-group"
+      "${TICO_NVK_ARCHIVE}"
+      -l:libGL.a -l:libEGL.a -l:libglapi.a
+      -l:libmesa_util_c11.a -l:libblake3.a -l:libmesa_util.a -l:libmesa_util_simd.a -l:libxmlconfig.a
+      ${TICO_NVK_DEPS}
+      "-Wl,--end-group"
+    )
+    # Zink reaches NVK through its ICD entry points
+    target_link_options(duckstation-nogui PRIVATE
+      "-Wl,-u,vk_icdGetInstanceProcAddr" "-Wl,-u,vk_icdNegotiateLoaderICDInterfaceVersion")
+  endif()
 
   nx_generate_nacp (tico-duckstation.nacp
     NAME    "Tico DuckStation"
