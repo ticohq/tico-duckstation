@@ -72,7 +72,7 @@ if(NINTENDO_SWITCH)
   nx_generate_nacp (tico-duckstation.nacp
     NAME    "Tico DuckStation"
     AUTHOR  "ticoverse.com"
-    VERSION "1.0.0"
+    VERSION "3.0.0"
   )
 
   # Create folder early otherwise the CMake script complains
