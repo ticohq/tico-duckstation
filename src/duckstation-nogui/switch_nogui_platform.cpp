@@ -15,14 +15,16 @@
 
 extern "C" {
 
-extern char __start__;
-extern char __rodata_start;
 
 void HandleFault(uint64_t pc, uint64_t lr, uint64_t fp, uint64_t fault_addr, Result desc)
 {
-  // into the log too (tico's debug log), not only the nxlink console
-  const uint64_t base = reinterpret_cast<uint64_t>(&__start__);
-  const bool pc_in_text = (pc >= base && pc < reinterpret_cast<uint64_t>(&__rodata_start));
+  // into the log too (tico's debug log), not only the nxlink console; offsets
+  // from the module's load address (__start__ is an absolute 0 in the PIE NRO)
+  MemoryInfo text_info = {};
+  u32 page_info = 0;
+  svcQueryMemory(&text_info, &page_info, reinterpret_cast<u64>(&HandleFault));
+  const uint64_t base = text_info.addr;
+  const bool pc_in_text = (pc >= base && pc < text_info.addr + text_info.size);
   char line[256];
   if (pc_in_text)
   {

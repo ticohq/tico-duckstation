@@ -108,6 +108,7 @@ SettingsReloadCallback s_settings_reload_callback = nullptr;
 class DuckOverlayHost;
 std::unique_ptr<DuckOverlayHost> s_host;
 bool s_ready = false;
+bool s_enabled = false; // between Initialize and Shutdown: the overlay follows the GPU device
 bool s_menu_open = false;
 bool s_paused_by_menu = false;
 bool s_offer_resume = false;
@@ -751,6 +752,7 @@ void Initialize()
     s_touch_ready = true;
   }
 #endif
+  s_enabled = true;
   s_ready = InitOverlay();
   if (!s_ready)
   {
@@ -761,9 +763,26 @@ void Initialize()
   s_offer_resume = !s_rom_path.empty();
 }
 
+void OnGPUDeviceCreated()
+{
+  if (!s_enabled || s_ready)
+    return;
+  s_ready = InitOverlay();
+  if (!s_ready)
+    ERROR_LOG("{}", "tico overlay unavailable on the new GPU device");
+  s_last_frame = Common::Timer::GetCurrentValue();
+}
+
+void OnGPUDeviceReleasing()
+{
+  // the menu closes with it; the session (auto save, resume prompt) goes on
+  ShutdownOverlay();
+}
+
 void Shutdown()
 {
   WriteAutoSave(); // HOME: the session ends without the menu
+  s_enabled = false;
   ShutdownOverlay();
   s_previous_buttons = 0;
 }

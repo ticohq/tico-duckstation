@@ -1251,7 +1251,7 @@ void NoGUIHost::CPUThreadEntryPoint()
 
   // input source setup must happen on emu thread
   Error startup_error;
-  if (!System::Internal::ProcessStartup(&startup_error))
+  if (!System::Internal::ProcessStartup(&startup_error) || !System::Internal::CPUThreadInitialize(&startup_error))
   {
     g_nogui_window->ReportError("Error", startup_error.GetDescription());
     g_nogui_window->QuitMessageLoop();
@@ -1303,6 +1303,7 @@ void NoGUIHost::CPUThreadEntryPoint()
   Host::ReleaseGPUDevice();
   Host::ReleaseRenderWindow();
 
+  System::Internal::CPUThreadShutdown();
   System::Internal::ProcessShutdown();
   g_nogui_window->QuitMessageLoop();
 }

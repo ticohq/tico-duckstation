@@ -24,6 +24,10 @@
 
 #include "imgui.h"
 
+#ifdef __SWITCH__
+#include "tico/TicoDuckBridge.h"
+#endif
+
 #include <cstdarg>
 #include <limits>
 
@@ -328,6 +332,11 @@ bool Host::CreateGPUDevice(RenderAPI api, Error* error)
 
   InputManager::SetDisplayWindowSize(static_cast<float>(g_gpu_device->GetWindowWidth()),
                                      static_cast<float>(g_gpu_device->GetWindowHeight()));
+
+#ifdef __SWITCH__
+  // the tico overlay's fonts and pictures live on the device
+  TicoDuck::OnGPUDeviceCreated();
+#endif
   return true;
 }
 
@@ -391,6 +400,10 @@ void Host::ReleaseGPUDevice()
 {
   if (!g_gpu_device)
     return;
+
+#ifdef __SWITCH__
+  TicoDuck::OnGPUDeviceReleasing();
+#endif
 
   ImGuiManager::DestroyOverlayTextures();
   FullscreenUI::Shutdown();

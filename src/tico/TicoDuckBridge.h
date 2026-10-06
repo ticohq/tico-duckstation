@@ -29,9 +29,14 @@ void SetExitApplicationCallback(ExitApplicationCallback callback);
 /// Reads tico's settings into DuckStation's again and applies them.
 void SetSettingsReloadCallback(SettingsReloadCallback callback);
 
-/// On the CPU thread, once the GPU device exists / before it is released.
+/// On the CPU thread, once the GPU device exists / at the end of the session.
 void Initialize();
 void Shutdown();
+
+/// The GPU device is replaced when a game boots with another renderer than the
+/// one it was created with: the overlay's GPU resources follow it.
+void OnGPUDeviceCreated();
+void OnGPUDeviceReleasing();
 
 /// Builds the overlay's frame (System::PresentDisplay, before presenting).
 void RenderOverlay();

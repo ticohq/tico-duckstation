@@ -20,7 +20,6 @@
 #elif defined(__SWITCH__)
 #include <cstdlib>
 #include <switch.h>
-extern "C" char __start__;
 #elif defined(__APPLE__)
 #ifdef __aarch64__
 #include <pthread.h> // pthread_jit_write_protect_np()
@@ -945,7 +944,16 @@ static VirtmemReservation* s_jit_rw_reservation = nullptr;
 
 const void* MemMap::GetBaseAddress()
 {
-  return &__start__;
+  // __start__ is an absolute symbol (0) in the PIE NRO: the code mapping
+  // holding this function starts at the module's load address
+  static const void* base = []() -> const void* {
+    MemoryInfo info = {};
+    u32 page_info = 0;
+    if (R_FAILED(svcQueryMemory(&info, &page_info, reinterpret_cast<u64>(&MemMap::GetBaseAddress))))
+      return nullptr;
+    return reinterpret_cast<const void*>(info.addr);
+  }();
+  return base;
 }
 
 void* MemMap::AllocateJITMemory(size_t size)
@@ -965,7 +973,7 @@ void* MemMap::AllocateJITMemory(size_t size)
 
   // in branch range of the code: the unmapped space just below the NRO
   virtmemLock();
-  u8* rx = reinterpret_cast<u8*>(&__start__) - size - HOST_PAGE_SIZE;
+  u8* rx = static_cast<u8*>(const_cast<void*>(GetBaseAddress())) - size - HOST_PAGE_SIZE;
   for (u32 tries = 0;; tries++)
   {
     MemoryInfo info = {};
