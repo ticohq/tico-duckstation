@@ -1912,10 +1912,11 @@ void EmuFolders::SetDefaults()
 #ifdef __SWITCH__
   // DuckStation's own files live in sdmc:/tico/system/duckstation (the BIOS
   // at its top, where tico's BIOS check looks: module.json's system_dir);
-  // the game's saves, states and pictures in tico's per-console folders
+  // the game's saves, states and pictures in tico's per-console folders, and
+  // cheats and shaders in tico's (the overlay's menus read them)
   Bios = "sdmc:/tico/system/duckstation";
   Cache = "sdmc:/tico/cache/duckstation";
-  Cheats = "sdmc:/tico/system/duckstation/cheats";
+  Cheats = "sdmc:/tico/cheats/psx";
   Covers = "sdmc:/tico/assets/covers/psx";
   Dumps = "sdmc:/tico/cache/duckstation/dumps";
   GameSettings = "sdmc:/tico/system/duckstation/gamesettings";
@@ -1923,7 +1924,7 @@ void EmuFolders::SetDefaults()
   MemoryCards = "sdmc:/tico/saves/psx";
   SaveStates = "sdmc:/tico/states/psx";
   Screenshots = "sdmc:/tico/screenshots/psx";
-  Shaders = "sdmc:/tico/system/duckstation/shaders";
+  Shaders = "sdmc:/tico/shaders";
   Textures = "sdmc:/tico/textures/psx";
   UserResources = "sdmc:/tico/system/duckstation/resources";
   GameIcons = "sdmc:/tico/cache/duckstation/gameicons";
@@ -2044,7 +2045,10 @@ bool EmuFolders::EnsureFoldersExist()
   bool result = FileSystem::EnsureDirectoryExists(Bios.c_str(), false);
   result = FileSystem::EnsureDirectoryExists(Cache.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Path::Combine(Cache, "achievement_images").c_str(), false) && result;
+#ifndef __SWITCH__
+  // on the Switch the overlay's cheats and shaders: tico's folders, made when used
   result = FileSystem::EnsureDirectoryExists(Cheats.c_str(), false) && result;
+#endif
   result = FileSystem::EnsureDirectoryExists(Covers.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Dumps.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Path::Combine(Dumps, "audio").c_str(), false) && result;
@@ -2055,6 +2059,18 @@ bool EmuFolders::EnsureFoldersExist()
   result = FileSystem::EnsureDirectoryExists(MemoryCards.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(SaveStates.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Screenshots.c_str(), false) && result;
+#ifdef __SWITCH__
+  // earlier builds made these in system/duckstation: gone when left empty
+  // (DeleteDirectory removes only an empty folder)
+  for (const char* old_dir : {"sdmc:/tico/system/duckstation/shaders/reshade/Shaders",
+                              "sdmc:/tico/system/duckstation/shaders/reshade/Textures",
+                              "sdmc:/tico/system/duckstation/shaders/reshade", "sdmc:/tico/system/duckstation/shaders",
+                              "sdmc:/tico/system/duckstation/cheats"})
+  {
+    if (FileSystem::DirectoryExists(old_dir))
+      FileSystem::DeleteDirectory(old_dir);
+  }
+#else
   result = FileSystem::EnsureDirectoryExists(Shaders.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Path::Combine(Shaders, "reshade").c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(
@@ -2063,6 +2079,7 @@ bool EmuFolders::EnsureFoldersExist()
   result = FileSystem::EnsureDirectoryExists(
              Path::Combine(Shaders, "reshade" FS_OSPATH_SEPARATOR_STR "Textures").c_str(), false) &&
            result;
+#endif
   result = FileSystem::EnsureDirectoryExists(Textures.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(UserResources.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(Videos.c_str(), false) && result;
