@@ -1,0 +1,1098 @@
+{
+  "core_id": "duckstation",
+  "display_name": "DuckStation",
+  "config_file": "duckstation.jsonc",
+  "slugs": [
+    "psx"
+  ],
+  "bool_true_value": "true",
+  "bool_false_value": "false",
+  "tabs": [
+    {
+      "name": "settings_duckstation_tab_system",
+      "sections": [
+        {
+          "title": "settings_duckstation_section_system",
+          "options": [
+            {
+              "key": "duckstation_Console_Region",
+              "label": "settings_duckstation_console_region",
+              "type": "enum",
+              "default": "Auto",
+              "choices": [
+                {
+                  "label": "Auto-Detect",
+                  "value": "Auto"
+                },
+                {
+                  "label": "NTSC-J (Japan)",
+                  "value": "NTSC-J"
+                },
+                {
+                  "label": "NTSC-U (USA)",
+                  "value": "NTSC-U"
+                },
+                {
+                  "label": "PAL (Europe)",
+                  "value": "PAL"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_BIOS_PatchFastBoot",
+              "label": "settings_duckstation_fast_boot",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_Console_Enable8MBRAM",
+              "label": "settings_duckstation_8mb_ram",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_Console_EnableCheats",
+              "label": "settings_duckstation_enable_cheats",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_Main_ApplyCompatibilitySettings",
+              "label": "settings_duckstation_apply_compatibility_settings",
+              "type": "bool",
+              "default": "true"
+            },
+            {
+              "key": "duckstation_Main_ApplyGameSettings",
+              "label": "settings_duckstation_apply_game_settings",
+              "type": "bool",
+              "default": "true"
+            },
+            {
+              "key": "duckstation_Main_DisableAllEnhancements",
+              "label": "settings_duckstation_disable_all_enhancements",
+              "type": "bool",
+              "default": "false"
+            }
+          ]
+        },
+        {
+          "title": "settings_duckstation_section_cpu",
+          "options": [
+            {
+              "key": "duckstation_CPU_RecompilerICache",
+              "label": "settings_duckstation_recompiler_icache",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_CPU_OverclockEnable",
+              "label": "settings_duckstation_cpu_overclock_enable",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_CPU_OverclockPercent",
+              "label": "settings_duckstation_cpu_overclock_percent",
+              "type": "enum",
+              "default": "100",
+              "depends_on": {
+                "key": "duckstation_CPU_OverclockEnable",
+                "value": "true"
+              },
+              "choices": [
+                {
+                  "label": "50%",
+                  "value": "50"
+                },
+                {
+                  "label": "75%",
+                  "value": "75"
+                },
+                {
+                  "label": "100%",
+                  "value": "100"
+                },
+                {
+                  "label": "125%",
+                  "value": "125"
+                },
+                {
+                  "label": "150%",
+                  "value": "150"
+                },
+                {
+                  "label": "175%",
+                  "value": "175"
+                },
+                {
+                  "label": "200%",
+                  "value": "200"
+                },
+                {
+                  "label": "300%",
+                  "value": "300"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "settings_duckstation_section_cd_rom",
+          "options": [
+            {
+              "key": "duckstation_CDROM_RegionCheck",
+              "label": "settings_duckstation_region_check",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_CDROM_LoadImageToRAM",
+              "label": "settings_duckstation_load_image_to_ram",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_CDROM_LoadImagePatches",
+              "label": "settings_duckstation_apply_image_patches",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_CDROM_MuteCDAudio",
+              "label": "settings_duckstation_mute_cd_audio",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_CDROM_ReadaheadSectors",
+              "label": "settings_duckstation_readahead_sectors",
+              "type": "enum",
+              "default": "8",
+              "choices": [
+                {
+                  "label": "4 sectors",
+                  "value": "4"
+                },
+                {
+                  "label": "8 sectors",
+                  "value": "8"
+                },
+                {
+                  "label": "16 sectors",
+                  "value": "16"
+                },
+                {
+                  "label": "32 sectors",
+                  "value": "32"
+                },
+                {
+                  "label": "64 sectors",
+                  "value": "64"
+                },
+                {
+                  "label": "128 sectors",
+                  "value": "128"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_CDROM_ReadSpeedup",
+              "label": "settings_duckstation_read_speedup",
+              "type": "enum",
+              "default": "1",
+              "choices": [
+                {
+                  "label": "None (2x)",
+                  "value": "1"
+                },
+                {
+                  "label": "2x (4x)",
+                  "value": "2"
+                },
+                {
+                  "label": "3x (6x)",
+                  "value": "3"
+                },
+                {
+                  "label": "4x (8x)",
+                  "value": "4"
+                },
+                {
+                  "label": "5x (10x)",
+                  "value": "5"
+                },
+                {
+                  "label": "6x (12x)",
+                  "value": "6"
+                },
+                {
+                  "label": "7x (14x)",
+                  "value": "7"
+                },
+                {
+                  "label": "8x (16x)",
+                  "value": "8"
+                },
+                {
+                  "label": "9x (18x)",
+                  "value": "9"
+                },
+                {
+                  "label": "10x (20x)",
+                  "value": "10"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_CDROM_SeekSpeedup",
+              "label": "settings_duckstation_seek_speedup",
+              "type": "enum",
+              "default": "1",
+              "choices": [
+                {
+                  "label": "Instant",
+                  "value": "0"
+                },
+                {
+                  "label": "None (2x)",
+                  "value": "1"
+                },
+                {
+                  "label": "2x (4x)",
+                  "value": "2"
+                },
+                {
+                  "label": "3x (6x)",
+                  "value": "3"
+                },
+                {
+                  "label": "4x (8x)",
+                  "value": "4"
+                },
+                {
+                  "label": "5x (10x)",
+                  "value": "5"
+                },
+                {
+                  "label": "6x (12x)",
+                  "value": "6"
+                },
+                {
+                  "label": "7x (14x)",
+                  "value": "7"
+                },
+                {
+                  "label": "8x (16x)",
+                  "value": "8"
+                },
+                {
+                  "label": "9x (18x)",
+                  "value": "9"
+                },
+                {
+                  "label": "10x (20x)",
+                  "value": "10"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_duckstation_tab_graphics",
+      "sections": [
+        {
+          "title": "settings_duckstation_section_graphics",
+          "options": [
+            {
+              "key": "duckstation_GPU_Renderer",
+              "label": "settings_duckstation_renderer",
+              "type": "enum",
+              "default": "deko3D",
+              "choices": [
+                {
+                  "label": "deko3D",
+                  "value": "deko3D"
+                },
+                {
+                  "label": "Vulkan",
+                  "value": "Vulkan"
+                },
+                {
+                  "label": "OpenGL",
+                  "value": "OpenGL"
+                },
+                {
+                  "label": "Zink (OpenGL on Vulkan)",
+                  "value": "Zink"
+                },
+                {
+                  "label": "Software",
+                  "value": "Software"
+                }
+              ],
+              "restart": true
+            },
+            {
+              "key": "duckstation_GPU_ResolutionScale",
+              "label": "settings_duckstation_internal_resolution",
+              "type": "enum",
+              "default": "1",
+              "choices": [
+                {
+                  "label": "1x (Native)",
+                  "value": "1"
+                },
+                {
+                  "label": "2x",
+                  "value": "2"
+                },
+                {
+                  "label": "3x (720p)",
+                  "value": "3"
+                },
+                {
+                  "label": "4x",
+                  "value": "4"
+                },
+                {
+                  "label": "5x (1080p)",
+                  "value": "5"
+                },
+                {
+                  "label": "6x (1440p)",
+                  "value": "6"
+                },
+                {
+                  "label": "7x",
+                  "value": "7"
+                },
+                {
+                  "label": "8x",
+                  "value": "8"
+                },
+                {
+                  "label": "9x (4K)",
+                  "value": "9"
+                },
+                {
+                  "label": "10x",
+                  "value": "10"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_GPU_MSAA",
+              "label": "settings_duckstation_msaa",
+              "type": "enum",
+              "default": "1",
+              "choices": [
+                {
+                  "label": "Off",
+                  "value": "1"
+                },
+                {
+                  "label": "2x MSAA",
+                  "value": "2"
+                },
+                {
+                  "label": "4x MSAA",
+                  "value": "4"
+                },
+                {
+                  "label": "8x MSAA",
+                  "value": "8"
+                },
+                {
+                  "label": "16x MSAA",
+                  "value": "16"
+                },
+                {
+                  "label": "2x SSAA",
+                  "value": "2-ssaa"
+                },
+                {
+                  "label": "4x SSAA",
+                  "value": "4-ssaa"
+                },
+                {
+                  "label": "8x SSAA",
+                  "value": "8-ssaa"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_GPU_TextureFilter",
+              "label": "settings_duckstation_texture_filter",
+              "type": "enum",
+              "default": "Nearest",
+              "choices": [
+                {
+                  "label": "Nearest-Neighbor",
+                  "value": "Nearest"
+                },
+                {
+                  "label": "Bilinear",
+                  "value": "Bilinear"
+                },
+                {
+                  "label": "Bilinear (No Edge Blending)",
+                  "value": "BilinearBinAlpha"
+                },
+                {
+                  "label": "JINC2 (Slow)",
+                  "value": "JINC2"
+                },
+                {
+                  "label": "JINC2 (No Edge Blending)",
+                  "value": "JINC2BinAlpha"
+                },
+                {
+                  "label": "xBR (Very Slow)",
+                  "value": "xBR"
+                },
+                {
+                  "label": "xBR (No Edge Blending)",
+                  "value": "xBRBinAlpha"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_GPU_DownsampleMode",
+              "label": "settings_duckstation_downsample_mode",
+              "type": "enum",
+              "default": "Disabled",
+              "choices": [
+                {
+                  "label": "Disabled",
+                  "value": "Disabled"
+                },
+                {
+                  "label": "Box",
+                  "value": "Box"
+                },
+                {
+                  "label": "Adaptive",
+                  "value": "Adaptive"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_GPU_DownsampleScale",
+              "label": "settings_duckstation_downsample_scale",
+              "type": "enum",
+              "default": "1",
+              "depends_on": {
+                "key": "duckstation_GPU_DownsampleMode",
+                "value": "Box"
+              },
+              "choices": [
+                {
+                  "label": "1x",
+                  "value": "1"
+                },
+                {
+                  "label": "2x",
+                  "value": "2"
+                },
+                {
+                  "label": "3x",
+                  "value": "3"
+                },
+                {
+                  "label": "4x",
+                  "value": "4"
+                },
+                {
+                  "label": "5x",
+                  "value": "5"
+                },
+                {
+                  "label": "6x",
+                  "value": "6"
+                },
+                {
+                  "label": "7x",
+                  "value": "7"
+                },
+                {
+                  "label": "8x",
+                  "value": "8"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_GPU_TrueColor",
+              "label": "settings_duckstation_true_color",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_GPU_Debanding",
+              "label": "settings_duckstation_debanding",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_GPU_ScaledDithering",
+              "label": "settings_duckstation_scaled_dithering",
+              "type": "bool",
+              "default": "true"
+            },
+            {
+              "key": "duckstation_GPU_DisableInterlacing",
+              "label": "settings_duckstation_disable_interlacing",
+              "type": "bool",
+              "default": "true"
+            },
+            {
+              "key": "duckstation_GPU_ForceNTSCTimings",
+              "label": "settings_duckstation_force_ntsc_timings",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_GPU_WidescreenHack",
+              "label": "settings_duckstation_widescreen_hack",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_GPU_ChromaSmoothing24Bit",
+              "label": "settings_duckstation_chroma_smoothing_24bit",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_GPU_UseSoftwareRendererForReadbacks",
+              "label": "settings_duckstation_software_readbacks",
+              "type": "bool",
+              "default": "false"
+            }
+          ]
+        },
+        {
+          "title": "settings_duckstation_section_pgxp_enhancements",
+          "options": [
+            {
+              "key": "duckstation_GPU_PGXPEnable",
+              "label": "settings_duckstation_geometry_correction",
+              "type": "bool",
+              "default": "false"
+            },
+            {
+              "key": "duckstation_GPU_PGXPCulling",
+              "label": "settings_duckstation_pgxp_culling",
+              "type": "bool",
+              "default": "true",
+              "depends_on": {
+                "key": "duckstation_GPU_PGXPEnable",
+                "value": "true"
+              }
+            },
+            {
+              "key": "duckstation_GPU_PGXPTextureCorrection",
+              "label": "settings_duckstation_perspective_textures",
+              "type": "bool",
+              "default": "true",
+              "depends_on": {
+                "key": "duckstation_GPU_PGXPEnable",
+                "value": "true"
+              }
+            },
+            {
+              "key": "duckstation_GPU_PGXPColorCorrection",
+              "label": "settings_duckstation_perspective_colors",
+              "type": "bool",
+              "default": "false",
+              "depends_on": {
+                "key": "duckstation_GPU_PGXPEnable",
+                "value": "true"
+              }
+            },
+            {
+              "key": "duckstation_GPU_PGXPVertexCache",
+              "label": "settings_duckstation_pgxp_vertex_cache",
+              "type": "bool",
+              "default": "false",
+              "depends_on": {
+                "key": "duckstation_GPU_PGXPEnable",
+                "value": "true"
+              }
+            },
+            {
+              "key": "duckstation_GPU_PGXPCPU",
+              "label": "settings_duckstation_pgxp_cpu_mode",
+              "type": "bool",
+              "default": "false",
+              "depends_on": {
+                "key": "duckstation_GPU_PGXPEnable",
+                "value": "true"
+              }
+            },
+            {
+              "key": "duckstation_GPU_PGXPPreserveProjFP",
+              "label": "settings_duckstation_pgxp_preserve_projection",
+              "type": "bool",
+              "default": "false",
+              "depends_on": {
+                "key": "duckstation_GPU_PGXPEnable",
+                "value": "true"
+              }
+            },
+            {
+              "key": "duckstation_GPU_PGXPTolerance",
+              "label": "settings_duckstation_pgxp_tolerance",
+              "type": "enum",
+              "default": "-1.0",
+              "choices": [
+                {
+                  "label": "Default",
+                  "value": "-1.0"
+                },
+                {
+                  "label": "0.5",
+                  "value": "0.5"
+                },
+                {
+                  "label": "1.0",
+                  "value": "1.0"
+                },
+                {
+                  "label": "2.0",
+                  "value": "2.0"
+                },
+                {
+                  "label": "3.0",
+                  "value": "3.0"
+                },
+                {
+                  "label": "4.0",
+                  "value": "4.0"
+                }
+              ],
+              "depends_on": {
+                "key": "duckstation_GPU_PGXPEnable",
+                "value": "true"
+              }
+            },
+            {
+              "key": "duckstation_GPU_PGXPDepthBuffer",
+              "label": "settings_duckstation_pgxp_depth_buffer",
+              "type": "bool",
+              "default": "false",
+              "depends_on": {
+                "key": "duckstation_GPU_PGXPEnable",
+                "value": "true"
+              }
+            },
+            {
+              "key": "duckstation_GPU_PGXPDepthClearThreshold",
+              "label": "settings_duckstation_pgxp_depth_clear_threshold",
+              "type": "enum",
+              "default": "300.0",
+              "depends_on": {
+                "key": "duckstation_GPU_PGXPDepthBuffer",
+                "value": "true"
+              },
+              "choices": [
+                {
+                  "label": "150",
+                  "value": "150.0"
+                },
+                {
+                  "label": "300",
+                  "value": "300.0"
+                },
+                {
+                  "label": "600",
+                  "value": "600.0"
+                },
+                {
+                  "label": "1200",
+                  "value": "1200.0"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_duckstation_tab_audio",
+      "sections": [
+        {
+          "title": "settings_duckstation_section_audio",
+          "options": [
+            {
+              "key": "duckstation_Audio_StretchMode",
+              "label": "settings_duckstation_audio_stretch_mode",
+              "type": "enum",
+              "default": "TimeStretch",
+              "choices": [
+                {
+                  "label": "None",
+                  "value": "None"
+                },
+                {
+                  "label": "Resample",
+                  "value": "Resample"
+                },
+                {
+                  "label": "Time Stretch",
+                  "value": "TimeStretch"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_Audio_OutputVolume",
+              "label": "settings_duckstation_audio_volume",
+              "type": "enum",
+              "default": "100",
+              "choices": [
+                {
+                  "label": "25%",
+                  "value": "25"
+                },
+                {
+                  "label": "50%",
+                  "value": "50"
+                },
+                {
+                  "label": "75%",
+                  "value": "75"
+                },
+                {
+                  "label": "100%",
+                  "value": "100"
+                },
+                {
+                  "label": "125%",
+                  "value": "125"
+                },
+                {
+                  "label": "150%",
+                  "value": "150"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_Audio_FastForwardVolume",
+              "label": "settings_duckstation_fast_forward_volume",
+              "type": "enum",
+              "default": "100",
+              "choices": [
+                {
+                  "label": "Muted",
+                  "value": "0"
+                },
+                {
+                  "label": "25%",
+                  "value": "25"
+                },
+                {
+                  "label": "50%",
+                  "value": "50"
+                },
+                {
+                  "label": "75%",
+                  "value": "75"
+                },
+                {
+                  "label": "100%",
+                  "value": "100"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_Audio_OutputMuted",
+              "label": "settings_duckstation_mute_audio",
+              "type": "bool",
+              "default": "false"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_duckstation_tab_input",
+      "sections": [
+        {
+          "title": "settings_duckstation_section_controller_1",
+          "options": [
+            {
+              "key": "duckstation_Controller1_VibrationBias",
+              "label": "settings_duckstation_vibration_bias",
+              "type": "enum",
+              "default": "8",
+              "choices": [
+                {
+                  "label": "Off",
+                  "value": "0"
+                },
+                {
+                  "label": "Weak",
+                  "value": "4"
+                },
+                {
+                  "label": "Normal",
+                  "value": "8"
+                },
+                {
+                  "label": "Strong",
+                  "value": "12"
+                },
+                {
+                  "label": "Maximum",
+                  "value": "15"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "settings_duckstation_section_controller_2",
+          "options": [
+            {
+              "key": "duckstation_Controller2_VibrationBias",
+              "label": "settings_duckstation_vibration_bias",
+              "type": "enum",
+              "default": "8",
+              "choices": [
+                {
+                  "label": "Off",
+                  "value": "0"
+                },
+                {
+                  "label": "Weak",
+                  "value": "4"
+                },
+                {
+                  "label": "Normal",
+                  "value": "8"
+                },
+                {
+                  "label": "Strong",
+                  "value": "12"
+                },
+                {
+                  "label": "Maximum",
+                  "value": "15"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_duckstation_tab_display",
+      "sections": [
+        {
+          "title": "settings_duckstation_section_viewport",
+          "options": [
+            {
+              "key": "display_mode",
+              "label": "settings_duckstation_display_mode",
+              "type": "enum",
+              "default": "Display",
+              "choices": [
+                {
+                  "label": "Integer",
+                  "value": "Integer"
+                },
+                {
+                  "label": "Display",
+                  "value": "Display"
+                }
+              ]
+            },
+            {
+              "key": "display_size",
+              "label": "settings_duckstation_size",
+              "type": "enum",
+              "default": "4:3",
+              "depends_on": {
+                "key": "display_mode",
+                "value": "Display"
+              },
+              "choices": [
+                {
+                  "label": "Stretch",
+                  "value": "Stretch"
+                },
+                {
+                  "label": "4:3",
+                  "value": "4:3"
+                },
+                {
+                  "label": "16:9",
+                  "value": "16:9"
+                },
+                {
+                  "label": "Original",
+                  "value": "Original"
+                }
+              ]
+            },
+            {
+              "key": "integer_scale",
+              "label": "settings_duckstation_integer_scale",
+              "type": "enum",
+              "default": "Auto",
+              "depends_on": {
+                "key": "display_mode",
+                "value": "Integer"
+              },
+              "choices": [
+                {
+                  "label": "1x",
+                  "value": "1x"
+                },
+                {
+                  "label": "2x",
+                  "value": "2x"
+                },
+                {
+                  "label": "Auto",
+                  "value": "Auto"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "settings_duckstation_section_display",
+          "options": [
+            {
+              "key": "duckstation_Display_CropMode",
+              "label": "settings_duckstation_crop_mode",
+              "type": "enum",
+              "default": "Borders",
+              "choices": [
+                {
+                  "label": "None",
+                  "value": "None"
+                },
+                {
+                  "label": "Crop Overscan",
+                  "value": "Overscan"
+                },
+                {
+                  "label": "Crop Borders",
+                  "value": "Borders"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_Display_DeinterlacingMode",
+              "label": "settings_duckstation_deinterlacing_mode",
+              "type": "enum",
+              "default": "Adaptive",
+              "choices": [
+                {
+                  "label": "Disabled",
+                  "value": "Disabled"
+                },
+                {
+                  "label": "Weave",
+                  "value": "Weave"
+                },
+                {
+                  "label": "Blend",
+                  "value": "Blend"
+                },
+                {
+                  "label": "Adaptive",
+                  "value": "Adaptive"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_duckstation_tab_memory_cards",
+      "sections": [
+        {
+          "title": "settings_duckstation_section_memory_cards",
+          "options": [
+            {
+              "key": "duckstation_MemoryCards_Card1Type",
+              "label": "settings_duckstation_memory_card_1_type",
+              "type": "enum",
+              "default": "PerGameFileTitle",
+              "choices": [
+                {
+                  "label": "No Memory Card",
+                  "value": "None"
+                },
+                {
+                  "label": "Shared Between All Games",
+                  "value": "Shared"
+                },
+                {
+                  "label": "Per Game (Serial)",
+                  "value": "PerGame"
+                },
+                {
+                  "label": "Per Game (Title)",
+                  "value": "PerGameTitle"
+                },
+                {
+                  "label": "Per Game (File Title)",
+                  "value": "PerGameFileTitle"
+                },
+                {
+                  "label": "Non-Persistent",
+                  "value": "NonPersistent"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_MemoryCards_Card2Type",
+              "label": "settings_duckstation_memory_card_2_type",
+              "type": "enum",
+              "default": "None",
+              "choices": [
+                {
+                  "label": "No Memory Card",
+                  "value": "None"
+                },
+                {
+                  "label": "Shared Between All Games",
+                  "value": "Shared"
+                },
+                {
+                  "label": "Per Game (Serial)",
+                  "value": "PerGame"
+                },
+                {
+                  "label": "Per Game (Title)",
+                  "value": "PerGameTitle"
+                },
+                {
+                  "label": "Per Game (File Title)",
+                  "value": "PerGameFileTitle"
+                },
+                {
+                  "label": "Non-Persistent",
+                  "value": "NonPersistent"
+                }
+              ]
+            },
+            {
+              "key": "duckstation_MemoryCards_UsePlaylistTitle",
+              "label": "settings_duckstation_memory_cards_use_playlist_title",
+              "type": "bool",
+              "default": "true"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -113,4 +113,28 @@ fi
     -DTICO_NVK_ARCHIVE="$NVK_ARCHIVE" -DTICO_NVK_DEPS="$NVK_DEPS"
 ninja -C "$CORE_BUILD" tico-duckstation.nro
 
-echo "=== Built $CORE_BUILD/tico-duckstation.nro ==="
+# ============================================================
+# Step 4: the tico module
+# ============================================================
+# A module is a directory that extracts to sdmc:/tico/modules/<id>/: tico
+# reads module.json, the settings definition and the strings from it, and
+# launches the NRO beside them.
+echo "--- Step 4: Packaging the module ---"
+BUILD_DIR="$ROOT_DIR/build_tico"
+MODULE_SRC="$TICO_DIR/module"
+MODULE_ID=$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MODULE_SRC/module.json" | head -1)
+MODULE_OUT="$BUILD_DIR/module/$MODULE_ID"
+rm -rf "$BUILD_DIR"
+mkdir -p "$MODULE_OUT"
+cp -r "$MODULE_SRC/." "$MODULE_OUT/"
+cp "$CORE_BUILD/tico-duckstation.nro" "$MODULE_OUT/"
+cp -R "$TICO_DIR/lang" "$MODULE_OUT/"
+gzip -f -9 "$MODULE_OUT"/gamelists/*.json 2>/dev/null || true
+BUNDLE="$BUILD_DIR/tico-$MODULE_ID-module.zip"
+( cd "$BUILD_DIR/module" && zip -qr "$BUNDLE" "$MODULE_ID" )
+
+echo "=== Built ==="
+echo "  NRO:    $CORE_BUILD/tico-duckstation.nro"
+echo "  Module: $BUNDLE"
+echo "          extracts to sdmc:/tico/modules/$MODULE_ID/"
+find "$MODULE_OUT" -type f | sed "s|$BUILD_DIR/module/|    |"
