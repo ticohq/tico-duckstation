@@ -415,7 +415,13 @@ void Log::FileOutputLogCallback(void* pUserParam, const char* channelName, const
 
   FormatLogMessageAndPrint(
     channelName, functionName, level, message, true, false, true,
-    [](const std::string_view& message) { std::fwrite(message.data(), 1, message.size(), s_file_handle.get()); });
+    [](const std::string_view& message) {
+      std::fwrite(message.data(), 1, message.size(), s_file_handle.get());
+#ifdef __SWITCH__
+      // a crash on the Switch leaves no chance to flush: keep every line
+      std::fflush(s_file_handle.get());
+#endif
+    });
 }
 
 void Log::SetFileOutputParams(bool enabled, const char* filename, bool timestamps /* = true */)

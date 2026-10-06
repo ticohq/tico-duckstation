@@ -852,7 +852,23 @@ void Settings::UpdateLogSettings()
   Log::SetDebugOutputParams(log_to_debug);
 
 #ifdef __SWITCH__
-  Log::SetFileOutputParams(false, nullptr);
+  // tico's debug log: always on in a debug build (TICO_DEBUG_LOG), else when
+  // Logging/LogToFile is set
+#ifdef TICO_DEBUG_LOG
+  Log::SetLogLevel(LOGLEVEL_DEV);
+  const bool to_file = true;
+#else
+  const bool to_file = log_to_file;
+#endif
+  if (to_file)
+  {
+    FileSystem::CreateDirectory("sdmc:/tico/debug", false);
+    Log::SetFileOutputParams(true, "sdmc:/tico/debug/duckstation.txt", log_timestamps);
+  }
+  else
+  {
+    Log::SetFileOutputParams(false, nullptr);
+  }
 #else
   if (log_to_file)
   {

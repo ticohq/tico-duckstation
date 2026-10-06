@@ -35,6 +35,11 @@ include(DuckStationBuildOptions)
 
 # The tico Switch build brings its own libraries (build_duckstation_nro.sh):
 # uam for deko3D's shaders, and glslang standing in for shaderc on Vulkan.
+# DUCK_DEBUG=1 builds log everything to sdmc:/tico/debug/duckstation.txt
+if(TICO_DEBUG_LOG)
+  add_compile_definitions(TICO_DEBUG_LOG=1)
+endif()
+
 if(NINTENDO_SWITCH AND TICO_DEPS_DIR)
   include_directories("${TICO_DEPS_DIR}/include")
   link_directories("${TICO_DEPS_DIR}/lib")

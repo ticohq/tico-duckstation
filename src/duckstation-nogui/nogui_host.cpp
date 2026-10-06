@@ -1984,6 +1984,13 @@ int main(int argc, char* argv[])
 
     return 0;
   }
+#ifdef TICO_DEBUG_LOG
+  // debug builds: the log is open before anything else can fail
+  FileSystem::CreateDirectory("sdmc:/tico/debug", false);
+  Log::SetLogLevel(LOGLEVEL_DEV);
+  Log::SetFileOutputParams(true, "sdmc:/tico/debug/duckstation.txt", true);
+  Log_InfoPrint("tico-duckstation debug log");
+#endif
 
   socketInitializeDefault();
   s_network_initialized = true;
