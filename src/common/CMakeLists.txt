@@ -1,6 +1,8 @@
 add_library(common
   align.h
   assert.cpp
+  switch_thread_report.cpp
+  switch_thread_report.h
   assert.h
   bitfield.h
   bitutils.h

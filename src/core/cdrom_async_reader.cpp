@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
+#include "common/switch_thread_report.h"
 #include "cdrom_async_reader.h"
 #include "common/assert.h"
 #include "common/log.h"
@@ -321,6 +322,7 @@ void CDROMAsyncReader::WorkerThreadEntryPoint()
 
     for (;;)
     {
+      SwitchThreadReport::Tick("cd reader");
       if (m_next_position_set.load())
       {
         // discard buffers, we're seeking to a new location

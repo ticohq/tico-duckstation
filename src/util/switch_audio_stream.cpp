@@ -1,3 +1,4 @@
+#include "common/switch_thread_report.h"
 #include "switch_audio_stream.h"
 #include "common/assert.h"
 #include "common/log.h"
@@ -113,6 +114,7 @@ void SwitchAudioStream::AudioThread(void* userdata)
 
   while (this_ptr->m_state != State::Stop)
   {
+    SwitchThreadReport::Tick("audio");
     float volume = this_ptr->m_thread_volume;
     audrvVoiceSetMixFactor(&this_ptr->m_audio_driver, 0, volume, 0, 0);
     audrvVoiceSetMixFactor(&this_ptr->m_audio_driver, 0, volume, 1, 1);

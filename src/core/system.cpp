@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "system.h"
+#include "common/switch_thread_report.h"
 #include "IconsFontAwesome5.h"
 #include "achievements.h"
 #include "bios.h"
@@ -1809,6 +1810,7 @@ void System::Execute()
 
 void System::FrameDone()
 {
+  SwitchThreadReport::Tick("emulation");
   s_frame_number++;
 
   // Vertex buffer is shared, need to flush what we have.
