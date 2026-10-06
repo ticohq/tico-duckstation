@@ -591,6 +591,11 @@ static void ApplyTicoCoreSettings(SettingsInterface& si)
   si.SetIntValue("Display", "ActiveEndOffset", 0);
   si.SetIntValue("Display", "LineStartOffset", 0);
   si.SetIntValue("Display", "LineEndOffset", 0);
+  // settings.ini keeps what tico set before, so logging is reset at every
+  // launch (a log left on writes every CD sector to the SD card); tico's
+  // config can still turn it on
+  si.SetBoolValue("Logging", "LogToFile", false);
+  si.SetStringValue("Logging", "LogLevel", "Info");
 
   ApplyTicoGenericSettings(si, text);
 
