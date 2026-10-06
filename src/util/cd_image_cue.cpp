@@ -129,6 +129,13 @@ bool CDImageCueSheet::OpenAndParse(const char* filename, Error* error)
         return false;
       }
 
+#ifdef __SWITCH__
+      // A sector is larger than the C library's default buffer, so every
+      // sector read was its own request to the file system service (core 3
+      // busy all game long on a streaming game). Sequential sectors now come
+      // from a 256 KB buffer.
+      std::setvbuf(track_fp, nullptr, _IOFBF, 256 * 1024);
+#endif
       m_files.push_back(TrackFile{std::move(track_filename), track_fp, 0});
     }
 

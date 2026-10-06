@@ -58,6 +58,13 @@ bool CDImageBin::Open(const char* filename, Error* error)
       error->SetErrno(errno);
     return false;
   }
+#ifdef __SWITCH__
+  // A sector is larger than the C library's default buffer, so every
+  // sector read was its own request to the file system service (core 3
+  // busy all game long on a streaming game). Sequential sectors now come
+  // from a 256 KB buffer.
+  std::setvbuf(m_fp, nullptr, _IOFBF, 256 * 1024);
+#endif
 
   const u32 track_sector_size = RAW_SECTOR_SIZE;
 

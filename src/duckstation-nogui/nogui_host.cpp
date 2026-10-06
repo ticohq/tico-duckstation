@@ -976,6 +976,13 @@ std::optional<std::time_t> Host::GetResourceFileTimestamp(std::string_view filen
     return std::nullopt;
   }
 
+#ifdef __SWITCH__
+  // romfs reports no stable modification time, so the game database cache
+  // never matched and was rebuilt (3 s) at every boot. A file in romfs
+  // cannot change while the NRO is the same: its size stands in.
+  if (path.starts_with("romfs:"))
+    return static_cast<std::time_t>(sd.Size);
+#endif
   return sd.ModificationTime;
 }
 
