@@ -48,6 +48,9 @@ if(NINTENDO_SWITCH)
   # USB drives: FAT/exFAT, and NTFS read only
   target_link_libraries(duckstation-nogui PRIVATE
     "${TICO_FRONTEND}/deps/usbhsfs/lib/libusbhsfs.a" "${TICO_FRONTEND}/deps/usbhsfs/lib/libusbntfs.a")
+  # libsodium: TicoSecure opens the session tico seals for each launch
+  target_link_libraries(duckstation-nogui PRIVATE "$ENV{DEVKITPRO}/portlibs/switch/lib/libsodium.a")
+  target_include_directories(duckstation-nogui PRIVATE "$ENV{DEVKITPRO}/portlibs/switch/include")
   target_link_libraries(duckstation-nogui PUBLIC "${NX_LIBRARIES}")
 
   # The renderers' drivers, linked statically (build_duckstation_nro.sh):

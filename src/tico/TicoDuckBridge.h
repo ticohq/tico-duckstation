@@ -69,6 +69,24 @@ bool ShouldChainloadLauncher();
 void ExitApplication();
 
 void PushRANotification(std::string title, std::string description, std::string badge_path, float duration);
+
+/// What tico's sealed session says about RetroAchievements for this run: a
+/// token, never a password. badges: tico fetched the game's badges into
+/// sdmc:/tico/assets/ra (false: show a placeholder).
+struct RASession
+{
+  bool enabled = false;
+  bool hardcore = false;
+  bool badges = true;
+  std::string username;
+  std::string token;
+};
+RASession GetRASession();
+
+/// The current user's PSX memory cards and states (tico's folders, or theirs
+/// in them; a custom folder from the core's settings stays as it is).
+std::string UserSavesFolder();
+std::string UserStatesFolder();
 void PlayRATrophySound();
 
 #ifdef __SWITCH__

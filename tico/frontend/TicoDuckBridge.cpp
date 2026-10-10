@@ -16,6 +16,7 @@
 #include "TicoConfig.h"
 #include "TicoLogger.h"
 #include "TicoOverlayHost.h"
+#include "TicoSession.h"
 #include "UsbStorage.h"
 #include "overlay/imgui_compat.h"
 #include "overlay/imgui_overlay.h"
@@ -156,7 +157,7 @@ bool s_touch_ready = false;
 std::string StatePath(int index)
 {
   const std::string game = s_rom_path.empty() ? System::GetMediaFileName() : s_rom_path;
-  return fmt::format("{}/{}.state{}", TicoConfig::StatesPath, FileStem(game), index);
+  return fmt::format("{}/{}.state{}", UserStatesFolder(), FileStem(game), index);
 }
 
 std::string RestartMarkerPath()
@@ -178,7 +179,7 @@ public:
   {
     if (!System::IsValid())
       return;
-    FileSystem::EnsureDirectoryExists(TicoConfig::StatesPath, true);
+    FileSystem::EnsureDirectoryExists(UserStatesFolder().c_str(), true);
     Error error;
     if (!System::SaveState(StatePath(index).c_str(), &error, false))
       LOG_ERROR("OVERLAY", "Save state %d failed: %s", index, error.GetDescription().c_str());
@@ -756,7 +757,7 @@ void ShutdownOverlay()
 bool IsTicoSoundEnabled()
 {
   const nlohmann::json root =
-    nlohmann::json::parse(ReadTextFile("sdmc:/tico/config/audio.jsonc"), nullptr, false, true);
+    nlohmann::json::parse(tico::SettingsText("audio"), nullptr, false, true);
   if (!root.is_object())
     return false;
   const auto it = root.find("sound_enabled");
@@ -835,7 +836,7 @@ void SetSettingsReloadCallback(SettingsReloadCallback callback)
 
 void Initialize()
 {
-  FileSystem::EnsureDirectoryExists(TicoConfig::StatesPath, true);
+  FileSystem::EnsureDirectoryExists(UserStatesFolder().c_str(), true);
 #ifdef __SWITCH__
   if (!s_touch_ready)
   {
@@ -1004,6 +1005,28 @@ void PushRANotification(std::string title, std::string description, std::string 
   if (notifications.size() >= 8)
     notifications.erase(notifications.begin());
   notifications.push_back(std::move(notification));
+}
+
+std::string UserSavesFolder()
+{
+  return tico::UserContentRoot("sdmc:/tico/saves/", true) + "psx";
+}
+
+std::string UserStatesFolder()
+{
+  return tico::UserContentRoot("sdmc:/tico/states/", false) + "psx";
+}
+
+RASession GetRASession()
+{
+  const tico::Session& session = tico::CurrentSession();
+  RASession ra;
+  ra.enabled = session.valid && session.raEnabled && !session.raUsername.empty() && !session.raToken.empty();
+  ra.hardcore = session.raHardcore;
+  ra.badges = session.raBadges;
+  ra.username = session.raUsername;
+  ra.token = session.raToken;
+  return ra;
 }
 
 void PlayRATrophySound()

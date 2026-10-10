@@ -471,33 +471,11 @@ static void ApplyTicoViewport(SettingsInterface& si, const std::string& text)
 
 static void ApplyTicoAchievementSettings(SettingsInterface& si)
 {
-  std::ifstream input("sdmc:/tico/config/accounts.jsonc");
-  if (!input.is_open())
-  {
-    si.SetBoolValue("Cheevos", "Enabled", false);
-    return;
-  }
-
-  std::ostringstream ss;
-  ss << input.rdbuf();
-  const std::string text = ss.str();
-
-  bool enabled = false;
-  ReadTicoBool(text, "ra_enabled", enabled);
-
-  bool hardcore = false;
-  ReadTicoBool(text, "ra_hardcore_mode", hardcore);
-
-  std::string username;
-  std::string token;
-  std::string password;
-  ReadTicoJsonStringValue(text, "ra_username", username);
-  ReadTicoJsonStringValue(text, "ra_token", token);
-  ReadTicoJsonStringValue(text, "ra_password", password);
-
-  const bool has_credentials = !username.empty() && (!token.empty() || !password.empty());
-  si.SetBoolValue("Cheevos", "Enabled", enabled && has_credentials);
-  si.SetBoolValue("Cheevos", "ChallengeMode", hardcore);
+  // tico hands over only a token, in the sealed session; the password stays
+  // with tico.
+  const TicoDuck::RASession ra = TicoDuck::GetRASession();
+  si.SetBoolValue("Cheevos", "Enabled", ra.enabled);
+  si.SetBoolValue("Cheevos", "ChallengeMode", ra.hardcore);
   si.SetBoolValue("Cheevos", "Notifications", true);
   si.SetBoolValue("Cheevos", "LeaderboardNotifications", true);
   si.SetBoolValue("Cheevos", "SoundEffects", true);
@@ -505,16 +483,13 @@ static void ApplyTicoAchievementSettings(SettingsInterface& si)
   si.SetBoolValue("Cheevos", "UseFirstDiscFromPlaylist", true);
   si.SetBoolValue("Cheevos", "UseRAIntegration", false);
 
-  if (!username.empty())
-    si.SetStringValue("Cheevos", "Username", username.c_str());
-  if (!token.empty())
-    si.SetStringValue("Cheevos", "Token", token.c_str());
+  if (!ra.username.empty())
+    si.SetStringValue("Cheevos", "Username", ra.username.c_str());
+  if (!ra.token.empty())
+    si.SetStringValue("Cheevos", "Token", ra.token.c_str());
   else
     si.DeleteValue("Cheevos", "Token");
-  if (!password.empty())
-    si.SetStringValue("Cheevos", "Password", password.c_str());
-  else
-    si.DeleteValue("Cheevos", "Password");
+  si.DeleteValue("Cheevos", "Password");
 }
 
 // Every duckstation_<Section>_<Key> in tico's config sets that key of

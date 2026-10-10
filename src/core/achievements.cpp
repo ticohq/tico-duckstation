@@ -325,6 +325,18 @@ std::string Achievements::GetGameHash(CDImage* image)
 
 std::string Achievements::GetLocalImagePath(const std::string_view image_name, int type)
 {
+#ifdef __SWITCH__
+  // tico fetches a game's achievement badges before it launches, into
+  // sdmc:/tico/assets/ra; game and player images are not used.
+  if (type == RC_IMAGE_TYPE_ACHIEVEMENT || type == RC_IMAGE_TYPE_ACHIEVEMENT_LOCKED)
+  {
+    if (image_name.empty() || !TicoDuck::GetRASession().badges)
+      return {};
+    return fmt::format("sdmc:/tico/assets/ra/{}{}.png", Path::SanitizeFileName(image_name),
+                       type == RC_IMAGE_TYPE_ACHIEVEMENT_LOCKED ? "_lock" : "");
+  }
+  return {};
+#endif
   std::string_view prefix;
   std::string_view suffix;
   switch (type)
@@ -363,6 +375,12 @@ std::string Achievements::GetLocalImagePath(const std::string_view image_name, i
 
 void Achievements::DownloadImage(std::string url, std::string cache_filename)
 {
+#ifdef __SWITCH__
+  // tico downloads the images; the core only reads them.
+  (void)url;
+  (void)cache_filename;
+  return;
+#endif
   auto callback = [cache_filename](s32 status_code, const std::string& content_type,
                                    HTTPDownloader::Request::Data data) {
     if (status_code != HTTPDownloader::HTTP_STATUS_OK)
@@ -543,39 +561,8 @@ static bool FindTicoJsonStringBounds(const std::string& text, const char* key, s
 
 void Achievements::SaveTicoRAToken(const char* token)
 {
-  if (!token || token[0] == 0)
-    return;
-
-  std::ifstream input("sdmc:/tico/config/accounts.jsonc");
-  std::ostringstream ss;
-  if (input.is_open())
-    ss << input.rdbuf();
-
-  std::string text = ss.str();
-  if (text.find('{') == std::string::npos || text.find('}') == std::string::npos)
-    text = "{\n}\n";
-
-  const std::string escaped_token = EscapeTicoJsonString(token);
-  size_t value_begin = 0;
-  size_t value_end = 0;
-  if (FindTicoJsonStringBounds(text, "ra_token", value_begin, value_end))
-  {
-    text.replace(value_begin, value_end - value_begin, escaped_token);
-  }
-  else
-  {
-    const size_t object_end = text.rfind('}');
-    const bool has_existing_entry = text.find(':') != std::string::npos && text.find(':') < object_end;
-    std::string insertion = has_existing_entry ? ",\n" : "\n";
-    insertion += "    \"ra_token\": \"";
-    insertion += escaped_token;
-    insertion += "\"\n";
-    text.insert(object_end, insertion);
-  }
-
-  std::ofstream output("sdmc:/tico/config/accounts.jsonc");
-  if (output.is_open())
-    output << text;
+  // A refreshed token lives for this run only; tico keeps the account's own.
+  (void)token;
 }
 #endif
 

@@ -49,3 +49,6 @@ __pycache__
 /build_core/
 /build_deps/
 /build_tico/
+
+# TicoSecure build secret (shared with tico)
+/tico/frontend/TicoSecret.h

@@ -23,6 +23,10 @@
 #include <cctype>
 #include <numeric>
 
+#ifdef __SWITCH__
+#include "tico/TicoDuckBridge.h"
+#endif
+
 Log_SetChannel(Settings);
 
 Settings g_settings;
@@ -1921,8 +1925,8 @@ void EmuFolders::SetDefaults()
   Dumps = "sdmc:/tico/cache/duckstation/dumps";
   GameSettings = "sdmc:/tico/system/duckstation/gamesettings";
   InputProfiles = "sdmc:/tico/system/duckstation/inputprofiles";
-  MemoryCards = "sdmc:/tico/saves/psx";
-  SaveStates = "sdmc:/tico/states/psx";
+  MemoryCards = TicoDuck::UserSavesFolder(); // The current user's (tico's session)
+  SaveStates = TicoDuck::UserStatesFolder();
   Screenshots = "sdmc:/tico/screenshots/psx";
   Shaders = "sdmc:/tico/shaders";
   Textures = "sdmc:/tico/textures/psx";
@@ -2056,8 +2060,8 @@ bool EmuFolders::EnsureFoldersExist()
   result = FileSystem::EnsureDirectoryExists(GameIcons.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(GameSettings.c_str(), false) && result;
   result = FileSystem::EnsureDirectoryExists(InputProfiles.c_str(), false) && result;
-  result = FileSystem::EnsureDirectoryExists(MemoryCards.c_str(), false) && result;
-  result = FileSystem::EnsureDirectoryExists(SaveStates.c_str(), false) && result;
+  result = FileSystem::EnsureDirectoryExists(MemoryCards.c_str(), true) && result;
+  result = FileSystem::EnsureDirectoryExists(SaveStates.c_str(), true) && result;
   result = FileSystem::EnsureDirectoryExists(Screenshots.c_str(), false) && result;
 #ifdef __SWITCH__
   // earlier builds made these in system/duckstation: gone when left empty
