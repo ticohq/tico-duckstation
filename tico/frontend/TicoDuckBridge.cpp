@@ -878,6 +878,7 @@ void OnGPUDeviceReleasing()
 
 void Shutdown()
 {
+  tico::PlaytimeFlush(); // the game's last seconds
   WriteAutoSave(); // HOME: the session ends without the menu
   s_enabled = false;
   DuckShaders::ReleaseGPU();
@@ -888,6 +889,10 @@ void Shutdown()
 
 void RenderOverlay()
 {
+  // Playtime: frames of the running game (paused, as by the menu, counts nothing)
+  if (System::IsRunning())
+    tico::PlaytimeFrame();
+
   if (!s_ready || !g_gpu_device)
     return;
 
