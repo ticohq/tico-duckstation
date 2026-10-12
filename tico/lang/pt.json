@@ -229,5 +229,7 @@
     "settings_duckstation_value_weave": "Entrelaçar",
     "settings_duckstation_value_xbr_no_edge_blending": "xBR (sem mesclar bordas)",
     "settings_duckstation_value_xbr_very_slow": "xBR (muito lento)",
-    "settings_duckstation_value_1x_native": "1x (nativa)"
+    "settings_duckstation_value_1x_native": "1x (nativa)",
+    "settings_duckstation_section_hud": "Informações na tela",
+    "settings_duckstation_fps_counter": "Contador de FPS"
 }

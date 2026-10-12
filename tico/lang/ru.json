@@ -233,5 +233,7 @@
     "settings_duckstation_value_weave": "Сплетение",
     "settings_duckstation_value_xbr_no_edge_blending": "xBR (без смешивания краёв)",
     "settings_duckstation_value_xbr_very_slow": "xBR (очень медленно)",
-    "settings_duckstation_value_1x_native": "1x (родное)"
+    "settings_duckstation_value_1x_native": "1x (родное)",
+    "settings_duckstation_section_hud": "Экранная информация",
+    "settings_duckstation_fps_counter": "Счётчик FPS"
 }

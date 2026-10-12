@@ -234,5 +234,7 @@
     "settings_duckstation_value_weave": "交织",
     "settings_duckstation_value_xbr_no_edge_blending": "xBR（无边缘混合）",
     "settings_duckstation_value_xbr_very_slow": "xBR（非常慢）",
-    "settings_duckstation_value_1x_native": "1x（原生）"
+    "settings_duckstation_value_1x_native": "1x（原生）",
+    "settings_duckstation_section_hud": "屏幕信息",
+    "settings_duckstation_fps_counter": "帧率计数器"
 }
