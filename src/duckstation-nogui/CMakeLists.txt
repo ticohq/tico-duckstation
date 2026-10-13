@@ -73,8 +73,8 @@ if(NINTENDO_SWITCH)
   endif()
 
   nx_generate_nacp (tico-duckstation.nacp
-    NAME    "Tico DuckStation"
-    AUTHOR  "ticoverse.com"
+    NAME    "tico-duckstation"
+    AUTHOR  "stenzek/ticoverse.com"
     VERSION "3.0.0"
   )
 
@@ -93,13 +93,13 @@ if(NINTENDO_SWITCH)
     nx_create_nro(duckstation-nogui
       OUTPUT ${CMAKE_BINARY_DIR}/tico-duckstation.nro
       NACP  tico-duckstation.nacp
-      ICON  "${CMAKE_SOURCE_DIR}/extras/icons/icon-switch.jpg"
+      ICON  "${CMAKE_SOURCE_DIR}/tico/icon.jpg"
     )
   else()
     nx_create_nro(duckstation-nogui
       OUTPUT ${CMAKE_BINARY_DIR}/tico-duckstation.nro
       NACP  tico-duckstation.nacp
-      ICON  "${CMAKE_SOURCE_DIR}/extras/icons/icon-switch.jpg"
+      ICON  "${CMAKE_SOURCE_DIR}/tico/icon.jpg"
       ROMFS ${CMAKE_BINARY_DIR}/romfs
     )
   endif()
