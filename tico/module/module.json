@@ -27,7 +27,7 @@
       ],
       "disc_based": true,
       "naming": "redump",
-      "games_file": "psx.json",
+      "games_file": "psx.dat",
       "retroachievements_id": 12,
       "bios": [
         {
