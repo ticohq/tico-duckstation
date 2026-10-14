@@ -3681,19 +3681,39 @@ std::string TicoMemoryCardPath(std::string_view file_title, u32 slot)
   if (std::string existing = ExistingTicoCard(shared, slot); !existing.empty())
     return existing;
 
-  std::vector<std::string> candidates = {ExistingTicoCard(file_title, slot)};
-  for (u32 disc = 1; disc <= 8; disc++)
-    candidates.push_back(ExistingTicoCard(fmt::format("{} (Disc {})", shared, disc), slot));
-
+  // Every card one of its discs used on its own: any whose name is the game's
+  // once its disc tag is left out, whatever the tag's spelling ("(Disc 2)",
+  // "(Disk 2)", "(CD 2)"), its number or the tags after it
   std::string newest;
   std::time_t newest_time = 0;
-  for (const std::string& path : candidates)
+  FileSystem::FindResultsArray cards;
+  FileSystem::FindFiles(EmuFolders::MemoryCards.c_str(), "*",
+                        FILESYSTEM_FIND_FILES | FILESYSTEM_FIND_RELATIVE_PATHS, &cards);
+  for (const FILESYSTEM_FIND_DATA& card : cards)
   {
-    FILESYSTEM_STAT_DATA sd;
-    if (!path.empty() && FileSystem::StatFile(path.c_str(), &sd) && (newest.empty() || sd.ModificationTime > newest_time))
+    // Slot 1: <name>.mcd (or .mcr, .srm); the others: <name>_<slot>.mcd
+    std::string lower(card.FileName);
+    for (char& c : lower)
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string_view stem;
+    if (slot == 0)
     {
-      newest = path;
-      newest_time = sd.ModificationTime;
+      for (const char* ext : {".mcd", ".mcr", ".srm"})
+        if (lower.size() > 4 && lower.compare(lower.size() - 4, 4, ext) == 0)
+          stem = std::string_view(card.FileName).substr(0, card.FileName.size() - 4);
+    }
+    else
+    {
+      const std::string suffix = fmt::format("_{}.mcd", slot + 1);
+      if (lower.size() > suffix.size() && lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) == 0)
+        stem = std::string_view(card.FileName).substr(0, card.FileName.size() - suffix.size());
+    }
+    if (stem.empty() || stem == shared || WithoutDiscTag(stem) != shared)
+      continue;
+    if (newest.empty() || card.ModificationTime > newest_time)
+    {
+      newest = Path::Combine(EmuFolders::MemoryCards, card.FileName);
+      newest_time = card.ModificationTime;
     }
   }
 
