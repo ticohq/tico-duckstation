@@ -235,5 +235,6 @@
     "settings_duckstation_value_xbr_very_slow": "xBR (очень медленно)",
     "settings_duckstation_value_1x_native": "1x (родное)",
     "settings_duckstation_section_hud": "Экранная информация",
-    "settings_duckstation_fps_counter": "Счётчик FPS"
+    "settings_duckstation_fps_counter": "Счётчик FPS",
+    "emulator_quick_menu_tip": "Нажмите {plus} и {minus} вместе, чтобы открыть быстрое меню"
 }

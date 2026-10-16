@@ -189,5 +189,6 @@
     "emulator_bios_missing": "The PlayStation BIOS is missing. Put one, such as %s, in %s",
     "emulator_bios_unknown": "%s is not a PlayStation BIOS DuckStation knows. Put a known one in %s",
     "settings_duckstation_section_hud": "On-screen info",
-    "settings_duckstation_fps_counter": "FPS counter"
+    "settings_duckstation_fps_counter": "FPS counter",
+    "emulator_quick_menu_tip": "Press {plus} and {minus} together to open the quick menu"
 }

@@ -457,6 +457,8 @@ void OfferResume()
   s_offer_resume = false;
   if (std::remove(RestartMarkerPath().c_str()) == 0)
     return;
+  // tico's General > Quick Menu Tip: shown once the game runs smoothly
+  OverlayUI::ShowQuickMenuTip();
   if (Achievements::IsHardcoreModeActive() || !s_host->StateSlotExists(OverlayUI::kAutoStateSlot - 1))
     return;
   // tico's General > Continue Last Game

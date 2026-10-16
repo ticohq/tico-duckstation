@@ -231,5 +231,6 @@
     "settings_duckstation_value_xbr_very_slow": "xBR (très lent)",
     "settings_duckstation_value_1x_native": "1x (native)",
     "settings_duckstation_section_hud": "Affichage à l'écran",
-    "settings_duckstation_fps_counter": "Compteur de FPS"
+    "settings_duckstation_fps_counter": "Compteur de FPS",
+    "emulator_quick_menu_tip": "Appuyez sur {plus} et {minus} ensemble pour ouvrir le menu rapide"
 }
