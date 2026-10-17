@@ -772,6 +772,11 @@ bool IsTicoSoundEnabled()
 
 } // namespace
 
+void UseOwnShaderCache()
+{
+  tico::UseShaderCacheDir("sdmc:/tico/system/duckstation/cache/mesa");
+}
+
 void PrepareLaunch(int& argc, char* argv[])
 {
   s_argv0 = (argc > 0 && argv[0]) ? argv[0] : "";

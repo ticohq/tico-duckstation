@@ -29,6 +29,10 @@ using SettingsReloadCallback = void (*)();
 /// --from-library (a game started from the library) is taken out of argv.
 void PrepareLaunch(int& argc, char* argv[]);
 
+/// From main(), before Vulkan starts: Mesa's shader cache beside the core's
+/// files (sdmc:/tico/system/duckstation/cache/mesa), not at the SD card's root.
+void UseOwnShaderCache();
+
 /// The game's own settings file (the quick menu's "Save current settings for
 /// this game"), whether or not it exists; empty without a game.
 std::string GameSettingsPath();

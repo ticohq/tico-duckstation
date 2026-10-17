@@ -2104,6 +2104,8 @@ int main(int argc, char* argv[])
     return EXIT_FAILURE;
 
 #ifdef __SWITCH__
+  // Mesa's shader cache beside the core's files, before the GPU starts
+  TicoDuck::UseOwnShaderCache();
   // a USB game's path is resolved in argv before it is parsed
   TicoDuck::PrepareLaunch(argc, argv);
 #endif
